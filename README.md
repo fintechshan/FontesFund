@@ -2,12 +2,13 @@
 
 A Python-based ETF investment application that detects macroeconomic regimes, constructs optimized portfolios, backtests strategies, and executes trades via Interactive Brokers.
 
-> **📌 Current strategy & results live in [`CLAUDE.md`](CLAUDE.md) (agent brief) and
-> [`RECOMMENDATION.md`](RECOMMENDATION.md).** Production strategy =
-> `run_optimized_regime_backtest` (risk-parity + portfolio-level vol targeting + VIX gate).
-> 20-yr backtest, **no look-ahead** (macro signals lagged to release dates), **8-ETF v5.1**:
-> **14.52% CAGR / 14.78% MaxDD / Sharpe 0.97** (DD target met; CAGR/Sharpe short of 16/1.2; data thru 2026-06-26).
-> Beats SPY (10.9% / 0.48) and 60/40 (8.2% / 0.55). Supersedes older numbers below.
+> **📌 Current strategy & results live in [`CLAUDE.md`](CLAUDE.md) (agent brief).**
+> Production is **v7 dual sleeve** (live AIPO / backtest XLY), not the old 8-ETF v5.1 book.
+> Official public-FRED numbers (simplified honest engine, CPI +1mo / GDP +4mo, cash 口径,
+> 2005-01-04→2026-09-18): **backtest/XLY 10.18% / -15.44% / 0.86** ·
+> **live/AIPO 10.88% / -14.78% / 0.98**. Live long-sample ≠ full historical AIPO allocation
+> (AIPO listed 2025-07-25). v5.1 14.52% / 14.78% / 0.97 is **historical only**.
+> See [`docs/V7_DUAL_SLEEVE.md`](docs/V7_DUAL_SLEEVE.md).
 
 ## Architecture
 
@@ -68,7 +69,14 @@ python -m src.dashboard.app
 
 ### 4. Run Backtest (CLI)
 ```bash
-python scripts/run_backtest.py
+# v7 research default = XLY proxy for the AIPO sleeve
+python run_backtest.py
+
+# live AIPO book
+FONTES_RUN_MODE=live python run_backtest.py
+
+# public-FRED simplified recompute (no API key)
+python out/v7_fred_dual_recompute.py
 ```
 
 ## Portfolio Configuration
@@ -84,41 +92,41 @@ python scripts/run_backtest.py
 - **Vol-estimator note** (`ab_vol.py` A/B): EWMA and HAR-RV do **not** beat the simple
   21-day realised vol on Sharpe (all ≈1.03); however, the OLS-based walk-forward HAR-RV vol overlay (`use_har_vol=True`) runs hotter/better under tuned overlays to clear the Max Drawdown target.
 
-## Backtest Results (20yr: 2005-01 → 2026-06)
+## Backtest Results (v7 dual sleeve, 2005-01-04 → 2026-09-18)
 
-Net of 5 bps transaction cost + 1% leverage financing. Regenerate with `python run_backtest.py`.
+Official figures: public FRED CSV, CPI +1mo / GDP +4mo, 5 bps, cash 口径
+(missing history stays cash — no silent renorm). Simplified honest engine —
+**not** bit-identical to `src/backtester/engine.py`. Frozen payload:
+[`out/v7_fred_dual_metrics.json`](out/v7_fred_dual_metrics.json).
 
-Macro signals are lagged to their real release dates (no look-ahead).
+| Strategy | CAGR | Vol | Sharpe | Max DD |
+|---|--:|--:|--:|--:|
+| **v7 backtest / XLY** (research default) | **10.18%** | 9.68% | **0.86** | **-15.44%** |
+| **v7 live / AIPO** | **10.88%** | 9.22% | **0.98** | **-14.78%** |
+| 60/40 (SPY/IEF) | 8.30% | 10.88% | 0.59 | -31.39% |
+| S&P 500 (SPY) | 10.90% | 18.89% | 0.48 | -55.19% |
 
-| Strategy | CAGR | Vol | Sharpe | Max DD | Calmar | Total Return |
-|---|--:|--:|--:|--:|--:|--:|
-| **Optimized Regime (production, no look-ahead)** | **14.52%** | 13.00% | **0.97** | **14.78%** | 0.98 | 1,730% |
-| 60/40 Benchmark | 8.21% | 11.57% | 0.55 | 34.70% | 0.24 | 442% |
-| S&P 500 (SPY) | 10.92% | 18.96% | 0.48 | 55.19% | 0.20 | 820% |
-| All Weather | 6.87% | 8.26% | 0.61 | 23.37% | 0.29 | 286% |
-
-> The 16% / 14.8% / 1.2 targets are **not** fully met once macro look-ahead is removed (an
-> earlier 15.85%/1.21 figure was look-ahead-biased). The honest **14.52% / 0.97 / 14.78%**
-> meets the <14.8% MaxDD limit and still beats SPY and 60/40 handily on risk-adjusted terms. Full rationale & audit trail:
-> [`RECOMMENDATION.md`](RECOMMENDATION.md), [`CLAUDE.md`](CLAUDE.md).
+> Live long-sample is mostly 6 core sleeves + cash for AIPO until 2025-07-25.
+> Do not describe it as twenty years of a fully invested AIPO book.
+> Targets 16% / &lt;14.8% / 1.2 are **not** fully met. v5.1 8-ETF
+> 14.52% / 14.78% / 0.97 is retained only as a historical footnote.
+> Details: [`CLAUDE.md`](CLAUDE.md), [`docs/V7_FRED_DUAL_RESULTS.md`](docs/V7_FRED_DUAL_RESULTS.md).
 
 ## Portfolio / ETF Universe
 
-**Tested universe (23 ETFs with usable history in `data/cache/price_data.csv`):**
-SPY, QQQ, IWM, VEA, VWO, TLT, IEF, SHY, AGG, TIP, GLD, DBC, VNQ, SOXX, SMH, XSD, DRAM, SPYI, QQQI, TQQQ, SOXL, DBMF, BTAL
+**v7 live book:** QQQ, SOXX, SPY, IEF, GLD, DBMF, **AIPO**
+**v7 backtest book:** QQQ, SOXX, SPY, IEF, GLD, DBMF, **XLY** (AIPO-sleeve proxy)
 
-**AI-trend complex (all part of the strategy):** SOXX, SMH, XSD, DRAM (semis/memory),
-QQQ + TQQQ (AI software/leverage), SOXL (3x semis). SMH/XSD have full history; DRAM lists
-Apr-2026 so it contributes only recently.
+Switch with `FONTES_RUN_MODE=backtest|live`. Missing history defaults to cash
+(`FONTES_WEIGHT_MODE=cash`); do not silently renormalise.
 
-**Configured but not in cache** (silently renormalised away — re-download before live use):
-SSO, MOAT, VOO, AIPO. (GGLL was removed entirely.)
-
-- **Leveraged** (TQQQ, SOXL): regime-restricted, VIX-gated.
-- **Limited history**: SPYI (2022), QQQI (2024), DBMF (2019), BTAL (2011), TQQQ/SOXL (2010)
-  — per-date availability is handled, but early-period weights differ from late-period.
-- Allocation per regime is set in `config/regime_rules.py:REGIME_WEIGHTS`; the production
+- **Limited history:** AIPO (2025-07-25), DBMF (2019-05-08). XLY has history from 2005.
+- Allocation per regime is set in `config/regime_rules.py:REGIME_WEIGHTS` (live AIPO);
+  `get_regime_weights_for_mode("backtest")` remaps AIPO → XLY. The production
   strategy then applies **inverse-vol (risk-parity)** weighting across the held sleeves.
+- Defense basket auxiliaries (SHY, AGG) are still downloaded for the bear overlay.
+- Broader monitor universe (SMH/DRAM/XSD, covered-call, leveraged) remains in
+  `config/etf_universe.py` but is **not** the v7 production book.
 
 ## Risk Management
 

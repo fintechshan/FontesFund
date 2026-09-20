@@ -4,6 +4,16 @@
 **Audience:** handoff to Claude Sonnet 4.6 (prior strategy author)
 **Targets:** 16.00% CAGR · ≤14.8% Max DD · Sharpe ≥ 1.2
 
+> ## ⚠️ SUPERSEDED as production SoT (2026-09-21)
+> This file is the **v5.1-era audit**. Production is now **v7 dual sleeve**
+> (live AIPO / backtest XLY). Official public-FRED numbers:
+> backtest/XLY **10.18% / -15.44% / 0.86**, live/AIPO **10.88% / -14.78% / 0.98**
+> (2005-01-04→2026-09-18; simplified honest engine). The v5.1 8-ETF headline
+> 14.52% / 14.78% / 0.97 is **historical only**. Current SoT:
+> [`CLAUDE.md`](CLAUDE.md), [`docs/V7_DUAL_SLEEVE.md`](docs/V7_DUAL_SLEEVE.md).
+> Overlay architecture below (portfolio-level vol target, no look-ahead) still
+> applies; the universe and cited numbers do not.
+
 ---
 
 > ## ⚠️ 2026-06-22 correction — look-ahead removed (Gemini audit) & v5.1 Tuned

@@ -14,9 +14,14 @@ before the optimizer refines them.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
+from typing import Literal
 
 logger = logging.getLogger(__name__)
+
+Mode = Literal["live", "backtest"]
+WeightMode = Literal["cash", "renorm"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -168,12 +173,15 @@ RISK_LIMITS = RiskLimits()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Production strategy overlay parameters — SINGLE SOURCE OF TRUTH (v5.1)
+# Production strategy overlay parameters — SINGLE SOURCE OF TRUTH (v7)
 # ═══════════════════════════════════════════════════════════════════════════
 # These are the exact kwargs passed to `run_optimized_regime_backtest` by BOTH
 # run_backtest.py (CLI) and run_dashboard.py (deployed app), AND read by the
 # dashboard's Rebalancing-Rules panel — so the displayed rules can never drift
 # from what is actually run. Change the strategy HERE, in one place.
+#
+# v7 universe: live AIPO / backtest XLY (see dual-mode helpers below).
+# Overlay knobs are unchanged from the v5.1 tuning (bear=0.70, dd=0.07, HAR).
 STRATEGY_PARAMS: dict = {
     "risk_parity": True,
     "rp_vol_lookback": 60,
@@ -187,7 +195,7 @@ STRATEGY_PARAMS: dict = {
     "borrow_spread": 0.01,
     "vix_gate_level": 20.0,     # zero TQQQ/SOXL when yesterday's VIX >= this
     "mf_alloc": 0.0,
-    "use_har_vol": True,        # HAR-RV vol overlay (v5.1)
+    "use_har_vol": True,        # HAR-RV vol overlay
 }
 
 
@@ -352,3 +360,79 @@ def check_leveraged_eligibility(
             rule.min_confidence,
         )
     return eligible
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DUAL MODE: live AIPO / backtest XLY
+# ═══════════════════════════════════════════════════════════════════════════
+# Live production keeps the AIPO sleeve (AI & power infrastructure thesis).
+# Long-history backtests map that sleeve onto XLY (consumer discretionary)
+# so the weight is investable from 2005 instead of sitting in cash until
+# AIPO's 2025-07 listing. Thesis differs — disclose both numbers separately.
+#
+# Usage:
+#   from config.regime_rules import get_universe, get_regime_weights_for_mode
+#   tickers = get_universe("backtest")             # includes XLY, not AIPO
+#   weights = get_regime_weights_for_mode("live")  # AIPO as in REGIME_WEIGHTS
+#
+# Env:
+#   FONTES_RUN_MODE=backtest|live     (run_backtest.py defaults to backtest)
+#   FONTES_WEIGHT_MODE=cash|renorm    (cash = missing history stays cash)
+
+LIVE_UNIVERSE: list[str] = ["QQQ", "SOXX", "SPY", "IEF", "GLD", "DBMF", "AIPO"]
+BACKTEST_UNIVERSE: list[str] = ["QQQ", "SOXX", "SPY", "IEF", "GLD", "DBMF", "XLY"]
+
+# Sleeve role -> ticker per mode. Keys are logical sleeve names.
+SLEEVE_MAP: dict[str, dict[Mode, str]] = {
+    "ai_power_or_proxy": {"live": "AIPO", "backtest": "XLY"},
+}
+
+# Direct ticker remap applied when building backtest weights from REGIME_WEIGHTS.
+BACKTEST_TICKER_PROXY: dict[str, str] = {
+    "AIPO": "XLY",
+}
+
+
+def get_run_mode(default: Mode = "live") -> Mode:
+    """Return ``FONTES_RUN_MODE`` (``live`` or ``backtest``)."""
+    raw = os.getenv("FONTES_RUN_MODE", default)
+    if raw not in ("live", "backtest"):
+        raise ValueError(f"Unknown FONTES_RUN_MODE {raw!r}; expected 'live' or 'backtest'")
+    return raw  # type: ignore[return-value]
+
+
+def get_weight_mode(default: WeightMode = "cash") -> WeightMode:
+    """Return ``FONTES_WEIGHT_MODE`` (``cash`` or ``renorm``)."""
+    raw = os.getenv("FONTES_WEIGHT_MODE", default)
+    if raw not in ("cash", "renorm"):
+        raise ValueError(f"Unknown FONTES_WEIGHT_MODE {raw!r}; expected 'cash' or 'renorm'")
+    return raw  # type: ignore[return-value]
+
+
+def get_universe(mode: Mode = "live") -> list[str]:
+    """Return the ETF list for *mode* (``live`` or ``backtest``)."""
+    if mode == "live":
+        return list(LIVE_UNIVERSE)
+    if mode == "backtest":
+        return list(BACKTEST_UNIVERSE)
+    raise ValueError(f"Unknown mode {mode!r}; expected 'live' or 'backtest'")
+
+
+def _remap_weights(weights: dict[str, float], mode: Mode) -> dict[str, float]:
+    if mode == "live":
+        return dict(weights)
+    out: dict[str, float] = {}
+    for t, w in weights.items():
+        t2 = BACKTEST_TICKER_PROXY.get(t, t)
+        out[t2] = out.get(t2, 0.0) + w
+    return out
+
+
+def get_regime_weights_for_mode(mode: Mode = "live") -> dict[str, dict[str, float]]:
+    """Copy of REGIME_WEIGHTS with sleeve tickers remapped for *mode*."""
+    return {reg: _remap_weights(w, mode) for reg, w in REGIME_WEIGHTS.items()}
+
+
+def get_base_weights_for_mode(regime: str, mode: Mode = "live") -> dict[str, float]:
+    """Base weights for one regime under *mode*."""
+    return _remap_weights(REGIME_WEIGHTS[regime], mode)
