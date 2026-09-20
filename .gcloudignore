@@ -1,0 +1,44 @@
+# .gcloudignore
+# Exclude git metadata and local configuration
+.git
+.gitignore
+.env
+.agents/
+.gemini/
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+tasks/
+.system_generated/
+walkthrough.md
+task.md
+implementation_plan.md
+gcp_deployment_guide.md
+strategy_redesign.md
+strategy_review.md
+dashboard_review.md
+*.png
+*.tar.gz
+
+# Large/irrelevant assets — keep the source upload small (data/ stays: app reads it)
+co_pilot_src/
+node_modules/
+*.zip
+.claude/
+optimize_strategy.py
+extend_rp_mf.py
+
+# Runtime caches — must regenerate fresh INSIDE the container (else a stale local
+# copy gets baked in: e.g. a lexicon sentiment.json would prevent FinBERT running).
+# price_data.csv and macro_data.pkl are intentionally NOT excluded (the app needs them).
+data/cache/sentiment.json
+data/cache/news_sentiment.json
+data/cache/semianalysis_feed.json
+data/cache/ai_extra_prices.csv
+data/cache/edgar_capex.json
+data/cache/reddit_sentiment.json

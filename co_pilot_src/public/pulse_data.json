@@ -1,0 +1,128 @@
+[
+  {
+    "date": "Mar 10",
+    "portfolio": 0,
+    "sp500": 0,
+    "nasdaq": 0
+  },
+  {
+    "date": "Mar 11",
+    "portfolio": -0.08,
+    "sp500": -0.08,
+    "nasdaq": 0.03
+  },
+  {
+    "date": "Mar 12",
+    "portfolio": -1.32,
+    "sp500": -1.61,
+    "nasdaq": -1.69
+  },
+  {
+    "date": "Mar 13",
+    "portfolio": -2.09,
+    "sp500": -2.2,
+    "nasdaq": -2.31
+  },
+  {
+    "date": "Mar 16",
+    "portfolio": -1.15,
+    "sp500": -1.21,
+    "nasdaq": -1.21
+  },
+  {
+    "date": "Mar 17",
+    "portfolio": -0.8,
+    "sp500": -0.96,
+    "nasdaq": -0.71
+  },
+  {
+    "date": "Mar 18",
+    "portfolio": -2.1,
+    "sp500": -2.31,
+    "nasdaq": -2.13
+  },
+  {
+    "date": "Mar 19",
+    "portfolio": -2.62,
+    "sp500": -2.58,
+    "nasdaq": -2.41
+  },
+  {
+    "date": "Mar 20",
+    "portfolio": -4.11,
+    "sp500": -4.06,
+    "nasdaq": -4.24
+  },
+  {
+    "date": "Mar 23",
+    "portfolio": -2.95,
+    "sp500": -2.96,
+    "nasdaq": -3.08
+  },
+  {
+    "date": "Mar 24",
+    "portfolio": -3.23,
+    "sp500": -3.32,
+    "nasdaq": -3.82
+  },
+  {
+    "date": "Mar 25",
+    "portfolio": -2.79,
+    "sp500": -2.8,
+    "nasdaq": -3.18
+  },
+  {
+    "date": "Mar 26",
+    "portfolio": -4.52,
+    "sp500": -4.49,
+    "nasdaq": -5.49
+  },
+  {
+    "date": "Mar 27",
+    "portfolio": -5.66,
+    "sp500": -6.08,
+    "nasdaq": -7.31
+  },
+  {
+    "date": "Mar 30",
+    "portfolio": -5.94,
+    "sp500": -6.46,
+    "nasdaq": -8.03
+  },
+  {
+    "date": "Mar 31",
+    "portfolio": -3.54,
+    "sp500": -3.73,
+    "nasdaq": -4.87
+  },
+  {
+    "date": "Apr 1",
+    "portfolio": -3.13,
+    "sp500": -3.04,
+    "nasdaq": -3.75
+  },
+  {
+    "date": "Apr 2",
+    "portfolio": -3.07,
+    "sp500": -2.93,
+    "nasdaq": -3.65
+  },
+  {
+    "date": "Apr 6",
+    "portfolio": -2.51,
+    "sp500": -2.5,
+    "nasdaq": -3.06
+  },
+  {
+    "date": "Apr 7",
+    "portfolio": -2.09,
+    "sp500": -2.43,
+    "nasdaq": -3.02
+  },
+  {
+    "date": "Apr 8",
+    "portfolio": -0.39,
+    "sp500": 0.02,
+    "nasdaq": -0.21
+  }
+]

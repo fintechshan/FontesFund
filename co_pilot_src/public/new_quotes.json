@@ -1,0 +1,98 @@
+[
+  {
+    "symbol": "AAPL",
+    "price": 258.9,
+    "low52": 169.21,
+    "high52": 288.62
+  },
+  {
+    "symbol": "BRK-B",
+    "price": 479.75,
+    "low52": 455.19,
+    "high52": 542.07
+  },
+  {
+    "symbol": "NVDA",
+    "price": 182.08,
+    "low52": 94.46,
+    "high52": 212.19
+  },
+  {
+    "symbol": "GOOGL",
+    "price": 317.32,
+    "low52": 143.03,
+    "high52": 349
+  },
+  {
+    "symbol": "COST",
+    "price": 1030.27,
+    "low52": 844.06,
+    "high52": 1067.08
+  },
+  {
+    "symbol": "MSFT",
+    "price": 374.33,
+    "low52": 350.25,
+    "high52": 555.45
+  },
+  {
+    "symbol": "V",
+    "price": 308.96,
+    "low52": 293.89,
+    "high52": 375.51
+  },
+  {
+    "symbol": "AMZN",
+    "price": 221.25,
+    "low52": 165.29,
+    "high52": 258.6
+  },
+  {
+    "symbol": "TSM",
+    "price": 365.9,
+    "low52": 137.9,
+    "high52": 390.21
+  },
+  {
+    "symbol": "META",
+    "price": 612.42,
+    "low52": 479.8,
+    "high52": 796.25
+  },
+  {
+    "symbol": "UNH",
+    "price": 305.98,
+    "low52": 234.6,
+    "high52": 606.36
+  },
+  {
+    "symbol": "XOM",
+    "price": 156.22,
+    "low52": 97.8,
+    "high52": 176.41
+  },
+  {
+    "symbol": "FCX",
+    "price": 65.1,
+    "low52": 28.64,
+    "high52": 69.75
+  },
+  {
+    "symbol": "GE",
+    "price": 308.06,
+    "low52": 165.7,
+    "high52": 348.48
+  },
+  {
+    "symbol": "CEG",
+    "price": 284.27,
+    "low52": 181.99,
+    "high52": 412.7
+  },
+  {
+    "symbol": "PLTR",
+    "price": 140.76,
+    "low52": 75.22,
+    "high52": 207.52
+  }
+]

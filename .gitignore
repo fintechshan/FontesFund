@@ -1,0 +1,79 @@
+# =============================================================================
+# ETF Investment Application - Git Ignore
+# =============================================================================
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+eggs/
+*.whl
+pip-log.txt
+
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+
+# Data & Cache
+data/cache/*
+data/db/*
+*.db
+*.sqlite3
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+
+# Keep data directory structure
+!data/cache/.gitkeep
+!data/db/.gitkeep
+
+# OS Files
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# Logs
+*.log
+logs/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Local agents & IDE
+.claude/
+.agents/
+.gemini/
+
+# Distribution
+*.tar.gz
+*.zip
+

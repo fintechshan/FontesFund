@@ -1,0 +1,55 @@
+{
+  "name": "Portfolio B (High-Growth 14.6%)",
+  "as_of": "2026-09-19",
+  "tickers": [
+    "ZQQ.TO",
+    "VFV.TO",
+    "ZEB.TO",
+    "XGD.TO",
+    "CGL-C.TO",
+    "XBB.TO"
+  ],
+  "weights": {
+    "goldilocks": {
+      "ZQQ.TO": 0.35,
+      "VFV.TO": 0.25,
+      "ZEB.TO": 0.2,
+      "XBB.TO": 0.08,
+      "CGL-C.TO": 0.07,
+      "XGD.TO": 0.05
+    },
+    "reflation": {
+      "ZQQ.TO": 0.2,
+      "VFV.TO": 0.2,
+      "ZEB.TO": 0.15,
+      "XBB.TO": 0.05,
+      "CGL-C.TO": 0.2,
+      "XGD.TO": 0.2
+    },
+    "stagflation": {
+      "ZQQ.TO": 0.05,
+      "VFV.TO": 0.1,
+      "ZEB.TO": 0.1,
+      "XBB.TO": 0.2,
+      "CGL-C.TO": 0.35,
+      "XGD.TO": 0.2
+    },
+    "deflation": {
+      "ZQQ.TO": 0.05,
+      "VFV.TO": 0.05,
+      "ZEB.TO": 0.05,
+      "XBB.TO": 0.5,
+      "CGL-C.TO": 0.2,
+      "XGD.TO": 0.15
+    }
+  },
+  "metrics": {
+    "CAGR": "14.62%",
+    "MaxDD": "15.53%",
+    "Sharpe": "1.16",
+    "Volatility": "10.90%",
+    "Calmar": "0.94",
+    "WinRate": "56.4%",
+    "TotalReturn": "552.90%"
+  }
+}

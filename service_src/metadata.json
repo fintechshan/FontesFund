@@ -1,0 +1,8 @@
+{
+  "name": "第一资本投顾",
+  "description": "第一资本投顾（First Capital，1269.HK）是专为全球华人投资者打造的量化与全球智能投顾平台。主打中国A股量化多因子策略与美股全球ETF多资产配置组合。搭载由港股上市集团背景合规背书的AI高级投顾助手，提供一站式、专业、透明的港美股专家级智投方案。",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

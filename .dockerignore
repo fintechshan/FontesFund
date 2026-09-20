@@ -1,0 +1,41 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Secrets & Local Env
+.env
+.agents/
+.gemini/
+
+# Documentation
+docs/
+README.md
+
+# Logs
+*.log
+
+# Large/irrelevant assets
+co_pilot_src/
+node_modules/
+*.zip
+.claude/
+
+# Runtime caches — regenerate fresh in the container (don't bake stale copies)
+data/cache/sentiment.json
+data/cache/news_sentiment.json
+data/cache/semianalysis_feed.json
+data/cache/ai_extra_prices.csv
+data/cache/edgar_capex.json
+data/cache/reddit_sentiment.json

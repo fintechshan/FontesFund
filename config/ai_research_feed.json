@@ -1,0 +1,30 @@
+{
+  "disclaimer": "Template \u2014 summaries below are placeholders, not actual proprietary research. Paste notes from your LICENSED reports into each 'summary'. Links point to each firm's official public AI research hub.",
+  "updated": "",
+  "banks": [
+    {
+      "name": "Morgan Stanley",
+      "stance": "\u2014",
+      "url": "https://www.morganstanley.com/ideas",
+      "summary": "Add your licensed MS AI/semis monthly summary here."
+    },
+    {
+      "name": "Goldman Sachs",
+      "stance": "\u2014",
+      "url": "https://www.goldmansachs.com/insights/topics/artificial-intelligence",
+      "summary": "Add your licensed GS AI capex/monetization summary here."
+    },
+    {
+      "name": "Bernstein",
+      "stance": "\u2014",
+      "url": "https://www.bernsteinresearch.com/",
+      "summary": "Add your licensed Bernstein semis/AI summary here."
+    },
+    {
+      "name": "JP Morgan",
+      "stance": "\u2014",
+      "url": "https://www.jpmorgan.com/insights",
+      "summary": "Add your licensed JPM AI infrastructure summary here."
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+Strategy,Annual Return,Volatility,Sharpe Ratio,Sortino Ratio,Max Drawdown,Calmar Ratio,Win Rate,Total Return
+Current (20 tickers),13.55%,11.52%,1.02,1.37,15.47%,0.88,54.7%,1422.23%
+Simplified (8 tickers),14.92%,12.65%,1.03,1.39,16.72%,0.89,54.8%,1866.74%
+Simplified (10 tickers),14.64%,12.47%,1.03,1.39,16.30%,0.90,54.4%,1767.49%
+60/40 Benchmark,8.21%,11.57%,0.55,0.68,34.70%,0.24,55.4%,442.09%
+S&P 500,10.92%,18.96%,0.48,0.58,55.19%,0.20,55.1%,819.92%
