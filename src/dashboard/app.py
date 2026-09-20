@@ -2478,41 +2478,45 @@ def build_cdn_portfolio_tab(data):
         donut_fig = go.Figure()
 
     # ── Equity curve overlay: CDN vs US ───────────────────────────────
+    # Plot on the exact same $100,000 portfolio growth scale as Tab 3 Backtest
     overlay_fig = go.Figure()
-    if not cdn_eq.empty:
-        cdn_norm = cdn_eq / cdn_eq.iloc[0] * 100
-        overlay_fig.add_trace(go.Scatter(
-            x=cdn_norm.index, y=cdn_norm,
-            name='CDN Portfolio (CAD, base=100 in 2012)', line=dict(color='#f5a623', width=2.5),
-        ))
     if not us_eq.empty:
-        # 1. US Portfolio aligned to same start date (Nov 2012)
-        start = cdn_eq.index[0] if not cdn_eq.empty else us_eq.index[0]
+        us_dollars = us_eq * 100000
+        overlay_fig.add_trace(go.Scatter(
+            x=us_dollars.index, y=us_dollars.values,
+            name='US Portfolio (USD — Tab 3 Verified Strategy, $100K start in 2005)',
+            line=dict(color='#00d97e', width=2.5),
+            hovertemplate='%{x|%b %Y}: $%{y:,.0f} USD<extra>US Strategy (Tab 3)</extra>',
+        ))
+    if not cdn_eq.empty:
+        cdn_dollars = cdn_eq * 100000
+        overlay_fig.add_trace(go.Scatter(
+            x=cdn_dollars.index, y=cdn_dollars.values,
+            name='CDN Portfolio B (CAD — $100K start in Nov 2012)',
+            line=dict(color='#f5a623', width=2.5),
+            hovertemplate='%{x|%b %Y}: $%{y:,.0f} CAD<extra>CDN Portfolio B</extra>',
+        ))
+    if not us_eq.empty and not cdn_eq.empty:
+        start = cdn_eq.index[0]
         us_aligned = us_eq[us_eq.index >= start]
         if not us_aligned.empty:
-            us_norm = us_aligned / us_aligned.iloc[0] * 100
+            # Scaled to same $100K in Nov 2012 for head-to-head comparison
+            us_h2h = (us_aligned / us_aligned.iloc[0]) * 100000
             overlay_fig.add_trace(go.Scatter(
-                x=us_norm.index, y=us_norm,
-                name='US Portfolio (USD, same-start Nov 2012 base=100)',
-                line=dict(color='#00d97e', width=2, dash='dot'),
+                x=us_h2h.index, y=us_h2h.values,
+                name='US Portfolio (USD — Re-indexed to $100K in Nov 2012)',
+                line=dict(color='#3498db', width=1.8, dash='dot'),
+                hovertemplate='%{x|%b %Y}: $%{y:,.0f} USD (2012 base)<extra>US 2012 Head-to-Head</extra>',
             ))
-        # 2. US Portfolio full 20-year backtest curve from Tab 3 (base=100 in 2005)
-        us_full_norm = us_eq / us_eq.iloc[0] * 100
-        overlay_fig.add_trace(go.Scatter(
-            x=us_full_norm.index, y=us_full_norm,
-            name='US Portfolio (USD, Tab 3 full 2005-2026 backtest base=100)',
-            line=dict(color='#3498db', width=1.5, dash='dash'),
-            visible='legendonly',  # click in legend to overlay
-        ))
 
     overlay_fig.update_layout(
         paper_bgcolor='#1a1a2e', plot_bgcolor='#1a1a2e',
-        margin=dict(l=50, r=20, t=30, b=30), height=320,
-        legend=dict(font=dict(color='#c8c8d4', size=11), bgcolor='rgba(0,0,0,0)', orientation='h', y=1.12, x=0.5, xanchor='center'),
+        margin=dict(l=60, r=20, t=40, b=30), height=380,
+        legend=dict(font=dict(color='#c8c8d4', size=11), bgcolor='rgba(0,0,0,0)', orientation='h', y=1.15, x=0.5, xanchor='center'),
         xaxis=dict(gridcolor='#2d2d44', color='#8888a0'),
-        yaxis=dict(gridcolor='#2d2d44', color='#8888a0', title='Normalized Growth (base=100)'),
+        yaxis=dict(gridcolor='#2d2d44', color='#8888a0', title='Portfolio Value ($)', tickprefix='$', tickformat=',.0f'),
         font=dict(color='#c8c8d4'), hovermode='x unified',
-        title=dict(text='CDN vs US Equity Growth Overlay (Tab 3 US Strategy vs Canadian Portfolio B)', font=dict(size=12, color='#c8c8d4')),
+        title=dict(text='CDN vs US Portfolio Growth ($100,000 Initial Capital — Matching Tab 3 Backtest Engine)', font=dict(size=13, color='#c8c8d4')),
     )
 
     # ── Monthly return heatmap ─────────────────────────────────────────
@@ -2739,7 +2743,7 @@ def build_cdn_portfolio_tab(data):
 
         # Row 2: Equity curve overlay (CDN vs US)
         html.Div([
-            html.H6('CDN vs US Portfolio — Equity Curve Overlay (normalized, same start)',
+            html.H6('CDN vs US Portfolio Growth Overlay ($100,000 Initial Capital — Matching Tab 3)',
                     style={'color': '#c8c8d4', 'marginBottom': '8px'}),
             dcc.Graph(figure=overlay_fig, config={'displayModeBar': False}),
         ], style={**CS, 'marginBottom': '16px'}),
