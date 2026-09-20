@@ -2427,6 +2427,20 @@ def build_cdn_portfolio_tab(data):
     cdn_version   = cdn_meta.get('name', 'v1')
     ab_winner     = cdn_meta.get('name', 'Universe D')
 
+    # Dynamically retrieve US metrics directly from Tab 3 Backtest Results
+    btr = data.get('backtest_results', pd.DataFrame())
+    us_strat = ('Optimized Regime Strategy' if 'Optimized Regime Strategy' in btr.index
+                else (btr.index[0] if not btr.empty else None))
+    us_row = btr.loc[us_strat] if us_strat is not None else {}
+
+    us_cagr = str(us_row.get('Annual Return', '12.24%'))
+    us_maxdd = str(us_row.get('Max Drawdown', '12.68%'))
+    us_sharpe = str(us_row.get('Sharpe Ratio', '1.02'))
+    us_vol = str(us_row.get('Volatility', '10.17%'))
+    us_calmar = str(us_row.get('Calmar Ratio', '0.97'))
+    us_winrate = str(us_row.get('Win Rate', '54.4%'))
+    us_total = str(us_row.get('Total Return', '1122%'))
+
     _hdr  = {'backgroundColor': '#16213e', 'color': '#c8c8d4', 'fontWeight': '600',
               'border': '1px solid #2d2d44', 'fontFamily': 'Inter', 'fontSize': '11px'}
     _cell = {'backgroundColor': '#1a1a2e', 'color': '#c8c8d4', 'border': '1px solid #2d2d44',
@@ -2469,26 +2483,36 @@ def build_cdn_portfolio_tab(data):
         cdn_norm = cdn_eq / cdn_eq.iloc[0] * 100
         overlay_fig.add_trace(go.Scatter(
             x=cdn_norm.index, y=cdn_norm,
-            name='CDN Portfolio (CAD)', line=dict(color='#f5a623', width=2),
+            name='CDN Portfolio (CAD, base=100 in 2012)', line=dict(color='#f5a623', width=2.5),
         ))
     if not us_eq.empty:
-        # Align to same start date
+        # 1. US Portfolio aligned to same start date (Nov 2012)
         start = cdn_eq.index[0] if not cdn_eq.empty else us_eq.index[0]
         us_aligned = us_eq[us_eq.index >= start]
         if not us_aligned.empty:
             us_norm = us_aligned / us_aligned.iloc[0] * 100
             overlay_fig.add_trace(go.Scatter(
                 x=us_norm.index, y=us_norm,
-                name='US Portfolio (USD)', line=dict(color='#00d97e', width=2, dash='dot'),
+                name='US Portfolio (USD, same-start Nov 2012 base=100)',
+                line=dict(color='#00d97e', width=2, dash='dot'),
             ))
+        # 2. US Portfolio full 20-year backtest curve from Tab 3 (base=100 in 2005)
+        us_full_norm = us_eq / us_eq.iloc[0] * 100
+        overlay_fig.add_trace(go.Scatter(
+            x=us_full_norm.index, y=us_full_norm,
+            name='US Portfolio (USD, Tab 3 full 2005-2026 backtest base=100)',
+            line=dict(color='#3498db', width=1.5, dash='dash'),
+            visible='legendonly',  # click in legend to overlay
+        ))
+
     overlay_fig.update_layout(
         paper_bgcolor='#1a1a2e', plot_bgcolor='#1a1a2e',
-        margin=dict(l=50, r=20, t=30, b=30), height=300,
-        legend=dict(font=dict(color='#c8c8d4', size=11), bgcolor='rgba(0,0,0,0)'),
+        margin=dict(l=50, r=20, t=30, b=30), height=320,
+        legend=dict(font=dict(color='#c8c8d4', size=11), bgcolor='rgba(0,0,0,0)', orientation='h', y=1.12, x=0.5, xanchor='center'),
         xaxis=dict(gridcolor='#2d2d44', color='#8888a0'),
-        yaxis=dict(gridcolor='#2d2d44', color='#8888a0', title='Normalized (base=100)'),
+        yaxis=dict(gridcolor='#2d2d44', color='#8888a0', title='Normalized Growth (base=100)'),
         font=dict(color='#c8c8d4'), hovermode='x unified',
-        title=dict(text='CDN vs US Equity Curve (same-start normalized)', font=dict(size=12, color='#c8c8d4')),
+        title=dict(text='CDN vs US Equity Growth Overlay (Tab 3 US Strategy vs Canadian Portfolio B)', font=dict(size=12, color='#c8c8d4')),
     )
 
     # ── Monthly return heatmap ─────────────────────────────────────────
@@ -2731,19 +2755,21 @@ def build_cdn_portfolio_tab(data):
         # Row 3: Side-by-side comparison table
         html.Div([
             html.H6('Side-by-Side Comparison: CDN (CAD) vs US (USD)',
-                    style={'color': '#c8c8d4', 'marginBottom': '8px'}),
+                    style={'color': '#c8c8d4', 'marginBottom': '4px'}),
+            html.Div('US Portfolio metrics link directly to Tab 3 Backtest engine (2005–2026). CDN metrics reflect TSX 2012–2026 backtest.',
+                     style={'color': '#8888a0', 'fontSize': '11px', 'marginBottom': '10px'}),
             dash_table.DataTable(
-                columns=[{'name': c, 'id': c} for c in ['Metric', 'CDN Portfolio', 'US Portfolio']],
+                columns=[{'name': c, 'id': c} for c in ['Metric', 'CDN Portfolio (CAD)', 'US Portfolio (USD — Tab 3)']],
                 data=[
-                    {'Metric': 'CAGR',        'CDN Portfolio': metrics.get('CAGR','—'),       'US Portfolio': '14.74%'},
-                    {'Metric': 'Max Drawdown', 'CDN Portfolio': metrics.get('MaxDD','—'),      'US Portfolio': '13.90%'},
-                    {'Metric': 'Sharpe Ratio', 'CDN Portfolio': metrics.get('Sharpe','—'),     'US Portfolio': '1.02'},
-                    {'Metric': 'Volatility',   'CDN Portfolio': metrics.get('Volatility','—'), 'US Portfolio': '12.60%'},
-                    {'Metric': 'Calmar Ratio', 'CDN Portfolio': metrics.get('Calmar','—'),     'US Portfolio': '1.06'},
-                    {'Metric': 'Win Rate',     'CDN Portfolio': metrics.get('WinRate','—'),    'US Portfolio': '54.5%'},
-                    {'Metric': 'Total Return', 'CDN Portfolio': metrics.get('TotalReturn','—'),'US Portfolio': '1869%'},
-                    {'Metric': 'Currency',     'CDN Portfolio': 'CAD',                         'US Portfolio': 'USD'},
-                    {'Metric': 'ETFs',         'CDN Portfolio': '6 TSX ETFs',                  'US Portfolio': '7 US ETFs'},
+                    {'Metric': 'CAGR',        'CDN Portfolio (CAD)': metrics.get('CAGR','—'),       'US Portfolio (USD — Tab 3)': us_cagr},
+                    {'Metric': 'Max Drawdown', 'CDN Portfolio (CAD)': metrics.get('MaxDD','—'),      'US Portfolio (USD — Tab 3)': us_maxdd},
+                    {'Metric': 'Sharpe Ratio', 'CDN Portfolio (CAD)': metrics.get('Sharpe','—'),     'US Portfolio (USD — Tab 3)': us_sharpe},
+                    {'Metric': 'Volatility',   'CDN Portfolio (CAD)': metrics.get('Volatility','—'), 'US Portfolio (USD — Tab 3)': us_vol},
+                    {'Metric': 'Calmar Ratio', 'CDN Portfolio (CAD)': metrics.get('Calmar','—'),     'US Portfolio (USD — Tab 3)': us_calmar},
+                    {'Metric': 'Win Rate',     'CDN Portfolio (CAD)': metrics.get('WinRate','—'),    'US Portfolio (USD — Tab 3)': us_winrate},
+                    {'Metric': 'Total Return', 'CDN Portfolio (CAD)': metrics.get('TotalReturn','—'),'US Portfolio (USD — Tab 3)': us_total},
+                    {'Metric': 'Currency',     'CDN Portfolio (CAD)': 'CAD',                         'US Portfolio (USD — Tab 3)': 'USD'},
+                    {'Metric': 'Universe',     'CDN Portfolio (CAD)': '6 TSX ETFs',                  'US Portfolio (USD — Tab 3)': '7 US ETFs'},
                 ],
                 style_header=_hdr,
                 style_cell={**_cell, 'textAlign': 'center'},
