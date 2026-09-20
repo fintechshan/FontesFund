@@ -1,13 +1,13 @@
 {
   "name": "Portfolio B (High-Growth 14.6%)",
-  "as_of": "2026-09-19",
+  "as_of": "2026-09-20",
   "tickers": [
     "ZQQ.TO",
     "VFV.TO",
     "ZEB.TO",
-    "XGD.TO",
+    "XBB.TO",
     "CGL-C.TO",
-    "XBB.TO"
+    "XGD.TO"
   ],
   "weights": {
     "goldilocks": {

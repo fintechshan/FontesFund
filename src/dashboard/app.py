@@ -545,9 +545,11 @@ def render_gsblbr_panel(data, title_prefix="🇺🇸"):
             'Economic Activity (Mfg/Output)': 39.5,
         }
     else:
-        row = gs_df.iloc[-1]
+        valid_df = gs_df.dropna(subset=['GSBLBR'])
+        row = valid_df.iloc[-1] if not valid_df.empty else gs_df.iloc[-1]
         reading = float(row.get('GSBLBR', 66.6))
-        as_of = gs_df.index[-1].strftime('%Y-%m') if hasattr(gs_df.index[-1], 'strftime') else str(gs_df.index[-1])[:7]
+        idx = valid_df.index[-1] if not valid_df.empty else gs_df.index[-1]
+        as_of = idx.strftime('%Y-%m') if hasattr(idx, 'strftime') else str(idx)[:7]
         factors = {
             'Shiller P/E (Valuation)': float(row.get('Shiller_Valuation', 90.4)),
             'Labor Tightness (Unemployment)': float(row.get('Labor_Tightness', 87.8)),

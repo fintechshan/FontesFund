@@ -45,8 +45,9 @@ data/db/*
 *.h5
 *.hdf5
 
-# Keep data directory structure
+# Keep data directory structure & indicators
 !data/cache/.gitkeep
+!data/cache/gsblbr_history.csv
 !data/db/.gitkeep
 
 # OS Files
