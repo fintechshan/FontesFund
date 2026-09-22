@@ -166,7 +166,9 @@ def make_equity_curves(all_eq, equity_curve):
     strat_colors = {'Optimized Regime Strategy': '#00d97e',
                     'Aggressive Regime Strategy': '#00d97e',
                     'Basic Regime (upper bound)': '#f5a623', 'Basic Regime Strategy': '#f5a623',
-                    '60/40 Benchmark': '#9b59b6', 'S&P 500': '#3498db', 'All Weather': '#e74c3c'}
+                    '60/40 Benchmark': '#9b59b6', 'S&P 500': '#3498db',
+                    'Nasdaq 100 (QQQ)': '#00e5ff', 'QQQ': '#00e5ff',
+                    'All Weather': '#e74c3c'}
     main_names = {'Optimized Regime Strategy', 'Vol-Targeted Regime Strategy',
                   'Aggressive Regime Strategy'}
 

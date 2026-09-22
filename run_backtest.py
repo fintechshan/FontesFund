@@ -71,7 +71,7 @@ ALL_TICKERS = [
     "URA",                                          # Uranium / AI energy
     "AIPO", "XLY", "XEI.TO", "ZWB.TO",              # A/B test tickers
     "CADUSD=X",                                     # Currency rate for CAD conversion
-    "SHY", "AGG",                                   # Required for defense basket and circuit breaker
+    "SHY", "AGG", "DBC",                            # Required for defense basket and benchmarks
 ]
 
 import time
@@ -475,7 +475,13 @@ spy_result = engine.run_static_backtest(
     name="S&P 500",
 )
 
-logger.info("\n[5] All Weather...")
+logger.info("\n[5] Nasdaq 100 (QQQ)...")
+qqq_result = engine.run_static_backtest(
+    weights={"QQQ": 1.0},
+    name="Nasdaq 100 (QQQ)",
+)
+
+logger.info("\n[6] All Weather...")
 all_weather = engine.run_static_backtest(
     weights={"SPY": 0.30, "TLT": 0.40, "IEF": 0.15, "GLD": 0.075, "DBC": 0.075},
     name="All Weather",
@@ -484,7 +490,7 @@ all_weather = engine.run_static_backtest(
 # ─────────────────────────────────────────────────────────
 # 6. RESULTS COMPARISON
 # ─────────────────────────────────────────────────────────
-results = [vol_result, basic_result, benchmark_60_40, spy_result, all_weather]
+results = [vol_result, basic_result, benchmark_60_40, spy_result, qqq_result, all_weather]
 
 comparison = engine.compare_strategies(results)
 
