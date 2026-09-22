@@ -1870,37 +1870,9 @@ def build_execution_tab(data):
         # ── Row 4: Rebalance Plan ──────────────────────────────────
         html.Div(id='ibkr-rebalance-panel', children=[], style={'marginBottom': '16px'}),
 
-        # ── Row 5: Pre-Trade Risk Checks ───────────────────────────
-        html.Div([
-            html.H6('🛡️ Pre-Trade Risk Checks', style={'color': '#c8c8d4', 'marginBottom': '12px'}),
-            dbc.Row(id='ibkr-risk-checks', children=[
-                dbc.Col(html.Div([
-                    html.Div(c, style={'color': '#8888a0', 'fontSize': '11px'}),
-                    html.Div('⏸ Awaiting', style={'color': '#6c757d', 'fontSize': '13px', 'fontWeight': '600'}),
-                ], style={**CS, 'padding': '10px', 'textAlign': 'center', 'minHeight': '70px'}), md=2) for c in risk_check_names
-            ]),
-        ], style={**CS, 'marginBottom': '16px'}),
-
-        # ── Row 6: Order History ───────────────────────────────────
-        html.Div([
-            html.H6('📜 Order History', style={'color': '#c8c8d4', 'marginBottom': '12px'}),
-            html.Div(id='ibkr-order-history', children=[
-                html.Div('No orders recorded yet. Execute a rebalance to see order history.',
-                         style={'color': '#6c757d', 'fontSize': '13px', 'textAlign': 'center', 'padding': '30px'}),
-            ]),
-        ], style=CS),
-
-        # ── Confirmation Modal ─────────────────────────────────────
-        dbc.Modal([
-            dbc.ModalHeader(dbc.ModalTitle('⚠️ Confirm Paper Trade Execution', style={'color': '#f5a623'}),
-                            style={'backgroundColor': '#1a1a2e', 'borderBottom': '1px solid #2d2d44'}),
-            dbc.ModalBody(id='execute-confirm-body',
-                          style={'backgroundColor': '#1a1a2e', 'color': '#c8c8d4'}),
-            dbc.ModalFooter([
-                dbc.Button('Cancel', id='btn-cancel-execute', color='secondary', outline=True),
-                dbc.Button('✅ Confirm Execute (Paper)', id='btn-confirm-execute', color='danger'),
-            ], style={'backgroundColor': '#1a1a2e', 'borderTop': '1px solid #2d2d44'}),
-        ], id='execute-confirm-modal', is_open=False, centered=True),
+        # ═══════════════════════════════════════════════════════════════════════════
+        # TAB 4: EXECUTION — REMOVED FOR PUBLIC SERVER SECURITY
+        # ═══════════════════════════════════════════════════════════════════════════
     ])
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2894,23 +2866,10 @@ def create_app(data):
                     label_style={'fontFamily': 'Inter'}, active_label_style={'color': rc, 'fontWeight': '700'}),
             dbc.Tab(build_backtest_tab(data), label='📈 Backtest', tab_id='t3',
                     label_style={'fontFamily': 'Inter'}, active_label_style={'color': rc, 'fontWeight': '700'}),
-            dbc.Tab(html.Div([
-                html.Div([
-                    html.H4('⚡ Execution Module — Suspended', style={'color': '#f5a623', 'marginBottom': '12px'}),
-                    html.P('The IBKR paper-trading integration has been suspended while evaluating a switch to MOOMOO Canada.',
-                           style={'color': '#c8c8d4', 'fontSize': '14px', 'marginBottom': '8px'}),
-                    html.P('Tabs 1–3 (Regime Monitor, Portfolio, Backtest) and Tab 5 (Auditor) remain fully operational.',
-                           style={'color': '#8888a0', 'fontSize': '13px'}),
-                ], style={'textAlign': 'center', 'padding': '60px 40px',
-                          'backgroundColor': '#16213e', 'borderRadius': '8px', 'margin': '40px auto',
-                          'maxWidth': '600px', 'border': '1px solid #2d2d44'}),
-            ], style={'padding': '20px'}), label='⚡ Execution (Suspended)', tab_id='t4',
-                    label_style={'fontFamily': 'Inter', 'color': '#666'}, active_label_style={'color': '#f5a623', 'fontWeight': '700'}),
+            dbc.Tab(build_cdn_portfolio_tab(data), label='🍁 CDN Portfolio', tab_id='t4',
+                    label_style={'fontFamily': 'Inter'}, active_label_style={'color': '#f5a623', 'fontWeight': '700'}),
             dbc.Tab(build_auditor_tab(data), label='🔍 Auditor', tab_id='t5',
                     label_style={'fontFamily': 'Inter'}, active_label_style={'color': rc, 'fontWeight': '700'}),
-            dbc.Tab(build_cdn_portfolio_tab(data), label='🍁 CDN Portfolio', tab_id='t6',
-                    label_style={'fontFamily': 'Inter'}, active_label_style={'color': '#f5a623', 'fontWeight': '700'}),
-
         ], id='tabs', active_tab='t1', style={'marginBottom': '16px', 'padding': '0 20px'}),
         dcc.Interval(id='refresh-interval', interval=5*60*1000, n_intervals=0),
     ], style={'fontFamily': 'Inter, sans-serif', 'minHeight': '100vh', 'backgroundColor': '#0f0f1e', 'paddingBottom': '30px'})
@@ -2919,10 +2878,9 @@ def create_app(data):
     def update_ts(n):
         return f'Last: {datetime.now().strftime("%H:%M:%S")}'
 
-    # ── IBKR Execution Callbacks ──────────────────────────────────────
-
-    @app.callback(
-        [Output('ibkr-live-panel-wrap', 'children'),
+    return app
+"""
+    # ── Legacy Execution Callbacks (Disabled on Public Server) ───────────
          Output('ibkr-status-card', 'children', allow_duplicate=True),
          Output('ibkr-nav-card', 'children', allow_duplicate=True),
          Output('ibkr-pnl-card', 'children', allow_duplicate=True),

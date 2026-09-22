@@ -30,13 +30,8 @@ SYNC_FILES = [
     'data/cache/gsblbr_history.csv',
 ]
 
-# IBKR account snapshot — written by scripts/ibkr_snapshot.py (local, TWS) or the
-# IBKR connector, NOT by the daily backtest. Synced separately so the Execution
-# panel survives scale-to-zero and updates whenever a fresh snapshot is pushed.
-IBKR_FILES = [
-    'data/cache/ibkr_account.json',
-    'data/cache/ibkr_equity_history.csv',
-]
+# IBKR account snapshot — removed for public server security
+IBKR_FILES = []
 
 
 def _bucket():

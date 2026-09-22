@@ -401,42 +401,10 @@ except Exception as e:
     logger.warning(f"AI Trend Intelligence unavailable: {e}")
     ai_trend = {}
 
-# ── Initialize IBKR Execution Modules ─────────────────────────────────────
-# SUSPENDED: IBKR integration paused while evaluating switch to MOOMOO Canada.
-# Set ENABLE_IBKR=1 to re-enable.
+# ── Execution Modules (Disabled for Public Deployment) ───────────────────
 _ibkr_broker = None
 _ibkr_risk_mgr = None
 _ibkr_order_mgr = None
-if os.environ.get('ENABLE_IBKR', '0') == '1':
-    logger.info("Initializing IBKR execution modules...")
-    try:
-        from src.execution.broker import IBKRBroker
-        from src.execution.risk_manager import RiskManager
-        from src.execution.order_manager import OrderManager
-        _ibkr_host = os.environ.get('IBKR_HOST', '127.0.0.1')
-        _ibkr_port = int(os.environ.get('IBKR_PORT', '7497'))
-        _ibkr_client_id = int(os.environ.get('IBKR_CLIENT_ID', '1'))
-        _ibkr_broker = IBKRBroker(host=_ibkr_host, port=_ibkr_port, client_id=_ibkr_client_id)
-        _ibkr_risk_mgr = RiskManager()
-        _ibkr_order_mgr = OrderManager()
-        logger.info(f"Execution modules initialized — IBKR target: {_ibkr_host}:{_ibkr_port}")
-
-        # Auto-connect when running on Cloud Run with IB Gateway VM (non-localhost)
-        if _ibkr_host != '127.0.0.1':
-            try:
-                if _ibkr_broker.connect():
-                    accounts = _ibkr_broker._ib.managedAccounts() if _ibkr_broker._ib else []
-                    logger.info(f"IBKR auto-connect SUCCESS — accounts: {accounts}")
-                else:
-                    logger.warning(f"IBKR auto-connect to {_ibkr_host}:{_ibkr_port} failed — check IB Gateway VM")
-            except Exception as conn_err:
-                logger.warning(f"IBKR auto-connect error: {conn_err}")
-        else:
-            logger.info("Local mode — click Connect in Execution tab to link TWS")
-    except Exception as exec_err:
-        logger.warning(f"Execution module init failed: {exec_err} — Execution tab will show OFFLINE")
-else:
-    logger.info("IBKR execution modules SUSPENDED (ENABLE_IBKR not set). Execution tab is inactive.")
 
 # ── Load Canadian ETF Portfolio Data ──────────────────────────────────────
 CDN_EQUITY_CURVE    = pd.Series(dtype=float)
@@ -536,10 +504,6 @@ DASHBOARD_DATA = {
         'backtest_results': backtest_mtime,
         'audit_run': audit_time,
     },
-    # IBKR Execution objects (underscore-prefixed for internal use)
-    '_broker': _ibkr_broker,
-    '_risk_manager': _ibkr_risk_mgr,
-    '_order_manager': _ibkr_order_mgr,
 }
 
 # ── Hermes Agent Integration ───────────────────────────────────────────────

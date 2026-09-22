@@ -158,8 +158,7 @@ monitored. Impact is ~neutral (13.82%→13.72%; SMH overlaps SOXX, risk-parity r
 inverse-vol). DRAM has short history (lists Apr-2026) so it only contributes recently.
 
 ### Live IBKR account integration in the Execution tab (2026-06-25)
-The Execution tab now shows the **real IBKR account** (paper `DUQ963925`, repointable to the
-live account later), not just a simulated/offline broker view. Because Cloud Run is stateless
+The Execution tab previously referenced an IBKR paper trading account, which has been removed for public deployment. Because Cloud Run is stateless
 and cannot reach the local TWS socket, the bridge is a **snapshot file**:
 - `scripts/ibkr_snapshot.py` (read-only; run locally with TWS up) writes
   `data/cache/ibkr_account.json` (+ `ibkr_equity_history.csv`): NAV, positions, weights, P&L,
