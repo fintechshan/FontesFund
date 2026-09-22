@@ -68,8 +68,20 @@ python -m src.dashboard.app
 
 ### 4. Run Backtest (CLI)
 ```bash
-python scripts/run_backtest.py
+python run_backtest.py
 ```
+
+## Deployment (Render)
+
+The live dashboard is a Docker web service on **Render**, triggered by GitHub
+Actions. GitHub Pages is not used. Google Cloud Run, GCS, and Cloud Scheduler
+are legacy — the new path does not need them.
+
+Full one-time checklist (account, Blueprint, secret names, URL):
+[`docs/DEPLOY_RENDER.md`](docs/DEPLOY_RENDER.md).
+
+Expected URL: `https://fontesfund-dashboard.onrender.com` (Render will show the
+real hostname if that one is taken). Health check: `GET /healthz`.
 
 ## Portfolio Configuration
 

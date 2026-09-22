@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -85,6 +86,12 @@ def _get_finbert():
     if _FINBERT_TRIED:
         return _FINBERT
     _FINBERT_TRIED = True
+    # Free/starter Render instances are 512 MB. Loading FinBERT OOMs the process.
+    # Unset or "1" keeps the previous behavior (try the model, lexicon on failure).
+    if os.getenv("FINBERT_ENABLED", "1").strip().lower() in {"0", "false", "no", "off"}:
+        logger.info("FINBERT_ENABLED=0; using finance-lexicon fallback.")
+        _FINBERT = None
+        return None
     try:
         from transformers import pipeline  # heavy import, guarded
         _FINBERT = pipeline("text-classification", model="ProsusAI/finbert",

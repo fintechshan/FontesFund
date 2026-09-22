@@ -1,0 +1,63 @@
+# Replaces the legacy Cloud Scheduler job etf-daily-refresh (11:00 UTC).
+# Wakes the Render service and POSTs /tasks/refresh.
+#
+# Free-tier limit: the container disk is ephemeral and the instance sleeps
+# after 15 idle minutes, which discards the files this call writes. The next
+# cold start serves the CSVs baked into the image. To keep new results, run
+# run_backtest.py, commit data/backtest_results/*.csv, and push.
+#
+# Secrets: DASHBOARD_URL (https://<service>.onrender.com, no trailing slash),
+# REFRESH_TOKEN (same value as the Render env var).
+
+name: Refresh dashboard data
+
+on:
+  schedule:
+    - cron: "0 11 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: POST /tasks/refresh
+        env:
+          DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
+          REFRESH_TOKEN: ${{ secrets.REFRESH_TOKEN }}
+        run: |
+          if [ -z "${DASHBOARD_URL}" ] || [ -z "${REFRESH_TOKEN}" ]; then
+            echo "::error::Set GitHub Actions secrets DASHBOARD_URL and REFRESH_TOKEN. See docs/DEPLOY_RENDER.md."
+            exit 1
+          fi
+          url="${DASHBOARD_URL%/}"
+          # Free instances take about a minute to leave spin-down. Retry while
+          # the proxy is still waking the container. Do not retry an auth or
+          # application failure.
+          for attempt in 1 2 3 4 5 6; do
+            set +e
+            code="$(curl -sS -o /tmp/refresh.json -w "%{http_code}" --max-time 600 \
+              -X POST "${url}/tasks/refresh" \
+              -H "X-Refresh-Token: ${REFRESH_TOKEN}")"
+            curl_rc=$?
+            set -e
+            if [ "${curl_rc}" -ne 0 ]; then
+              code="000"
+            fi
+            echo "attempt ${attempt} status ${code}"
+            if [ "${code}" = "200" ]; then
+              cat /tmp/refresh.json
+              echo
+              exit 0
+            fi
+            if [ -f /tmp/refresh.json ]; then
+              cat /tmp/refresh.json || true
+              echo
+            fi
+            case "${code}" in
+              401|400|500|504) exit 1 ;;
+            esac
+            sleep 20
+          done
+          echo "::error::Dashboard did not accept /tasks/refresh."
+          exit 1

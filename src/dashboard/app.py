@@ -1428,10 +1428,10 @@ def build_backtest_tab(data):
 # ═══════════════════════════════════════════════════════════════════════════
 IBKR_SNAPSHOT_PATH = Path(__file__).resolve().parents[2] / 'data' / 'cache' / 'ibkr_account.json'
 
-# Cloud Run sets K_SERVICE; locally it is unset. Trading controls need a live TWS
-# socket (127.0.0.1:7497), which is unreachable from Cloud Run — so on the hosted
-# site we hide the Connect/Preview/Execute controls and show a local-only note.
-IS_CLOUD_RUN = bool(os.environ.get('K_SERVICE'))
+# Trading controls need a live TWS socket (127.0.0.1:7497). Hosted containers
+# cannot reach it, so Connect/Preview/Execute stay hidden there.
+# Legacy Cloud Run sets K_SERVICE. Render sets RENDER=true.
+IS_CLOUD_RUN = bool(os.environ.get('K_SERVICE') or os.environ.get('RENDER'))
 
 
 def _load_ibkr_snapshot():
