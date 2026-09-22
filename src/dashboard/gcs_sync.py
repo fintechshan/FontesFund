@@ -1,12 +1,15 @@
 """
 src/dashboard/gcs_sync.py
 =========================
-Persist the daily-refreshed data caches in a GCS bucket so they survive Cloud Run's
-scale-to-zero (the container filesystem is ephemeral; only the baked image data would
-otherwise be shown). At startup the app pulls the latest caches from GCS; after a
-`/tasks/refresh` run the fresh caches are pushed back.
+Optional legacy sync with the GCS bucket `montesfund-etf-dashboard-data`.
 
-No-op when GCS_BUCKET is unset (e.g. local dev) — the app just uses local/baked data.
+The Render deploy does not set GCS_BUCKET. Every function here returns immediately
+in that case and the dashboard reads files on local disk (baked into the image
+from `data/backtest_results/`, plus anything `/tasks/refresh` wrote on this instance).
+
+When GCS_BUCKET is set, startup pulls caches from the bucket and `/tasks/refresh`
+pushes them back. That path exists so the old Cloud Run service can keep running
+until it is torn down. This module does not create or delete GCP resources.
 """
 import os
 import logging

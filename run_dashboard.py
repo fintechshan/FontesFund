@@ -164,8 +164,8 @@ logger.info("=" * 60)
 logger.info("  ETF REGIME STRATEGIST — DASHBOARD LAUNCHER")
 logger.info("=" * 60)
 
-# Pull the latest daily-refreshed caches from GCS before loading (no-op if
-# GCS_BUCKET is unset). This is what lets fresh data survive Cloud Run scale-to-zero.
+# Optional legacy GCS pull before loading. No-op when GCS_BUCKET is unset
+# (the Render path). The app then uses files already on disk.
 try:
     from src.dashboard.gcs_sync import download_data as _gcs_download
     _gcs_download()
@@ -627,7 +627,18 @@ def start_background_updater(app_data):
                 send_hermes_notification(HERMES_DATA['latest_alert'])
         except Exception as he:
             logger.error(f"Error sending initial Hermes report/alert: {he}")
-        
+
+        # Render free/starter is 512 MB and the price/macro caches are not in
+        # the image. An automatic run_backtest.py here OOM-kills the web process.
+        # The Blueprint sets DISABLE_STARTUP_REFRESH=1. Unset locally and on the
+        # legacy Cloud Run service, so this block keeps the old behavior there.
+        if os.environ.get("DISABLE_STARTUP_REFRESH", "0").strip().lower() in {"1", "true", "yes", "on"}:
+            logger.info(
+                "DISABLE_STARTUP_REFRESH is set; serving baked files. "
+                "POST /tasks/refresh to regenerate on this instance."
+            )
+            return
+
         logger.info("Checking if data caches are stale or missing...")
         stale = False
         
@@ -884,6 +895,13 @@ if __name__ == '__main__':
     def hermes_rebalance_alert():
         return jsonify(HERMES_DATA['latest_alert'])
 
+    # Render (and any other proxy) probes this before sending traffic.
+    # It is registered only once the Dash app has finished building, which is
+    # when the process is actually able to serve pages.
+    @server.route('/healthz', methods=['GET'])
+    def healthz():
+        return jsonify({'ok': True, 'service': 'fontesfund-dashboard'}), 200
+
     # ── IBKR Status API Endpoint ──────────────────────────────────────────
     @server.route('/api/ibkr/status', methods=['GET'])
     def ibkr_status():
@@ -902,10 +920,13 @@ if __name__ == '__main__':
                 result['error'] = str(e)
         return jsonify(result)
     
-    # ── Daily refresh endpoint (triggered by Cloud Scheduler) ─────────────
-    # Runs the backtest synchronously (CPU is allocated during the request, so it
-    # actually completes — unlike a background thread under CPU throttling), then
-    # pushes the fresh caches to GCS. Token-protected so only the scheduler can call it.
+    # ── Daily refresh endpoint ────────────────────────────────────────────
+    # Token-protected (header X-Refresh-Token or ?token=). The GitHub Actions
+    # workflow refresh-dashboard.yml POSTs here. The legacy Cloud Scheduler job
+    # etf-daily-refresh used the same route.
+    # Runs the backtest in-process, then pushes caches to GCS only when
+    # GCS_BUCKET is set. On Render that variable is unset, so the new files stay
+    # on this instance's disk until the next spin-down or deploy.
     @server.route('/tasks/refresh', methods=['POST', 'GET'])
     def tasks_refresh():
         import subprocess
@@ -987,9 +1008,13 @@ if __name__ == '__main__':
             except Exception:
                 pass
             ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            logger.info(f"/tasks/refresh OK at {ts}; uploaded {len(uploaded)} backtest + {len(ibkr_uploaded)} IBKR files to GCS.")
+            if os.environ.get('GCS_BUCKET', '').strip():
+                gcs_note = (f"uploaded {len(uploaded)} backtest + {len(ibkr_uploaded)} IBKR files to GCS")
+            else:
+                gcs_note = "GCS_BUCKET unset; caches updated on local disk only"
+            logger.info(f"/tasks/refresh OK at {ts}; {gcs_note}.")
             return jsonify({'ok': True, 'refreshed_at': ts, 'uploaded': uploaded, 'ibkr_uploaded': ibkr_uploaded,
-                            'headline': headline})
+                            'headline': headline, 'gcs': gcs_note})
         except subprocess.TimeoutExpired:
             return jsonify({'ok': False, 'error': 'timeout'}), 504
         except Exception as e:
@@ -1002,4 +1027,5 @@ if __name__ == '__main__':
     import os
     port = int(os.environ.get('PORT', 8050))
     logger.info(f"Starting dashboard on port {port}")
-    app.run(debug=False, host='0.0.0.0', port=port)
+    # threaded so /healthz still answers while /tasks/refresh runs the backtest.
+    app.run(debug=False, host='0.0.0.0', port=port, threaded=True)

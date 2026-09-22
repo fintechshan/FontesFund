@@ -1,0 +1,29 @@
+# Triggers a Render build of the Dockerfile. Render compiles the image;
+# this workflow does not docker-build (the image includes CPU torch).
+# Secret: RENDER_DEPLOY_HOOK_URL (service Settings → Deploy Hook).
+# See docs/DEPLOY_RENDER.md.
+
+name: Deploy to Render
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: render-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render deploy hook
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "${RENDER_DEPLOY_HOOK_URL}" ]; then
+            echo "::error::Missing GitHub Actions secret RENDER_DEPLOY_HOOK_URL. Create the Render Blueprint, copy the service Deploy Hook URL, and add it as that secret. See docs/DEPLOY_RENDER.md."
+            exit 1
+          fi
+          curl --fail-with-body -sS -X POST "${RENDER_DEPLOY_HOOK_URL}"

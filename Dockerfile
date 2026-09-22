@@ -36,8 +36,9 @@ AutoModelForSequenceClassification.from_pretrained('ProsusAI/finbert')"
 # Copy project files
 COPY . .
 
-# Expose port (Cloud Run will override this via $PORT, but 8080 is default)
-EXPOSE 8080
+# Render injects PORT (default 10000) and the app binds 0.0.0.0:$PORT.
+# Local `python run_dashboard.py` still defaults to 8050 when PORT is unset.
+EXPOSE 10000
 
 # Launch the launcher script
 CMD ["python", "run_dashboard.py"]
