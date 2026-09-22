@@ -8,7 +8,7 @@ yfinance>=0.2.18
 finnhub-python>=2.4.18
 nasdaq-data-link>=1.0.4
 
-# Optional legacy GCS sync. Unused on the Render path unless GCS_BUCKET is set.
+# Cloud persistence (daily-refreshed caches survive Cloud Run scale-to-zero)
 google-cloud-storage>=2.10.0
 
 # Regime Detection

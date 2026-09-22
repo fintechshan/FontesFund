@@ -28,14 +28,13 @@ load_dotenv(PROJECT_ROOT / ".env")
 # API Keys
 # ---------------------------------------------------------------------------
 # SECURITY: No hardcoded key fallback. Set FRED_API_KEY in .env or as a
-# host environment variable (Render Blueprint, or the legacy Cloud Run service).
-# The app warns and degrades gracefully if the key is missing (yfinance data
-# still works; only FRED series fail).
+# Cloud Run environment variable. The app will warn and degrade gracefully
+# if the key is missing (yfinance data still works; only FRED series fail).
 FRED_API_KEY: str = os.getenv("FRED_API_KEY", "")
 if not FRED_API_KEY:
     logger.warning(
         "FRED_API_KEY is not set. Macro data from FRED will be unavailable. "
-        "Set this in the Render service environment or a .env file."
+        "Set this via Cloud Run --set-env-vars or a .env file."
     )
 FINNHUB_API_KEY: str = os.getenv("FINNHUB_API_KEY", "")
 

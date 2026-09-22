@@ -3,9 +3,8 @@
 > **For any AI agent or model working on this repo (Claude Opus 4.8/4.6, Claude Sonnet,
 > Gemini, etc.):** this file is the single source of truth for the *current* strategy,
 > results, and deployment. It supersedes any older numbers in `README.md` or in code
-> comments. Read this before changing the backtester or the strategy. Strategy
-> numbers last updated **2026-06-22**. Deployment section updated **2026-09-22**
-> (Render + GitHub Actions; §1 numbers unchanged).
+> comments. Read this before changing the backtester or the strategy. Last updated
+> **2026-06-22** by Claude Opus 4.8.
 
 ---
 
@@ -98,68 +97,34 @@ monthly rebalance.
 
 ## 3. Deployment
 
-**Host: Render Docker web service, deployed by GitHub Actions.** Step-by-step
-clicks are in [`docs/DEPLOY_RENDER.md`](docs/DEPLOY_RENDER.md). GitHub Pages is
-not part of this path — Dash is a long-running process.
-
-Google Cloud Run, the GCS bucket `montesfund-etf-dashboard-data`, and Cloud
-Scheduler job `etf-daily-refresh` are **legacy**. Leave them in place until the
-Render URL is serving traffic, then tear them down by hand. This repo does not
-delete GCP resources. `src/dashboard/gcs_sync.py` still talks to GCS when
-`GCS_BUCKET` is set, and is a no-op otherwise. The Render Blueprint does not set it.
-
-- **App:** Plotly Dash in `run_dashboard.py` (+ `src/dashboard/`), image from
-  [`Dockerfile`](Dockerfile). It calls `run_optimized_regime_backtest` at all 4
-  sites — **the deployed app matches the config in §1.** If you change the
-  production config, update **both** `run_backtest.py` and the 4 call sites in
-  `run_dashboard.py`.
-- **Process:** Render sets `PORT` (default 10000). The process binds
-  `0.0.0.0:$PORT`. Readiness probe is `GET /healthz` (200). Local runs with
-  `PORT` unset still use 8050.
-- **Ship path:** [`render.yaml`](render.yaml) defines the web service (free
-  instance, Docker, `healthCheckPath: /healthz`, `autoDeployTrigger: off`).
-  [`.github/workflows/deploy-render.yml`](.github/workflows/deploy-render.yml)
-  runs on push to `main` and `POST`s the Render deploy hook
-  (`RENDER_DEPLOY_HOOK_URL`). Render builds the Dockerfile. The workflow does
-  not build a second image. Auto-deploy is off so a push produces one build.
-- **Public URL:** `https://fontesfund-dashboard.onrender.com`, unless that
-  hostname is already taken — then use the `onrender.com` URL shown on the
-  service page.
-- **What the cold start shows:** `data/backtest_results/*.csv` is in git and is
-  copied into the image. `data/cache/*` (prices, macro, IBKR snapshot) is
-  gitignored, so a fresh instance does not have those files. Regime/backtest
-  tabs still render from the committed result CSVs.
-- **Refresh:** `POST /tasks/refresh` with header `X-Refresh-Token` runs
-  `run_backtest.py` inside the container.
-  [`.github/workflows/refresh-dashboard.yml`](.github/workflows/refresh-dashboard.yml)
-  calls it weekdays at 11:00 UTC (the old scheduler clock). On the free
-  instance the disk is ephemeral and the process sleeps after 15 idle minutes,
-  which drops those writes. The next cold start shows the image-baked CSVs
-  again. A durable update is `python run_backtest.py` wherever you have the
-  RAM, then commit the regenerated `data/backtest_results/*.csv` and push so
-  the deploy workflow rebuilds the image. Free instances cannot attach a
-  persistent disk, so the Blueprint does not define one.
-- **RAM:** Free and Starter are both 512 MB. The Blueprint sets
-  `FINBERT_ENABLED=0` (display-only lexicon sentiment) and
-  `DISABLE_STARTUP_REFRESH=1` so boot does not load FinBERT or spawn a
-  backtest. If the process is still killed for memory, change `plan: free` to
-  `plan: standard` (2 GB) and you can set `FINBERT_ENABLED=1`. Starter does
-  not add RAM.
-- **Secrets:** `FRED_API_KEY` is read from the environment (`config/settings.py`;
-  no hardcoded key). On Render, set `FRED_API_KEY`, `FINNHUB_API_KEY`, and
-  `REFRESH_TOKEN` in the service env (the Blueprint prompts). GitHub Actions
-  secrets, exact names: `RENDER_DEPLOY_HOOK_URL`, `DASHBOARD_URL`,
-  `REFRESH_TOKEN` (same token as the Render env). The old FRED key (`534c2e45…`)
-  and the `REFRESH_TOKEN` that leaked into a gcloud log still need rotation on
-  any host where they remain.
-- **Startup fragility:** the Dash layout is built before the port opens. A crash
-  in a `build_*_tab` fails the health check (Render waits up to 15 minutes).
-  Render-test a tab offline before deploying UI changes (see the `_row`-shadowing
-  incident, 2026-07-05).
+- **App:** the Plotly Dash dashboard in `run_dashboard.py` (+ `src/dashboard/`),
+  containerised via [`Dockerfile`](Dockerfile), shipped to **Google Cloud Run**
+  (see `.gcloudignore`). It now calls `run_optimized_regime_backtest` at all 4 sites —
+  **the deployed app matches the config in §1.** If you change the production config,
+  update **both** `run_backtest.py` and the 4 call sites in `run_dashboard.py`.
+- **Auto-refresh architecture (2026-07, replaces "redeploy to refresh"):** the caches
+  persist in GCS bucket `montesfund-etf-dashboard-data` (`src/dashboard/gcs_sync.py`).
+  - *Backtest/regime data:* Cloud Scheduler job `etf-daily-refresh` (11:00 UTC daily)
+    POSTs `/tasks/refresh` (token-protected, `REFRESH_TOKEN` env) → runs
+    `run_backtest.py` in-container → uploads fresh CSVs/caches to GCS. Containers pull
+    from GCS at startup (`download_data()`), so scale-to-zero no longer freezes data.
+  - *IBKR account snapshot:* Windows task `ETF-IBKR-Snapshot` (daily 9:00 China time)
+    runs `scripts/refresh_ibkr_snapshot.ps1` → `ibkr_snapshot.py` (needs TWS/Gateway UP,
+    else fails cleanly without clobbering GCS) → pushes `ibkr_account.json` to GCS. The
+    Execution tab **re-pulls from GCS every 10 min** (`ibkr-snapshot-refresh` interval →
+    `download_ibkr()`), so new snapshots appear on the live site without a redeploy.
+  - Manual refresh of results is still `python run_backtest.py` (~30s) + deploy, or just
+    hit `/tasks/refresh`.
 - **Reproduce:** `python run_backtest.py` (full engine, ~30s). Fast parameter
-  exploration: `python optimize_strategy.py` and `python extend_rp_mf.py`
-  (vectorized harnesses, <2s; same data/regime logic as production).
-  Production-faithful variant A/B: `ab_universe.py`.
+  exploration: `python optimize_strategy.py` and `python extend_rp_mf.py` (vectorized
+  harnesses, <2s; same data/regime logic as production). Production-faithful variant
+  A/B: `ab_universe.py`.
+- **Secrets:** `config/settings.py` reads `FRED_API_KEY` from `.env`/env vars (hardcoded
+  key removed 2026-06-27; the exposed key `534c2e45…` is set as a Cloud Run env var —
+  **still needs rotation**, as does `REFRESH_TOKEN` which leaked into a gcloud log).
+- **Startup fragility note:** the Dash layout is built eagerly at container start; a
+  crash anywhere in a `build_*_tab` bricks the revision (probe timeout). Before deploying
+  UI changes, render-test the tab offline (see the `_row`-shadowing incident, 2026-07-05).
 
 ## 4. Data integrity (known issues — fix before live trading)
 
@@ -194,20 +159,16 @@ inverse-vol). DRAM has short history (lists Apr-2026) so it only contributes rec
 
 ### Live IBKR account integration in the Execution tab (2026-06-25)
 The Execution tab now shows the **real IBKR account** (paper `DUQ963925`, repointable to the
-live account later), not just a simulated/offline broker view. The hosted container
-(Render, and the legacy Cloud Run service) cannot reach the local TWS socket, so the
-bridge is a **snapshot file**:
+live account later), not just a simulated/offline broker view. Because Cloud Run is stateless
+and cannot reach the local TWS socket, the bridge is a **snapshot file**:
 - `scripts/ibkr_snapshot.py` (read-only; run locally with TWS up) writes
   `data/cache/ibkr_account.json` (+ `ibkr_equity_history.csv`): NAV, positions, weights, P&L,
   TWR. Works for the paper account now and the real account later (`--allow-live` guards non-`DU`).
 - `build_ibkr_live_panel()` in `src/dashboard/app.py` reads that JSON and renders a
   **live-vs-target drift / tracking analysis** (active-share), an NAV-since-inception curve,
   and headline NAV/P&L/TWR cards. Falls back to a "run the snapshot script" hint if absent.
-- **To refresh:** rerun `python scripts/ibkr_snapshot.py`. The Execution tab reads
-  `data/cache/ibkr_account.json` off the container disk. That directory is gitignored,
-  so a Render rebuild includes a new snapshot only if the file is force-added before
-  the deploy. A GCS push still runs when `GCS_BUCKET` is set; the Render Blueprint
-  leaves that variable unset.
+- **To refresh:** rerun `python scripts/ibkr_snapshot.py` then redeploy (the JSON is baked into
+  the image via `COPY . .`; it is NOT in `.gcloudignore`/`.dockerignore`).
 - ⚠️ Account base currency is **CAD** while the 8 ETFs are **USD** → IBKR auto-financed the USD
   buys with a USD margin loan (displayed leverage ~1.37). This is a currency-financing artifact,
   not strategy leverage; surfaced in the panel's note. To remove it, convert CAD→USD in TWS first.
@@ -220,11 +181,7 @@ bridge is a **snapshot file**:
 | `scripts/ibkr_snapshot.py` | Read-only IBKR snapshot → `data/cache/ibkr_account.json` (Execution tab) |
 | `scripts/ibkr_rebalance.py` | Local paper/live rebalance to current regime weights (`--execute`) |
 | `run_backtest.py` | CLI 20-yr validation; regenerates result CSVs |
-| `run_dashboard.py` | Deployed Dash app (Render); calls the production method |
-| `render.yaml` | Render Blueprint: Docker web service, health check, env vars |
-| `.github/workflows/deploy-render.yml` | Push to `main` → Render deploy hook |
-| `.github/workflows/refresh-dashboard.yml` | Weekday 11:00 UTC `POST /tasks/refresh` |
-| `docs/DEPLOY_RENDER.md` | One-time Render + GitHub secret checklist |
+| `run_dashboard.py` | Deployed Dash app (Cloud Run); calls the production method |
 | `config/regime_rules.py` | `REGIME_WEIGHTS`, risk limits, targets |
 | `optimize_strategy.py`, `extend_rp_mf.py` | Vectorized research harnesses (RP + MF prototypes) |
 | `RECOMMENDATION.md` | Full audit write-up & handoff (more detail than this file) |
