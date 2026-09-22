@@ -2,7 +2,17 @@
 20-Year Backtest Validation Script
 ====================================
 Downloads 20 years of ETF + macro data, runs regime detection,
-then backtests the Vol-Targeted Regime Strategy to validate:
+then backtests the Vol-Targeted Regime Strategy (v7 dual sleeve).
+
+  FONTES_RUN_MODE=backtest  (default) — XLY proxies the AIPO sleeve
+  FONTES_RUN_MODE=live                — AIPO live book
+  FONTES_WEIGHT_MODE=cash   (default) — missing history stays cash
+  FONTES_WEIGHT_MODE=renorm           — legacy silent renorm A/B
+
+Official public-FRED numbers (simplified engine) live in
+docs/V7_FRED_DUAL_RESULTS.md — do not cite the old v5.1 8-ETF headline.
+
+Aspirational gates still printed:
   - Annual Return >= 16%
   - Max Drawdown < 14.8%
   - Sharpe Ratio >= 1.2
@@ -47,6 +57,8 @@ from config.settings import FRED_API_KEY
 from config.regime_rules import (
     REGIME_WEIGHTS, PERFORMANCE_TARGETS,
     MOMENTUM_CONFIG, VOL_TARGET_CONFIG,
+    get_universe, get_regime_weights_for_mode,
+    get_run_mode, get_weight_mode,
 )
 
 logger.info("=" * 70)
@@ -63,16 +75,25 @@ import yfinance as yf
 START_DATE = "2005-01-01"
 END_DATE = datetime.now().strftime("%Y-%m-%d")
 
-# All ETFs in the simplified 7-ticker portfolio (v7)
-ALL_TICKERS = [
-    "QQQ", "SOXX", "SPY", "SPYI",                   # Equity + Income
-    "TLT", "IEF", "GLD",                            # Bonds + Gold
-    "DBMF",                                         # Managed futures
-    "URA",                                          # Uranium / AI energy
-    "AIPO", "XLY", "XEI.TO", "ZWB.TO",              # A/B test tickers
-    "CADUSD=X",                                     # Currency rate for CAD conversion
-    "SHY", "AGG",                                   # Required for defense basket and circuit breaker
+# Dual mode (v7):
+#   live     -> AIPO sleeve (real production book)
+#   backtest -> XLY proxy for that sleeve (long history from 2005)
+# This script is the research/backtest entrypoint → default BACKTEST mode.
+# FONTES_WEIGHT_MODE=cash (default) keeps missing-history weight as cash;
+# pass FONTES_WEIGHT_MODE=renorm for the legacy silent-renorm A/B.
+RUN_MODE = get_run_mode("backtest")          # "backtest" | "live"
+WEIGHT_MODE = get_weight_mode("cash")        # "cash" | "renorm"
+V7_TICKERS = get_universe(RUN_MODE)
+ALL_TICKERS = V7_TICKERS + [
+    "SHY", "AGG",          # defense basket / circuit breaker
+    "CADUSD=X",            # FX if CAD sleeves used in A/B
 ]
+# Always download both sleeve tickers so mode can flip without re-fetch.
+for _extra in ("AIPO", "XLY"):
+    if _extra not in ALL_TICKERS:
+        ALL_TICKERS.append(_extra)
+logger.info("FONTES_RUN_MODE=%s  FONTES_WEIGHT_MODE=%s  universe=%s",
+            RUN_MODE, WEIGHT_MODE, V7_TICKERS)
 
 import time
 from pathlib import Path
@@ -396,19 +417,30 @@ for regime, count in regime_counts.items():
 # ─────────────────────────────────────────────────────────
 # 4. PREPARE REGIME WEIGHTS (filter to available tickers)
 # ─────────────────────────────────────────────────────────
-def filter_weights(weights, available):
-    """Filter and renormalize weights to available tickers."""
+def filter_weights(weights, available, renormalize=False):
+    """Filter weights to available tickers.
+
+    Default renormalize=False = v7 cash 口径 (missing weight stays cash).
+    Pass renormalize=True for legacy silent renorm A/B.
+    See out/v7_fred_dual_recompute.py and docs/V7_BACKTEST_SPEC.md.
+    """
     filtered = {k: v for k, v in weights.items() if k in available}
-    total = sum(filtered.values())
-    if total > 0:
-        filtered = {k: v / total for k, v in filtered.items()}
+    if renormalize:
+        total = sum(filtered.values())
+        if total > 0:
+            filtered = {k: v / total for k, v in filtered.items()}
     return filtered
 
+# Weights follow RUN_MODE (backtest remaps AIPO → XLY)
+REGIME_WEIGHTS_MODE = get_regime_weights_for_mode(RUN_MODE)
 regime_weights_filtered = {}
-for regime_name, weights in REGIME_WEIGHTS.items():
-    filtered = filter_weights(weights, available_tickers)
+for regime_name, weights in REGIME_WEIGHTS_MODE.items():
+    filtered = filter_weights(weights, available_tickers, renormalize=(WEIGHT_MODE == "renorm"))
     regime_weights_filtered[regime_name] = filtered
-    logger.info(f"  {regime_name}: {len(filtered)} ETFs (from {len(weights)})")
+    logger.info(
+        f"  {regime_name} [{RUN_MODE}/{WEIGHT_MODE}]: "
+        f"{len(filtered)} ETFs {list(filtered)} (from {len(weights)})"
+    )
 
 # ─────────────────────────────────────────────────────────
 # 5. RUN BACKTESTS
@@ -440,12 +472,10 @@ logger.info("=" * 70)
 # Leveraged gate: TQQQ/SOXL only when yesterday's VIX < 20
 # DD breaker: circuit breaker at portfolio drawdown threshold
 logger.info("\n[1] Optimized Regime Strategy (PRIMARY)...")
-# v5.1 (2026-06-23): Overlay tuning from 160-combination parameter sweep.
-# bear=0.60 + dd=0.08 is the optimal balance:
-#   14.86% CAGR / 1.03 Sharpe / 15.65% MaxDD / 0.95 Calmar
-# vs prior: 15.13% / 1.04 / 16.28% / 0.93
-# Tradeoff: -0.27% CAGR for -0.63% MaxDD improvement (Calmar +0.02).
-# Overlay params come from the single source of truth (config.regime_rules.STRATEGY_PARAMS)
+# v7 dual sleeve (2026-09): live AIPO / backtest XLY. Overlay knobs from
+# config.regime_rules.STRATEGY_PARAMS (bear=0.70, dd=0.07, HAR). Official
+# public-FRED numbers are in docs/V7_FRED_DUAL_RESULTS.md — not the old
+# v5.1 8-ETF 14.52%/14.78%/0.97 headline.
 from config.regime_rules import STRATEGY_PARAMS
 vol_result = engine.run_optimized_regime_backtest(
     regime_history=regime_history,

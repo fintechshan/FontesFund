@@ -100,7 +100,7 @@ XSD = ETFInfo("XSD", "SPDR S&P Semiconductor ETF (equal-weight)", "Semiconductor
 
 # -- AI / Tech Theme --------------------------------------------------------
 DRAM = ETFInfo("DRAM", "AI Memory & Semiconductor Theme ETF", "AI/Tech Theme", 0.0065, dividend_yield=0.0, domicile="US")
-AIPO = ETFInfo("AIPO", "AI-Powered IPO & Innovation ETF", "AI/Tech Theme", 0.0065, dividend_yield=0.0, domicile="US")
+AIPO = ETFInfo("AIPO", "Defiance AI & Power Infrastructure ETF", "AI/Tech Theme", 0.0065, dividend_yield=0.0, domicile="US")
 
 # -- Uranium / Nuclear -----------------------------------------------------
 URA = ETFInfo("URA", "Global X Uranium ETF", "Uranium", 0.0085, dividend_yield=0.025, domicile="US")

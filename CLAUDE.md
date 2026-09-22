@@ -1,188 +1,222 @@
-# CLAUDE.md — Agent Brief (read me first)
+# CLAUDE.md — Agent Brief (v7 production lock)
 
-> **For any AI agent or model working on this repo (Claude Opus 4.8/4.6, Claude Sonnet,
-> Gemini, etc.):** this file is the single source of truth for the *current* strategy,
-> results, and deployment. It supersedes any older numbers in `README.md` or in code
-> comments. Read this before changing the backtester or the strategy. Last updated
-> **2026-06-22** by Claude Opus 4.8.
+> **SoT：** 美金生产已锁定为 **v7 dual sleeve**（live AIPO / backtest XLY）。本文取代旧
+> v5.1 8-ETF 生产叙事。旧 headline **14.52% / 14.78% / 0.97 仅为历史对照**，不得再当
+> 当前生产数字引用。Read this before changing the backtester or the strategy.
+> Last updated **2026-09-21**.
 
 ---
 
 ## 1. Current production strategy & results (THE numbers)
 
 **Strategy:** `BacktestEngine.run_optimized_regime_backtest` in
-[`src/backtester/engine.py`](src/backtester/engine.py). It is the *single* production
-strategy, driven by [`run_backtest.py`](run_backtest.py) (CLI/validation) and
-[`run_dashboard.py`](run_dashboard.py) (deployed app). Both call it with identical params.
+[`src/backtester/engine.py`](src/backtester/engine.py). Driven by
+[`run_backtest.py`](run_backtest.py) (CLI/validation) and
+[`run_dashboard.py`](run_dashboard.py) (deployed app). Overlay kwargs come from
+[`config/regime_rules.py`](config/regime_rules.py) `STRATEGY_PARAMS`.
 
-**20-year backtest (2005-01 → 2026-06), net of 5 bps tx + 1% leverage financing,
-NO LOOK-AHEAD (macro signals lagged to their real release dates):**
+**Live universe (v7):** QQQ, SOXX, SPY, IEF, GLD, DBMF, **AIPO**
+**Backtest universe (v7):** QQQ, SOXX, SPY, IEF, GLD, DBMF, **XLY**
+（XLY proxies the AIPO sleeve so the slot is investable from 2005）
 
-**8-ETF portfolio (v5.1):** QQQ, SOXX, SPY, SPYI, TLT, GLD, DBMF, URA.
+**Superseded:** v5.1 8-ETF (QQQ, SOXX, SPY, SPYI, TLT, GLD, DBMF, URA)
+headline **14.52% CAGR / 14.78% MaxDD / 0.97 Sharpe** — historical only.
 
-| Metric | Result | Target | Status |
-|---|--:|--:|:--:|
-| CAGR | **14.52%** | 16.0% | ❌ |
-| Max Drawdown | **14.78%** | < 14.8% | ✅ |
-| Sharpe | **0.97** | 1.2 | ❌ |
-| Volatility | 13.00% | ~11.8% | — |
-| Sortino | 1.30 | — | — |
-| Calmar | 0.98 | — | — |
-| Total Return | 1,730% | — | — |
+### Official dual-sleeve metrics (public FRED, cash 口径)
 
-> **Data-pipeline correction (Gemini audit, 2026-06-27).** Headline updated
-> 14.68%/0.99 → **14.52%/0.97** on data through 2026-06-26. Two real bugs in the
-> fresh-download path were fixed (a broken download had been giving 13.57%):
-> (1) **SHY & AGG were missing** from `ALL_TICKERS`, collapsing the defense basket
-> `{SHY,AGG,GLD,TLT}` to GLD+TLT; (2) **CADUSD=X / .TO holiday rows** (5399→5601 days)
-> diluted rolling vol via forward-filled flat returns. Fix added SHY/AGG and reindexes
-> to SPY's US trading calendar (`run_backtest.py`). The 14.52 vs 14.68 residual is the
-> 5 extra market days (Jun 22–26); MaxDD still 14.78% (PASS). Verified by clean run.
+Macro publication lag: **CPI +1mo, GDP +4mo** via public FRED CSV
+(`CPIAUCSL`, `A191RL1Q225SBEA`, `VIXCLS`, `DFF`). Window **2005-01-04 → 2026-09-18**.
+Engine: **simplified honest recompute** (`out/v7_fred_dual_recompute.py`) —
+**not** bit-identical to full `src/backtester/engine.py`.
 
-> **⚠️ Honest-timing correction (Gemini audit, 2026-06-22).** The earlier headline
-> **15.85% / 14.76% / 1.21 contained look-ahead bias**: FRED dates CPI/GDP at the
-> period *start*, but the figures aren't released for weeks/months. Lagging the macro
-> signals to their actual release dates (CPI +1mo, GDP +4mo) gives the truthful,
-> tradable number — currently **14.52% / 14.78% / 0.97** (8-ETF v5.1, data thru 2026-06-26;
-> see the data-pipeline correction note above). The DD target is
-> met; CAGR/Sharpe fall short of 16/1.2. Still beats SPY (10.9% / 0.48 / 55% DD) and
-> 60/40 (8.2% / 0.55) handily. Do not revert the lag to "restore" the targets.
+| Mode | Sleeve | CAGR | MaxDD | Sharpe | vs 16% / &lt;14.8% / 1.2 |
+|---|---|--:|--:|--:|---|
+| **backtest** (research default) | XLY | **10.18%** | **-15.44%** | **0.86** | ❌ / ❌ / ❌ |
+| **live** | AIPO | **10.88%** | **-14.78%** | **0.98** | ❌ / ✅(~) / ❌ |
 
-**Production config (do not silently change — these are the validated values):**
+Sources: [`docs/V7_FRED_DUAL_RESULTS.md`](docs/V7_FRED_DUAL_RESULTS.md),
+[`out/v7_fred_dual_metrics.json`](out/v7_fred_dual_metrics.json).
+
+**Disclaimer — live long-sample ≠ full AIPO allocation historically.**
+AIPO listed **2025-07-25**; under live/cash 口径 that sleeve is mostly cash
+until then (DBMF similarly cash pre-2019-05-08). Do **not** advertise the
+live 20-year CAGR as “seven names fully invested in AIPO.”
+Do **not** advertise the short post-AIPO window as a 20-year expectation.
+
+### Backtest 口径（强制）
+
+- Macro publication lag: CPI +1mo, GDP +4mo（禁止用 FRED 期初标签当日交易）
+- Inception-aware **cash** for missing tickers（`FONTES_WEIGHT_MODE=cash`，禁止静默重归一）
+- Costs 5 bps; `target_vol=0.130`; `bear_equity_frac=0.70`; `dd_trigger=0.07`
+- Dual mode: `FONTES_RUN_MODE=backtest` (default for `run_backtest.py`) | `live`
+
+```bash
+# 长回测（默认，XLY 代理 AIPO 袖套）
+python run_backtest.py
+# 等价：FONTES_RUN_MODE=backtest python run_backtest.py
+
+# 实盘权重（AIPO）
+FONTES_RUN_MODE=live python run_backtest.py
+
+# 公开 FRED 简化引擎复算（无需 API key）
+python out/v7_fred_dual_recompute.py
+```
+
+See [`docs/V7_DUAL_SLEEVE.md`](docs/V7_DUAL_SLEEVE.md) and
+[`docs/V7_BACKTEST_SPEC.md`](docs/V7_BACKTEST_SPEC.md).
+
+### Production config (do not silently change)
+
 ```python
+# config/regime_rules.py STRATEGY_PARAMS
 risk_parity=True, rp_vol_lookback=60,
 target_vol=0.130, vol_lookback=21, vol_lo=0.50, vol_hi=1.50,
-bear_equity_frac=0.70, dd_trigger=0.07,        # v5.1 (8-ETF)
+bear_equity_frac=0.70, dd_trigger=0.07,
 transaction_cost_bps=5.0, borrow_spread=0.01,
-vix_data=vix, vix_gate_level=20.0,   # zeroes TQQQ/SOXL when yesterday's VIX >= 20
-vol_method='realized', use_har_vol=True, # HAR-RV vol overlay engaged
-# macro publication lag (in run_backtest.py / run_dashboard.py): CPI +1mo, GDP +4mo
+vix_data=vix, vix_gate_level=20.0,
+vol_method='realized', use_har_vol=True,
+# run_backtest.py: FONTES_RUN_MODE=backtest (default), FONTES_WEIGHT_MODE=cash
+# macro publication lag: CPI +1mo, GDP +4mo
 ```
+
+Helpers: `LIVE_UNIVERSE`, `BACKTEST_UNIVERSE`, `BACKTEST_TICKER_PROXY`,
+`get_universe()`, `get_regime_weights_for_mode()`, `get_run_mode()`,
+`get_weight_mode()`.
+
+---
 
 ## 2. What changed and WHY (do not revert)
 
-This replaced the old `run_vol_targeted_regime_backtest` (13.18% / 19.58% / 0.75). Two
-root causes were fixed — **do not reintroduce them:**
+**v7 vs v5.1 universe (locked 2026-09):**
+1. Combined SPY + SPYI into **SPY** (covered-call redundancy removed).
+2. Replaced URA with **AIPO** (Defiance AI & Power Infrastructure).
+3. Replaced TLT with **IEF** (7–10Y Treasuries — balanced duration).
+4. Dual sleeve: live keeps AIPO; long backtests map that slot to **XLY**.
 
-1. **Wrong vol proxy (the big bug).** The old method scaled the *entire multi-asset
-   portfolio by SPY's* volatility. In defensive regimes the book is bonds/gold, so it
-   levered bond books in calm markets and de-risked bonds/gold in crises — backwards.
-   **Fix:** portfolio-level vol targeting on the strategy's *own* realised vol.
-2. **Stacked, fighting overlays** (bear hedge + asymmetric vol scaling + DD breaker)
-   that cut CAGR ~23%→13% while barely helping DD. **Fix:** one clean trend hedge +
-   portfolio vol target + DD breaker.
+**Why official CAGR is below the old 14.52% copy:** the book changed
+(IEF for TLT, no SPYI, URA→AIPO/XLY); missing history is cash, not silent
+renorm; cited numbers are the simplified honest engine + lagged public FRED,
+not a v5.1 full-engine reprint.
 
-The Sharpe gap (1.11 → 1.21) was then closed by **risk-parity (inverse-vol) sleeve
-weighting** (`risk_parity=True`): it cuts the regime book's vol 18.9%→9.6%, and the vol
-target levers that low-vol book back up — capturing diversification as Sharpe.
+**Overlays architecture (unchanged — do not reintroduce the old bugs):**
 
-A **managed-futures (CTA) proxy** was prototyped and **deliberately left OFF**
-(`mf_alloc=0.0`): standalone Sharpe 0.41 and +0.28 correlated with the regime book, so it
-never improved risk-adjusted returns in this ETF universe. It is exposed as an optional
-knob (`mf_alloc`, `mf_assets`) for a future universe that includes FX/rates futures.
+1. **Wrong vol proxy (the big bug).** The old method scaled the *entire
+   multi-asset portfolio by SPY's* volatility. In defensive regimes the book
+   is bonds/gold, so it levered bond books in calm markets and de-risked
+   bonds/gold in crises — backwards. **Fix:** portfolio-level vol targeting
+   on the strategy's *own* realised vol.
+2. **Stacked, fighting overlays** (bear hedge + asymmetric vol scaling + DD
+   breaker) that cut CAGR ~23%→13% while barely helping DD. **Fix:** one
+   clean trend hedge + portfolio vol target + DD breaker.
+3. **Risk-parity sleeve weighting** (`risk_parity=True`) cuts the regime
+   book's vol, then the vol target levers that low-vol book back up.
+4. **Managed-futures overlay stays OFF** (`mf_alloc=0.0`). DBMF is a sleeve
+   inside `REGIME_WEIGHTS`, not a second overlay.
+5. **HAR-RV stays ON** (`use_har_vol=True`) — a DD-constraint choice from
+   the v5.1 sweep, not a Sharpe win. Don't re-litigate.
 
-**Vol-estimator A/B (2026, `ab_vol.py`): EWMA and HAR-RV are Sharpe-NEUTRAL vs the simple
-21-day realised vol** (Sharpe ties ~0.99–1.03). HAR forecasts lower vol so the strategy
-runs hotter (higher CAGR + higher vol at equal Sharpe). **v5.1 deliberately engages HAR
-(`use_har_vol=True`)** — with the tuned overlays (`bear=0.70`, `dd=0.07`) it pushes MaxDD
-to **14.78% (meets the <14.8% target)** while holding CAGR ~14.7%. This is a DD-constraint
-choice, not a Sharpe win; EWMA was tested and dropped. Don't re-litigate the Sharpe question.
+A **managed-futures (CTA) proxy** was prototyped and deliberately left off
+as a *second* overlay. It remains an optional knob (`mf_alloc`, `mf_assets`).
 
 ### Myth corrected
-The earlier claim that "16/14.8/1.2 is mathematically infeasible because of the March
-2020 COVID crash" is **false**. In every viable variant **2020 is a positive year**
-(+20%). The binding drawdown is **2022** (joint stock+bond selloff), not COVID; 2008 is
-**+21%**. A daily DD breaker + daily trend filter engage intra-month regardless of the
-monthly rebalance.
+The earlier claim that "16/14.8/1.2 is mathematically infeasible because of
+the March 2020 COVID crash" is **false**. In every viable v5.1 variant
+**2020 is a positive year**. The binding drawdown historically was **2022**
+(joint stock+bond selloff). v7 official numbers still miss the 16/1.2
+targets; that is a universe + cash-口径 + honest-engine fact, not a reason
+to restore look-ahead or silent renorm.
+
+---
 
 ## 3. Deployment
 
 - **App:** the Plotly Dash dashboard in `run_dashboard.py` (+ `src/dashboard/`),
   containerised via [`Dockerfile`](Dockerfile), shipped to **Google Cloud Run**
-  (see `.gcloudignore`). It now calls `run_optimized_regime_backtest` at all 4 sites —
-  **the deployed app matches the config in §1.** If you change the production config,
-  update **both** `run_backtest.py` and the 4 call sites in `run_dashboard.py`.
-- **Auto-refresh architecture (2026-07, replaces "redeploy to refresh"):** the caches
-  persist in GCS bucket `montesfund-etf-dashboard-data` (`src/dashboard/gcs_sync.py`).
-  - *Backtest/regime data:* Cloud Scheduler job `etf-daily-refresh` (11:00 UTC daily)
+  (see `.gcloudignore`). It calls `run_optimized_regime_backtest` at all 4
+  sites with `REGIME_WEIGHTS` (live AIPO book) and `STRATEGY_PARAMS`.
+  If you change the production config, update **both** `run_backtest.py` and
+  the 4 call sites in `run_dashboard.py`.
+- **Auto-refresh architecture (2026-07):** caches persist in GCS bucket
+  `montesfund-etf-dashboard-data` (`src/dashboard/gcs_sync.py`).
+  - *Backtest/regime data:* Cloud Scheduler job `etf-daily-refresh` (11:00 UTC)
     POSTs `/tasks/refresh` (token-protected, `REFRESH_TOKEN` env) → runs
-    `run_backtest.py` in-container → uploads fresh CSVs/caches to GCS. Containers pull
-    from GCS at startup (`download_data()`), so scale-to-zero no longer freezes data.
-  - *IBKR account snapshot:* Windows task `ETF-IBKR-Snapshot` (daily 9:00 China time)
-    runs `scripts/refresh_ibkr_snapshot.ps1` → `ibkr_snapshot.py` (needs TWS/Gateway UP,
-    else fails cleanly without clobbering GCS) → pushes `ibkr_account.json` to GCS. The
-    Execution tab **re-pulls from GCS every 10 min** (`ibkr-snapshot-refresh` interval →
-    `download_ibkr()`), so new snapshots appear on the live site without a redeploy.
-  - Manual refresh of results is still `python run_backtest.py` (~30s) + deploy, or just
-    hit `/tasks/refresh`.
-- **Reproduce:** `python run_backtest.py` (full engine, ~30s). Fast parameter
-  exploration: `python optimize_strategy.py` and `python extend_rp_mf.py` (vectorized
-  harnesses, <2s; same data/regime logic as production). Production-faithful variant
-  A/B: `ab_universe.py`.
-- **Secrets:** `config/settings.py` reads `FRED_API_KEY` from `.env`/env vars (hardcoded
-  key removed 2026-06-27; the exposed key `534c2e45…` is set as a Cloud Run env var —
-  **still needs rotation**, as does `REFRESH_TOKEN` which leaked into a gcloud log).
-- **Startup fragility note:** the Dash layout is built eagerly at container start; a
-  crash anywhere in a `build_*_tab` bricks the revision (probe timeout). Before deploying
-  UI changes, render-test the tab offline (see the `_row`-shadowing incident, 2026-07-05).
+    `run_backtest.py` in-container → uploads fresh CSVs/caches to GCS.
+    Containers pull from GCS at startup (`download_data()`).
+    **Note:** `run_backtest.py` now defaults to `FONTES_RUN_MODE=backtest`
+    (XLY). Cloud Run live refresh should set `FONTES_RUN_MODE=live` if the
+    published curves must show the AIPO book.
+  - *IBKR account snapshot:* Windows task `ETF-IBKR-Snapshot` (daily 9:00 China
+    time) runs `scripts/refresh_ibkr_snapshot.ps1` → `ibkr_snapshot.py` →
+    pushes `ibkr_account.json` to GCS. Execution tab re-pulls every 10 min.
+- **Reproduce:** `python run_backtest.py` (full engine, ~30s). Dual-sleeve
+  FRED numbers: `python out/v7_fred_dual_recompute.py` (public CSV, no key).
+  Fast research harnesses: `python optimize_strategy.py`, `python extend_rp_mf.py`.
+- **Secrets:** `config/settings.py` reads `FRED_API_KEY` from `.env`/env vars
+  (hardcoded key removed 2026-06-27). Do **not** commit `.env`. The exposed
+  key `534c2e45…` and `REFRESH_TOKEN` still need rotation.
+- **Startup fragility note:** the Dash layout is built eagerly at container
+  start; a crash anywhere in a `build_*_tab` bricks the revision. Render-test
+  UI tabs offline before deploying.
+
+---
 
 ## 4. Data integrity (known issues — fix before live trading)
 
-- Cache `data/cache/price_data.csv` has **20 of 22** tickers — **SSO and MOAT are
-  silently missing** but appear in `REGIME_WEIGHTS`; weights renormalise away, so the
-  *documented* allocation ≠ the *tested* one. The cache-load path never re-downloads them.
-- `run_regime_backtest` (the "upper bound" reference only) parks weight in not-yet-listed
-  ETFs (QQQI 2024, SPYI 2022, DBMF 2019…) as phantom cash → understates it (~20% vs true
-  ~23%). The production method handles per-date availability correctly.
-- Limited-history ETFs make the early backtest structurally different from the late one;
-  treat cross-era comparisons with care.
+- **AIPO listed ~2025-07-25** — cannot carry a 20-year AIPO narrative alone.
+  Live long-sample is 6 core sleeves + cash for AIPO (and cash/partial for
+  DBMF pre-2019). Backtest mode uses XLY for that slot; **do not mix the
+  two numbers in external copy**.
+- **DBMF from ~2019-05-08.** Cash 口径 applies.
+- Never claim documented weights == tested weights if tickers are missing
+  from the price cache. `filter_weights(..., renormalize=False)` is the
+  default; `FONTES_WEIGHT_MODE=renorm` is A/B only.
+- Cache `data/cache/price_data.csv` must include the live *and* backtest
+  sleeve tickers (AIPO + XLY) plus SHY/AGG for the defense basket.
+- `run_regime_backtest` (upper-bound reference only) still parks weight in
+  not-yet-listed ETFs as phantom cash. Production
+  `run_optimized_regime_backtest` handles per-date availability; the official
+  v7 FRED numbers come from the *simplified* cash engine, not that path.
+- Limited-history ETFs make the early backtest structurally different from
+  the late one; treat cross-era comparisons with care.
+- Full `src/backtester/engine.py` still renormalises on a per-date basis
+  inside the monthly rebalance. Official public-FRED figures are from
+  `out/v7_fred_dual_recompute.py` (cash, no silent renorm). Do not treat a
+  full-engine reprint as a replacement for those figures unless you re-run
+  and document the delta.
 
-### Gemini audit fixes (2026-06-22) — all applied
-- **Macro look-ahead removed** (the big one): CPI/GDP signals lagged to release dates in
-  `run_backtest.py` + `run_dashboard.py`. Headline 15.85%→13.82% (see §1).
-- **VIX gate ported to production**: `run_optimized_regime_backtest` now zeroes TQQQ/SOXL
-  and redirects to QQQ/SOXX when yesterday's VIX ≥ 20 (`vix_data`/`vix_gate_level` params).
-  Previously only the legacy `run_protected_regime_backtest` had it.
-- **`PERFORMANCE_TARGETS` corrected** to the validated 16%/14.8%/1.2 (was 17%/10%/1.8).
-- **`GGLL` removed** entirely from the ETF universe (`etf_universe.py`, `LEVERAGED_RULES`).
-- **SQLiteCache deleted** from `data_collector.py` — it was dead code (never used at
-  runtime; the CSV/pickle caches are the source of truth, and SQLite-on-disk gives no
-  cross-instance benefit on ephemeral Cloud Run). Replaced by a tiny in-memory cache that
-  preserves the `MacroDataCollector` interface; `data/db/` removed.
+### Gemini audit fixes (2026-06-22) — still applied
+- Macro look-ahead removed (CPI +1mo, GDP +4mo). Do not revert the lag to
+  "restore" old targets.
+- VIX gate in `run_optimized_regime_backtest` (zero TQQQ/SOXL, redirect to
+  QQQ/SOXX when yesterday's VIX ≥ 20).
+- `PERFORMANCE_TARGETS` remain the aspirational 16% / 14.8% / 1.2 gate
+  (v7 official numbers do not clear all three).
+- `GGLL` stays removed. SQLiteCache stays deleted.
 
-### AI-trend ETFs added to the strategy (2026-06-22)
-**SMH** (VanEck semis), **DRAM** (AI memory/HBM), **XSD** (equal-weight semis) added to
-`REGIME_WEIGHTS` (goldilocks + reflation) and the price cache — so every ETF shown in the
-dashboard's AI Trend signal table is now actually traded by the strategy, not just
-monitored. Impact is ~neutral (13.82%→13.72%; SMH overlaps SOXX, risk-parity rebalances by
-inverse-vol). DRAM has short history (lists Apr-2026) so it only contributes recently.
+### Live IBKR account integration (Execution tab)
+`scripts/ibkr_snapshot.py` (read-only; run locally with TWS up) writes
+`data/cache/ibkr_account.json`. Paper account `DUQ963925`. Account base
+currency is **CAD** while the 7 ETFs are **USD** — IBKR may auto-finance
+USD buys with a USD margin loan; that is a currency-financing artifact,
+not strategy leverage.
 
-### Live IBKR account integration in the Execution tab (2026-06-25)
-The Execution tab now shows the **real IBKR account** (paper `DUQ963925`, repointable to the
-live account later), not just a simulated/offline broker view. Because Cloud Run is stateless
-and cannot reach the local TWS socket, the bridge is a **snapshot file**:
-- `scripts/ibkr_snapshot.py` (read-only; run locally with TWS up) writes
-  `data/cache/ibkr_account.json` (+ `ibkr_equity_history.csv`): NAV, positions, weights, P&L,
-  TWR. Works for the paper account now and the real account later (`--allow-live` guards non-`DU`).
-- `build_ibkr_live_panel()` in `src/dashboard/app.py` reads that JSON and renders a
-  **live-vs-target drift / tracking analysis** (active-share), an NAV-since-inception curve,
-  and headline NAV/P&L/TWR cards. Falls back to a "run the snapshot script" hint if absent.
-- **To refresh:** rerun `python scripts/ibkr_snapshot.py` then redeploy (the JSON is baked into
-  the image via `COPY . .`; it is NOT in `.gcloudignore`/`.dockerignore`).
-- ⚠️ Account base currency is **CAD** while the 8 ETFs are **USD** → IBKR auto-financed the USD
-  buys with a USD margin loan (displayed leverage ~1.37). This is a currency-financing artifact,
-  not strategy leverage; surfaced in the panel's note. To remove it, convert CAD→USD in TWS first.
+---
 
 ## 5. File map
 
 | Path | Role |
 |---|---|
-| `src/backtester/engine.py` | `run_optimized_regime_backtest` = **production strategy** |
-| `scripts/ibkr_snapshot.py` | Read-only IBKR snapshot → `data/cache/ibkr_account.json` (Execution tab) |
-| `scripts/ibkr_rebalance.py` | Local paper/live rebalance to current regime weights (`--execute`) |
-| `run_backtest.py` | CLI 20-yr validation; regenerates result CSVs |
-| `run_dashboard.py` | Deployed Dash app (Cloud Run); calls the production method |
-| `config/regime_rules.py` | `REGIME_WEIGHTS`, risk limits, targets |
-| `optimize_strategy.py`, `extend_rp_mf.py` | Vectorized research harnesses (RP + MF prototypes) |
-| `RECOMMENDATION.md` | Full audit write-up & handoff (more detail than this file) |
-| `data/backtest_results/*.csv` | Cached results consumed by the dashboard |
+| `src/backtester/engine.py` | `run_optimized_regime_backtest` = production engine |
+| `config/regime_rules.py` | `REGIME_WEIGHTS` (live AIPO), dual-mode helpers, `STRATEGY_PARAMS` |
+| `run_backtest.py` | CLI 20-yr validation; `FONTES_RUN_MODE` / `FONTES_WEIGHT_MODE` |
+| `run_dashboard.py` | Deployed Dash app (live AIPO weights) |
+| `docs/V7_DUAL_SLEEVE.md` | How to run live vs backtest modes |
+| `docs/V7_BACKTEST_SPEC.md` | Locked 口径 (lags, cash, costs) |
+| `docs/V7_FRED_DUAL_RESULTS.md` | Official public-FRED dual-sleeve table |
+| `out/v7_fred_dual_recompute.py` | Simplified honest engine (public FRED CSV, no key) |
+| `out/v7_fred_dual_metrics.json` | Frozen official metrics payload |
+| `scripts/ibkr_snapshot.py` | Read-only IBKR snapshot → Execution tab |
+| `scripts/ibkr_rebalance.py` | Local paper/live rebalance to current regime weights |
+| `optimize_strategy.py`, `extend_rp_mf.py` | Vectorized research harnesses |
+| `RECOMMENDATION.md` | v5.1-era audit write-up (**historical**; see banner) |
+| `data/backtest_results/*.csv` | Cached dashboard result CSVs |
