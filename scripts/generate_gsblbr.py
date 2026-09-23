@@ -21,6 +21,12 @@ Composite Indicator:
 
 Outputs:
   data/cache/gsblbr_history.csv
+
+The composite is a bear-RISK percentile (high = late-cycle stress), not a
+second allocation engine. ab_gs_throttle.py reads this file, lags it by
+GS_THROTTLE_PARAMS["release_lag_months"], and uses it only as a throttle
+on the Investment Clock. This generator's dates stay at observation
+month-end so the dashboard gauge and the backtest lag stay separate.
 """
 
 import sys
