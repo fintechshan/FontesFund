@@ -192,6 +192,65 @@ STRATEGY_PARAMS: dict = {
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# GS bull/bear throttle — OPT-IN, not part of the production splat above
+# ═══════════════════════════════════════════════════════════════════════════
+# The Investment Clock (REGIME_WEIGHTS) stays the only position engine.
+# GSBLBR is a bear-RISK percentile (high = late-cycle stress), used as a
+# throttle on that book — never as a second weight table and never averaged
+# with the clock. Production run_backtest.py / run_dashboard.py do not pass
+# this; see ab_gs_throttle.py and src/strategist/gs_throttle.py.
+#
+# Bands (on the released GSBLBR composite):
+#   bull  GS < bull_max     full clock; boost mode may scale equity up
+#   mid   bull_max..bear_min  keep clock direction, cut the equity sleeve,
+#                             cut the vol target, and cap vol-scale at 1
+#                             (no leverage)
+#   bear  GS >= bear_min    override the clock book toward Deflation weights
+GS_THROTTLE_EQUITY_TICKERS: tuple[str, ...] = (
+    "QQQ", "SOXX", "SPY", "SPYI", "AIPO", "TQQQ", "SOXL", "URA", "QQQI", "XLY",
+)
+
+GS_THROTTLE_PARAMS: dict = {
+    # Dashboard gauge uses <45 favorable, >=65 elevated, >=80 extreme.
+    # Primary bands sit on that scale: clear risk-on below 45, clear
+    # late-cycle stress at/above 70. Middle is the derisk band.
+    "bull_max": 45.0,
+    "bear_min": 70.0,
+    # Composite is dated at the observation month-end. Macro inputs
+    # (core CPI, UNRATE, INDPRO) are not published that day, so the
+    # backtest may use the print only after this many months.
+    "release_lag_months": 1,
+    # Boost (mode "boost") applies only when the clock is already risk-on.
+    "risk_on_regimes": ("goldilocks", "reflation"),
+    # Middle band: scale equity notionals by this and park the freed
+    # weight in the Deflation book's non-equity sleeve (IEF/GLD/DBMF).
+    "mid_equity_scale": 0.75,
+    "mid_vol_mult": 0.80,     # target_vol × this
+    "mid_vol_hi": 1.0,        # kill vol-target leverage
+    # Bear band: 1.0 = full override onto REGIME_WEIGHTS["deflation"].
+    "bear_blend": 1.0,
+    "bear_vol_mult": 0.70,
+    "bear_vol_hi": 1.0,
+    "modes": {
+        # B — derisk only. Bull band is the untouched clock.
+        "derisk": {
+            "bull_equity_scale": 1.0,
+            "bull_vol_mult": 1.0,
+            "bull_vol_hi": None,   # None = strategy vol_hi (leverage allowed)
+        },
+        # C — same derisk on conflict/bear, but when clock AND GS are
+        # risk-on, tilt equity above 100% of the clock sleeve and run a
+        # slightly hotter vol target.
+        "boost": {
+            "bull_equity_scale": 1.15,
+            "bull_vol_mult": 1.10,
+            "bull_vol_hi": None,
+        },
+    },
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Momentum overlay settings
 # ═══════════════════════════════════════════════════════════════════════════
 

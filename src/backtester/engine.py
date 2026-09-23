@@ -448,8 +448,21 @@ class BacktestEngine:
         vol_method: str = "realized",   # 'realized' (21d std) | 'ewma'  (HAR via use_har_vol)
         ewma_lambda: float = 0.94,      # RiskMetrics decay for vol_method='ewma'
         rebalance_freq: str = "monthly",  # 'monthly' (default) | 'weekly'
+        gs_throttle: Optional[dict] = None,
+        cash_park_tickers: Optional[tuple] = None,
     ) -> BacktestResult:
         """Optimized regime strategy — see class-level comment block above.
+
+        gs_throttle: optional bull/mid/bear throttle on the clock book. None
+            (the production default) leaves weights and the vol cap untouched.
+            When set, the dict is the one built by
+            ``src.strategist.gs_throttle.build_engine_throttle`` — a released
+            GSBLBR score plus band scales. It never replaces the clock with a
+            second weight table.
+        cash_park_tickers: tickers whose strategic weight is held as cash
+            (zero return, not renormalised onto the live book) on days they
+            have no price. None preserves the historical renormalise-missing
+            behaviour. Used for AIPO, which listed 2025-07-25.
 
         risk_parity:  inverse-vol (equal-risk) reweight of regime sleeves — the
                       single biggest Sharpe driver (cuts book vol ~19%→~10%, so
@@ -464,7 +477,8 @@ class BacktestEngine:
             f"[{'risk-parity' if risk_parity else 'fixed-wt'} | "
             f"portvol={target_vol:.1%} cap[{vol_lo:.2f},{vol_hi:.2f}] | "
             f"bear={bear_equity_frac:.0%} | DD-{dd_trigger:.0%} | "
-            f"mf={mf_alloc:.0%} | tx={transaction_cost_bps}bps | no-lookahead]"
+            f"mf={mf_alloc:.0%} | tx={transaction_cost_bps}bps | no-lookahead"
+            f"{' | gs-throttle=' + str(gs_throttle.get('mode')) if gs_throttle else ''}]"
         )
 
         if defense_weights is None:
@@ -495,11 +509,21 @@ class BacktestEngine:
         leveraged_redirect = (("QQQ", 0.55), ("SOXX", 0.45))
 
         # ── 1. Build daily weight matrices (monthly rebalance, prior-day avail) ──
+        # Vol-target multipliers are filled only when the GS throttle is on.
+        # With gs_throttle is None they stay unused and the scale formula below
+        # is the historical one, so production results do not move.
+        vol_mult_s = pd.Series(1.0, index=daily_returns.index)
+        vol_hi_s = pd.Series(float(vol_hi), index=daily_returns.index)
+        gs_score = None if gs_throttle is None else gs_throttle["score"]
+        park_set = set(cash_park_tickers or ())
+
         def weight_matrix(reg_to_weights: dict, use_rp: bool = False,
-                          gate: bool = False) -> pd.DataFrame:
+                          gate: bool = False, apply_throttle: bool = False) -> pd.DataFrame:
             W = pd.DataFrame(0.0, index=daily_returns.index, columns=cols)
             last_month = (-1, -1)
             cur: dict = {}
+            cur_vm = 1.0
+            cur_vh = float(vol_hi)
             for i, date in enumerate(daily_returns.index):
                 # Rebalance-period key: monthly (default) or weekly (ISO year-week)
                 m = (date.isocalendar()[0], date.isocalendar()[1]) if rebalance_freq == "weekly" \
@@ -519,6 +543,22 @@ class BacktestEngine:
                                     for rt, share in leveraged_redirect:
                                         if rt in raw:
                                             raw[rt] = raw.get(rt, 0.0) + freed * share
+                        if apply_throttle:
+                            from src.strategist.gs_throttle import apply_gs_throttle
+                            gs_val = gs_score.asof(pd.Timestamp(date))
+                            regime_name = str(regime_series.loc[mask].iloc[-1])
+                            raw, cur_vm, vh = apply_gs_throttle(
+                                raw, regime_name, gs_val, gs_throttle,
+                            )
+                            cur_vh = float(vol_hi if vh is None else vh)
+                        # Unlisted names in cash_park_tickers stay cash. Every
+                        # other missing name is still renormalised (DBMF etc.).
+                        parked = 0.0
+                        if park_set and i > 0:
+                            for t in list(raw.keys()):
+                                listed = t in cols and bool(avail_mask.iloc[i - 1].get(t, False))
+                                if t in park_set and not listed:
+                                    parked += float(raw.pop(t, 0.0) or 0.0)
                         iv = inv_vol.iloc[i] if (use_rp and inv_vol is not None) else None
                         avail = {}
                         for t, w in raw.items():
@@ -530,12 +570,23 @@ class BacktestEngine:
                                 else:
                                     avail[t] = w
                         tot = sum(avail.values())
-                        cur = {t: w / tot for t, w in avail.items()} if tot > 0 else {}
+                        if tot > 0 and parked > 0:
+                            cur = {t: (w / tot) * (1.0 - parked) for t, w in avail.items()}
+                        elif tot > 0:
+                            cur = {t: w / tot for t, w in avail.items()}
+                        else:
+                            cur = {}
+                if apply_throttle:
+                    vol_mult_s.iat[i] = cur_vm
+                    vol_hi_s.iat[i] = cur_vh
                 for t, w in cur.items():
                     W.iat[i, W.columns.get_loc(t)] = w
             return W
 
-        W_base = weight_matrix(regime_weights, use_rp=risk_parity, gate=True)
+        W_base = weight_matrix(
+            regime_weights, use_rp=risk_parity, gate=True,
+            apply_throttle=gs_throttle is not None,
+        )
         W_def = weight_matrix({r: defense_weights for r in regime_weights})
 
         r_base = (W_base * rf_filled).sum(axis=1)
@@ -631,7 +682,15 @@ class BacktestEngine:
             # realized (default) or EWMA — both causal; HAR is via use_har_vol above
             rv = _forward_vol(r_trend, vol_method, vol_lookback, ewma_lambda)
 
-        scale = (target_vol / rv).clip(vol_lo, vol_hi).shift(1).fillna(1.0)
+        if gs_throttle is not None:
+            # Band-conditional target and leverage cap. Equivalent to the
+            # scalar clip when vol_mult is 1 and vol_hi_s is the strategy cap.
+            tv = target_vol * vol_mult_s.reindex(rv.index).fillna(1.0)
+            hi = vol_hi_s.reindex(rv.index).fillna(float(vol_hi))
+            capped = np.minimum((tv / rv).clip(lower=vol_lo), hi)
+            scale = pd.Series(capped, index=rv.index).shift(1).fillna(1.0)
+        else:
+            scale = (target_vol / rv).clip(vol_lo, vol_hi).shift(1).fillna(1.0)
         financing = (scale - 1.0).clip(lower=0) * ((self.risk_free_rate + borrow_spread) / 252)
         r_vt = r_trend * scale - financing
 
