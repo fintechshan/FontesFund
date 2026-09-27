@@ -4,10 +4,14 @@ A Python-based ETF investment application that detects macroeconomic regimes, co
 
 > **📌 Current strategy & results live in [`CLAUDE.md`](CLAUDE.md).** Production strategy =
 > `run_optimized_regime_backtest` (risk-parity + portfolio-level vol targeting).
-> **7-ETF v7** (QQQ, SOXX, SPY, IEF, GLD, DBMF, AIPO), sample **2005-01-04 → 2026-09-21**,
-> CPI +1 month / GDP +4 months publication lag:
+> **7-ETF v7** (QQQ, SOXX, SPY, IEF, GLD, DBMF, AIPO), sample **2005-01-04 → 2026-09-21**.
+> **Dashboard default (Backtest tab, Portfolio CAGR card): Auditor Lagged** — production
+> CPI+1mo / GDP+4mo, plus one extra month of regime delay (execution / timing sensitivity):
+> **12.21% CAGR / 14.10% MaxDD / Sharpe 0.83**.
+> **Production path** (live weights, `run_backtest.py`, Backtest control):
 > **14.85% CAGR / 13.90% MaxDD / Sharpe 1.03** (DD target met; CAGR/Sharpe short of 16/1.2).
-> Beats SPY (10.97% / 0.48) and 60/40 (8.19% / 0.55) on the same file.
+> That production path beats SPY (10.97% / 0.48) and 60/40 (8.19% / 0.55) on the same file.
+> Look-ahead (publication lag off) is about **15.74%** and stays an Auditor diagnostic.
 > The older 8-ETF v5.1 figure (14.52% / 14.78% / 0.97) is historical. [`RECOMMENDATION.md`](RECOMMENDATION.md) is the 2026-06 audit, not the current sleeve.
 
 ## Architecture
@@ -78,7 +82,8 @@ python scripts/run_backtest.py
 - **Monthly Contribution**: $10,000 (paused if 3-month return < -5%)
 - **Rebalancing**: Monthly base weights; daily trend/vol/DD overlays
 - **Validated targets**: CAGR ≥ 16%, Max Drawdown < 14.8%, Sharpe ≥ 1.2
-  (current v7 with publication lag: 14.85% / 13.90% / 1.03 — targets not fully met)
+  (production v7 with CPI+1mo / GDP+4mo: 14.85% / 13.90% / 1.03 — targets not fully met.
+  Dashboard default is Auditor Lagged: 12.21% / 14.10% / 0.83)
 - **Production strategy**: `run_optimized_regime_backtest` — risk-parity sleeve
   weighting + portfolio-level vol targeting + 200-MA trend hedge + DD breaker.
   See [`CLAUDE.md`](CLAUDE.md) for the exact config and rationale.
@@ -91,16 +96,21 @@ Net of 5 bps transaction cost + 1% leverage financing. Regenerate with `python r
 Numbers below match `data/backtest_results/20yr_comparison.csv`.
 
 Macro signals use CPI +1 month and GDP +4 months (publication lag). That is the production path.
+The **dashboard default** is Auditor Lagged: that same regime shifted one extra month
+(execution / timing sensitivity). It is not a separate strategy and it is not in the CSV.
+Sortino and Calmar for that row are filled in the app from the live run; they are not stored here.
 
 | Strategy | CAGR | Vol | Sharpe | Max DD | Calmar | Total Return |
 |---|--:|--:|--:|--:|--:|--:|
-| **Optimized Regime (v7, publication lag)** | **14.85%** | 12.60% | **1.03** | **13.90%** | 1.07 | 1,909% |
+| **Auditor Lagged (extra month; dashboard default)** | **12.21%** | 12.40% | **0.83** | **14.10%** | — | 1,113.59% |
+| **Optimized Regime (v7, CPI+1mo / GDP+4mo)** | **14.85%** | 12.60% | **1.03** | **13.90%** | 1.07 | 1,909% |
 | 60/40 Benchmark | 8.19% | 11.53% | 0.55 | 34.70% | 0.24 | 451% |
 | S&P 500 (SPY) | 10.97% | 18.89% | 0.48 | 55.19% | 0.20 | 855% |
 | All Weather | 6.81% | 8.24% | 0.60 | 23.37% | 0.29 | 288% |
 
-> The 16% / 14.8% / 1.2 targets are **not** fully met. An earlier 15.85% / 1.21 figure
+> The 16% / 14.8% / 1.2 targets are **not** fully met on the production path. An earlier 15.85% / 1.21 figure
 > used CPI/GDP before their release dates. The v7 production number is **14.85% / 1.03 / 13.90%**.
+> The number the Backtest tab shows first is Auditor Lagged **12.21% / 0.83 / 14.10%**.
 > The 8-ETF v5.1 result (14.52% / 0.97 / 14.78%, data through 2026-06-26) is historical.
 > See [`CLAUDE.md`](CLAUDE.md).
 

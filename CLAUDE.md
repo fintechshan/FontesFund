@@ -4,7 +4,7 @@
 > Gemini, etc.):** this file is the single source of truth for the *current* strategy,
 > results, and deployment. It supersedes any older numbers in `README.md` or in code
 > comments. Read this before changing the backtester or the strategy. Last updated
-> **2026-09-27** (v7 sleeve and publication-lag headline; v5.1 figures below are historical).
+> **2026-09-27** (Backtest tab defaults to Auditor Lagged; production CSV stays CPI+1/GDP+4).
 
 ---
 
@@ -15,11 +15,26 @@
 strategy, driven by [`run_backtest.py`](run_backtest.py) (CLI/validation) and
 [`run_dashboard.py`](run_dashboard.py) (deployed app). Both call it with identical params.
 
-**Sample 2005-01-04 → 2026-09-21, net of 5 bps tx + 1% leverage financing.
-Publication lag is on (CPI +1 month, GDP +4 months). That is the no-look-ahead path.**
-An extra `regime.shift(1)` after that lag is an execution/timing test, not evidence
-that production used unpublished data. Turning the publication lag off (unlagged) is
-about **15.74%** CAGR on this sample; that higher number is the look-ahead case.
+**Sample 2005-01-04 → 2026-09-21, net of 5 bps tx + 1% leverage financing.**
+Three published views of the same engine. Weights, `REGIME_WEIGHTS`, and live allocation
+stay on the production path. The dashboard **display default** is the extra-month view.
+
+| View | What it is | Where it shows | CAGR | MaxDD | Sharpe |
+|---|---|---|--:|--:|--:|
+| **Auditor Lagged (dashboard default)** | Production regime, then one extra `regime.shift(1)` | Backtest tab on first load, Portfolio CAGR card, CDN tab US column | **12.21%** | **14.10%** | **0.83** |
+| **Production (CPI+1mo / GDP+4mo)** | Publication lag on. Live allocation and `run_backtest.py` | Backtest tab control; `20yr_comparison.csv` | **14.85%** | **13.90%** | **1.03** |
+| **Unlagged (look-ahead)** | `classify_regimes(apply_lag=False)` | Auditor diagnostic only | **15.74%** | 14.58% | 1.11 |
+
+Auditor Lagged vol **12.40%**, total return **1,113.59%** (live Auditor column; fresh
+recompute total 1,113.48%). Source for that row: the extra-month startup run, recorded in
+`out/LIVE_APP_ACCURACY_AUDIT.md`. The UI prints the live run. Those figures are not a new
+backtest and are not in `20yr_comparison.csv`. Sortino and Calmar for the extra-month path
+are computed in the app from that same run.
+
+The extra month is an **execution / timing sensitivity**. It is a stricter publication-aware
+path. It is not evidence that production used unpublished data. Turning the publication lag
+off is the look-ahead case (**15.74%**). Do not drop the CPI+1mo / GDP+4mo lag to "restore"
+a higher CAGR, and do not replace the production CSV with the extra-month series.
 
 **7-ETF portfolio (v7):** QQQ, SOXX, SPY, IEF, GLD, DBMF, AIPO.
 Weights live in `REGIME_WEIGHTS`. Goldilocks QQQ **30%** is intentional AI-trend
@@ -28,6 +43,8 @@ exposure and is not clipped. The largest base weight is IEF **35%** (deflation).
 both the 30% QQQ sleeve and the 35% IEF sleeve are inside the cap. VIX above `REGIME_VIX_DEFENSIVE`
 (**30**) forces deflation. `vix_gate_level` 20 only zeroes TQQQ/SOXL; v7 holds neither,
 so that gate is idle. The Goldman-style throttle is **off**.
+
+**Production path** (engine, live weights, CSV — the Backtest alternate, not the first number):
 
 | Metric | Result | Target | Status |
 |---|--:|--:|:--:|
@@ -41,8 +58,13 @@ so that gate is idle. The Goldman-style throttle is **off**.
 
 Source: `data/backtest_results/20yr_comparison.csv`, row `Optimized Regime Strategy`.
 Same file: SPY 10.97% / Sharpe 0.48 / 55.19% DD; 60/40 8.19% / 0.55 / 34.70% DD.
-Regenerate with `python run_backtest.py`. Do not drop the CPI+1mo / GDP+4mo lag to
-"restore" a higher CAGR.
+Regenerate the production CSV with `python run_backtest.py`. The Backtest tab default
+is not that CSV row; it is the extra-month series packed in `lagged_metrics` at dashboard
+startup (`pack_lagged_metrics`).
+
+**CDN:** `scripts/run_cdn_backtest.py` has no extra-month run, so the CDN cards stay the
+TSX production book. The US column and the bold US curve on that tab follow Auditor Lagged
+when the US series is loaded. US production remains the dotted curve and the Backtest control.
 
 > **Historical — 8-ETF v5.1 (do not quote as current).** Sleeve was QQQ, SOXX, SPY,
 > SPYI, TLT, GLD, DBMF, URA. Honest lagged headline through 2026-06-26 was
@@ -66,8 +88,9 @@ vol_method='realized', use_har_vol=True,
 
 ## 2. What changed and WHY (do not revert)
 
-The CAGR and Sharpe figures in this section are the 2026-06 overlay history. The current
-headline is §1 (v7, 14.85% / 13.90% / 1.03).
+The CAGR and Sharpe figures in this section are the 2026-06 overlay history. The production
+CSV headline is §1 (v7, 14.85% / 13.90% / 1.03). The dashboard default headline is the
+Auditor Lagged row in the same section (12.21% / 14.10% / 0.83).
 
 This replaced the old `run_vol_targeted_regime_backtest` (13.18% / 19.58% / 0.75). Two
 root causes were fixed — **do not reintroduce them:**

@@ -11,6 +11,11 @@ They describe the page **before** the label and limit fixes in this branch. A sh
 checklist of those fixes is at the end of this file. The findings tables are the
 before-state and are left as the audit record.
 
+**Later display change (not a new backtest):** the Backtest tab and the Portfolio CAGR
+card now open on Auditor Lagged (extra month, **12.21% / 14.10% / 0.83**). Production
+**14.85% / 13.90% / 1.03** stays the engine CSV and the labeled Backtest alternate.
+CDN still has no extra-month series; its US column follows that Backtest default.
+
 ---
 
 ## Verdict
@@ -206,3 +211,4 @@ Engine math is unchanged. Copy, limits, and the auditor status key changed:
 4. CDN period labels use the equity-curve dates. ZQQ.TO is labeled CAD-hedged. The book still holds ZQQ, not ZNQ.
 5. `CLAUDE.md` and `README.md` lead with v7 **14.85% / 13.90% / 1.03**. v5.1 **14.52% / 14.78% / 0.97** is marked historical.
 6. The tax panel states its CAD CAGRs are the `ab_canadian_tax.py` study, not the USD production backtest.
+7. Backtest tab and Portfolio CAGR card default to Auditor Lagged (**12.21% / 14.10% / 0.83**). Production **14.85%** stays on the Backtest control and in `20yr_comparison.csv`. CDN has no extra-month series; the US column on that tab follows the Backtest default.
