@@ -404,8 +404,10 @@ class BacktestEngine:
     #   Audit by Claude Opus 4.8 (2026-06-22) found the prior strategy   #
     #   scaled a MULTI-ASSET portfolio by SPY's volatility — wrong proxy #
     #   (it levered bond-heavy defensive books and de-risked exactly the #
-    #   assets you want in a crisis).  This method fixes that and yields  #
-    #   ~16.2% CAGR / -14.7% MaxDD / Sharpe ~1.13 over 2005-2026.         #
+    #   assets you want in a crisis).  Headline on the v7 sleeve with     #
+    #   CPI+1mo / GDP+4mo is ~14.85% CAGR / -13.90% MaxDD / Sharpe ~1.03  #
+    #   (2005-01-04–2026-09-21; see CLAUDE.md). Do not treat older        #
+    #   ~16% figures in this comment history as the current result.       #
     #                                                                     #
     #   Design (all signals lagged 1 day — no look-ahead):               #
     #     1. Monthly regime base weights, renormalised to ETFs that      #

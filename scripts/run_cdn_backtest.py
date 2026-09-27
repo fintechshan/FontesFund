@@ -6,7 +6,8 @@ Canadian ETF Regime Strategy (6-ETF Portfolio B) Backtest Engine.
 Reproduces and validates:
   - Canadian Portfolio B (High-Growth 14.6%)
   - CAGR: 14.62%  |  Max Drawdown: 15.53%  |  Sharpe: 1.16  |  Vol: 10.90%
-  - Period: 2012-11-26 to Present
+  - Period: published curve starts when every sleeve exists (about 2012-11), not 20 years
+  - ZQQ.TO is CAD-hedged Nasdaq-100; VFV.TO is unhedged. The book does not hold ZNQ.TO.
 
 Outputs:
   data/backtest_results/cdn_equity_curve.csv
@@ -30,7 +31,7 @@ import pandas as pd
 import yfinance as yf
 
 from src.backtester.engine import BacktestEngine
-from config.regime_rules import STRATEGY_PARAMS
+from config.regime_rules import STRATEGY_PARAMS, REGIME_VIX_DEFENSIVE
 from config.cdn_regime_rules import CDN_REGIME_WEIGHTS, CDN_UNIVERSE, CDN_VERSION
 
 
@@ -98,7 +99,7 @@ def classify_regimes(macro, price_data, momentum_ticker='VFV.TO'):
 
         vix_v = vix_mo.asof(date) if len(vix_mo) > 0 else 15.0
 
-        if vix_v > 30:
+        if vix_v > REGIME_VIX_DEFENSIVE:
             regime = 'deflation'
         elif growth and not infl:
             regime = 'goldilocks'

@@ -448,7 +448,8 @@ class StrategyAdvisor:
         Checks
         ------
         * VIX > 25 → elevated volatility warning.
-        * VIX > 35 → critical VIX spike — defensive posture recommended.
+        * VIX > RISK_LIMITS.vix_spike_threshold (REGIME_VIX_DEFENSIVE, 30)
+          → critical VIX spike — defensive posture recommended.
         * yield_curve < 0 → yield curve inverted — recession risk elevated.
         * hy_spread > 5 → credit stress detected.
         * unemployment_momentum > 0 for 3+ months → labour market

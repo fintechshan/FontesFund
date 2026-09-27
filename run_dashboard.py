@@ -60,6 +60,7 @@ def classify_regimes(macro, price_data, apply_lag=True):
     apply_lag=True applies the CPI+1mo / GDP+4mo publication lag (production, no
     look-ahead). apply_lag=False = UNLAGGED (look-ahead) — used only to measure the
     look-ahead premium for the auditor's lagged-vs-unlagged check."""
+    from config.regime_rules import REGIME_VIX_DEFENSIVE
     vix = macro.get('vix', pd.Series(dtype=float))
     gdp = macro.get('gdp', pd.Series(dtype=float))
     cpi = macro.get('cpi', pd.Series(dtype=float))
@@ -106,7 +107,7 @@ def classify_regimes(macro, price_data, apply_lag=True):
         inflation_rising = (cpi_val > 3.0) and (cpi_val > cpi_3m_ago)
 
         vix_val = vix_monthly.asof(date) if len(vix_monthly) > 0 else 15.0
-        if vix_val > 30:
+        if vix_val > REGIME_VIX_DEFENSIVE:
             regime = 'deflation'
         elif growth_rising and not inflation_rising:
             regime = 'goldilocks'
@@ -293,8 +294,8 @@ if mr_path.exists():
     except Exception:
         pass
 
-# ── Run Look-Ahead Bias Lagged Backtest Simulation ─────────────────────────
-logger.info("Running Look-Ahead Bias lagged simulation...")
+# ── Production, extra-month timing, and unlagged look-ahead runs ──────────
+logger.info("Running publication-lag production, extra-month timing, and unlagged look-ahead...")
 lagged_metrics = {}
 try:
     from src.backtester.engine import BacktestEngine
@@ -308,9 +309,9 @@ try:
     
     # Optimized Regime Strategy — the single production strategy
     # (risk-parity + portfolio-level vol targeting; see CLAUDE.md / RECOMMENDATION.md).
-    # Replaces the old run_vol_targeted_* (SPY-vol-proxy bug). Honest, no-look-ahead
-    # headline is currently ~14.52% CAGR / 14.78% MaxDD / 0.97 Sharpe (data thru 2026-06;
-    # this comment is not displayed — the UI reads the live result CSVs).
+    # Replaces the old run_vol_targeted_* (SPY-vol-proxy bug). Current honest
+    # headline is the v7 sleeve with CPI+1mo / GDP+4mo (see CLAUDE.md and
+    # 20yr_comparison.csv). This comment is not displayed — the UI reads the CSVs.
     vix_series = macro.get('vix')
     from config.regime_rules import STRATEGY_PARAMS  # single source of truth
     standard_res = engine.run_optimized_regime_backtest(
@@ -321,7 +322,8 @@ try:
         **STRATEGY_PARAMS,
     )
 
-    # 1-Month Lagged Backtest (simulates macro release reporting lag)
+    # Extra month of regime delay (execution / timing sensitivity).
+    # regime_history already has the CPI+1mo / GDP+4mo publication lag.
     lagged_rh = regime_history.copy()
     lagged_rh['regime'] = lagged_rh['regime'].shift(1).bfill()
     lagged_res = engine.run_optimized_regime_backtest(
@@ -332,10 +334,10 @@ try:
         **STRATEGY_PARAMS,
     )
 
-    # UNLAGGED backtest (look-ahead) — for the auditor's lagged-vs-unlagged check.
-    # Production = standard_res (lagged). If unlagged ≈ standard, the lag isn't being
-    # applied (look-ahead risk). If unlagged >> standard, the lag is removing a real
-    # look-ahead premium (working as intended).
+    # UNLAGGED backtest — the look-ahead diagnostic (apply_lag=False).
+    # Production = standard_res (CPI+1mo / GDP+4mo). If unlagged ≈ production, the
+    # publication lag may be missing. If unlagged is higher, the lag is removing a
+    # look-ahead premium. The extra-month series above is not this test.
     unlagged_res = engine.run_optimized_regime_backtest(
         regime_history=regime_history_unlagged,
         regime_weights=REGIME_WEIGHTS,
@@ -366,7 +368,7 @@ try:
         'standard_curve': standard_res.equity_curve,
         'lagged_curve': lagged_res.equity_curve
     }
-    logger.info("Look-Ahead Bias lagged simulation completed successfully.")
+    logger.info("Publication-lag, timing, and unlagged runs completed.")
 except Exception as e:
     logger.error(f"Error running lagged backtest simulation: {e}")
     lagged_metrics = {}

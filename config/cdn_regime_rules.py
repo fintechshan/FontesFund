@@ -2,17 +2,18 @@
 config/cdn_regime_rules.py
 ==========================
 Canadian ETF Portfolio (6-ETF, CAD) -- Portfolio B (High-Growth 14.6%), 2026-09-19
-Unhedged US Core + Nasdaq AI Tech + Canadian Banks + Gold + Bonds.
+VFV.TO is unhedged S&P 500 (USD/CAD is in that sleeve). ZQQ.TO is CAD-hedged
+Nasdaq-100. This book does not hold unhedged ZNQ.TO.
 
 Universe B: ZQQ.TO, VFV.TO, ZEB.TO, XBB.TO, CGL-C.TO, XGD.TO
-  ZQQ.TO   -- BMO NASDAQ 100 Equity Index ETF -- tech/AI growth engine
+  ZQQ.TO   -- BMO Nasdaq 100 Equity Hedged to CAD -- tech/AI growth, currency-hedged
   VFV.TO   -- Vanguard S&P 500 Index ETF (Unhedged CAD) -- core US equity + FX alpha
   ZEB.TO   -- BMO Equal Weight Banks ETF -- Cdn banks income & dividend sleeve
   XBB.TO   -- iShares Core Canadian Bond Index -- bond/deflation sleeve
   CGL-C.TO -- iShares Gold Bullion ETF (CAD) -- gold/tail-risk crisis hedge
   XGD.TO   -- iShares S&P/TSX Global Gold Index -- gold miners / inflation spike
 
-Backtest Results (2012-2026):
+Published equity curve is about 2012-11-27 → 2026-09-18 (not a 20-year sample):
   CAGR = 14.62%  |  Max Drawdown = 15.53%  |  Sharpe Ratio = 1.16  |  Vol = 10.90%
 """
 

@@ -4,7 +4,7 @@ Portfolio Optimizer Module
 Optimizes ETF portfolio weights using PyPortfolioOpt with hard constraints:
 - Sharpe ratio ≥ 1.0
 - Maximum drawdown ≤ 15%
-- No single position > 30%
+- No single position above RISK_LIMITS.max_single_position (largest regime sleeve)
 - Total leveraged ETF allocation ≤ 15%
 
 Supports max_sharpe, min_volatility, risk_parity (HRP), and target_return methods.
@@ -187,7 +187,7 @@ class PortfolioOptimizer:
         price_data: pd.DataFrame,
         min_sharpe: float = 1.0,
         max_drawdown: float = 0.15,
-        max_single_position: float = 0.30,
+        max_single_position: Optional[float] = None,
         max_leveraged: float = 0.15,
     ) -> ConstraintValidation:
         """
@@ -199,6 +199,7 @@ class PortfolioOptimizer:
             min_sharpe: Minimum acceptable Sharpe ratio.
             max_drawdown: Maximum acceptable drawdown (as positive decimal).
             max_single_position: Maximum single-position weight.
+                Defaults to RISK_LIMITS.max_single_position.
             max_leveraged: Maximum total leveraged ETF weight.
 
         Returns:
@@ -218,6 +219,10 @@ class PortfolioOptimizer:
         w = pd.Series({t: weights[t] for t in tickers})
         w = w / w.sum()  # Renormalize
         portfolio_returns = daily_returns.dot(w)
+
+        if max_single_position is None:
+            from config.regime_rules import RISK_LIMITS
+            max_single_position = RISK_LIMITS.max_single_position
 
         validator = ConstraintValidator()
         return validator.validate_all(

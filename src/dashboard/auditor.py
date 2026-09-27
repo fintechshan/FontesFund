@@ -23,13 +23,24 @@ def run_independent_audit(price_data, macro, backtest_results, regime_history, a
             return 0.0
 
     # ───────────────────────────────────────────────────────────────────────
-    # PILLAR 1: LOOK-A-HEAD BIAS DIAGNOSTIC
+    # PILLAR 1: PUBLICATION-LAG LOOK-AHEAD, plus an extra-month timing test
+    #
+    # "standard" is production: classify_regimes(apply_lag=True) already shifts
+    # CPI +1 month and GDP +4 months. "lagged" is that regime shifted one more
+    # month (regime.shift(1)). That extra delay is execution/timing sensitivity.
+    # It is not evidence that production used unpublished macro data.
+    # The look-ahead diagnostic is unlagged (apply_lag=False) vs production.
     # ───────────────────────────────────────────────────────────────────────
-    bias_status = "PASS"
-    bias_desc = "Look-ahead bias metrics not provided for evaluation."
+    bias_status = "WARNING"
+    bias_desc = (
+        "Publication-lag check not available. The look-ahead test compares "
+        "production (CPI+1mo / GDP+4mo) with the unlagged regime."
+    )
+    timing_status = "PASS"
+    timing_desc = "Extra-month timing test not available."
     cagr_diff = 0.0
     sharpe_diff = 0.0
-    
+
     std_cagr = 0.0
     std_sharpe = 0.0
     lag_cagr = 0.0
@@ -41,48 +52,37 @@ def run_independent_audit(price_data, macro, backtest_results, regime_history, a
             lag_cagr = clean_pct(lagged_metrics['lagged'].get('annual_return', '0%'))
             std_sharpe = float(lagged_metrics['standard'].get('sharpe', '0'))
             lag_sharpe = float(lagged_metrics['lagged'].get('sharpe', '0'))
-            
+
             cagr_diff = std_cagr - lag_cagr
             sharpe_diff = std_sharpe - lag_sharpe
-            
-            if cagr_diff > 0.04 or sharpe_diff > 0.50 or (std_sharpe > 1.30 and lag_sharpe < 0.80):
-                bias_status = "FAIL"
-                bias_desc = (
-                    f"CRITICAL: Performance decays significantly under 1-month lag. "
-                    f"CAGR drop: {cagr_diff:.2%} (Standard: {std_cagr:.2%}, Lagged: {lag_cagr:.2%}). "
-                    f"Sharpe drop: {sharpe_diff:.2f} (Standard: {std_sharpe:.2f}, Lagged: {lag_sharpe:.2f}). "
-                    f"This indicates the standard strategy suffers from look-ahead bias (using future information)."
-                )
-            elif cagr_diff > 0.02 or sharpe_diff > 0.25:
-                bias_status = "WARNING"
-                bias_desc = (
-                    f"WARNING: Moderate performance drop under 1-month lag. "
-                    f"CAGR drop: {cagr_diff:.2%} (Standard: {std_cagr:.2%}, Lagged: {lag_cagr:.2%}). "
-                    f"Sharpe drop: {sharpe_diff:.2f} (Standard: {std_sharpe:.2f}, Lagged: {lag_sharpe:.2f}). "
-                    f"Potential minor look-ahead bias or timing sensitivity."
-                )
-            elif abs(cagr_diff) < 1e-6 and abs(sharpe_diff) < 1e-6:
-                bias_status = "WARNING"
-                bias_desc = (
-                    "Standard and lagged results are exactly identical. "
-                    "Verify if macro signals are actually driving allocation or if there is a bug in the backtester."
+
+            if abs(cagr_diff) < 1e-6 and abs(sharpe_diff) < 1e-6:
+                timing_status = "WARNING"
+                timing_desc = (
+                    "Production and the extra-month shift are identical. "
+                    "The regime label may not be moving. This is a timing-test "
+                    "sanity check, not a look-ahead result."
                 )
             else:
-                bias_status = "PASS"
-                bias_desc = (
-                    f"Look-Ahead check passed. CAGR difference is stable: {cagr_diff:+.2%} "
-                    f"(Standard: {std_cagr:.2%}, Lagged: {lag_cagr:.2%}). "
-                    f"Sharpe difference: {sharpe_diff:+.2f} (Standard: {std_sharpe:.2f}, Lagged: {lag_sharpe:.2f})."
+                timing_status = "PASS"
+                timing_desc = (
+                    f"Execution / timing sensitivity, not look-ahead in production. "
+                    f"Production already uses CPI+1mo / GDP+4mo. Shifting that regime "
+                    f"one extra month moves CAGR by {-cagr_diff:+.2%} "
+                    f"(production {std_cagr:.2%} → extra month {lag_cagr:.2%}) "
+                    f"and Sharpe by {-sharpe_diff:+.2f} "
+                    f"(production {std_sharpe:.2f} → extra month {lag_sharpe:.2f})."
                 )
         except Exception as e:
-            bias_status = "WARNING"
-            bias_desc = f"Error evaluating look-ahead bias: {e}"
-            logger.error(bias_desc)
+            timing_status = "WARNING"
+            timing_desc = f"Error evaluating the extra-month timing test: {e}"
+            logger.error(timing_desc)
     else:
-        bias_status = "WARNING"
-        bias_desc = "No lagged simulation metrics available. Ensure background updater completes execution."
+        timing_status = "WARNING"
+        timing_desc = "No extra-month timing metrics available. Ensure the dashboard startup backtest completed."
 
-    audit['bias_status'] = bias_status
+    audit['timing_status'] = timing_status
+    audit['timing_desc'] = timing_desc
 
     # ───────────────────────────────────────────────────────────────────────
     # PILLAR 2: FRED DATA INTEGRITY & ACCURACY AUDITOR
@@ -463,48 +463,57 @@ def run_independent_audit(price_data, macro, backtest_results, regime_history, a
             'status': 'WARNING'
         })
 
-    # Add Look-Ahead Bias Diagnostic status to system errors checklist
-    errors.append({
-        'category': 'Look-Ahead Bias Diagnostic',
-        'description': bias_desc,
-        'location': 'src/dashboard/auditor.py',
-        'remedy': "Ensure all backtest signals use shift(1) of macro variables and monthly rebalancing is lagged.",
-        'impact': 'CRITICAL' if bias_status == "FAIL" else ('HIGH' if bias_status == "WARNING" else 'NONE'),
-        'status': bias_status
-    })
-
-    # Lagged-vs-UNLAGGED check — catches the publication lag being REMOVED.
-    # Production = standard (CPI+1mo/GDP+4mo lag). Unlagged "sees" macro early, so it
-    # should out-perform; the gap is the look-ahead premium the lag correctly removes.
+    # True look-ahead diagnostic: unlagged (no CPI/GDP publication lag) vs production.
+    # A positive gap means the lag is removing a look-ahead premium. A ~0 gap means
+    # the lag may have been removed. The extra-month shift is NOT this test.
     if lagged_metrics and 'unlagged' in lagged_metrics:
         try:
             unlag_cagr = clean_pct(lagged_metrics['unlagged'].get('annual_return', '0%'))
-            premium = unlag_cagr - std_cagr   # std_cagr = production (lagged) CAGR
-            if abs(premium) < 0.005:
-                ll_status = "WARNING"
-                ll_desc = (f"Lagged (production {std_cagr:.2%}) and UNLAGGED ({unlag_cagr:.2%}) are "
-                           f"near-identical (Δ {premium:+.2%}). Verify the CPI+1mo/GDP+4mo publication "
-                           f"lag is actually applied in classify_regimes — a ~0 premium is suspicious "
-                           f"and may indicate the lag was removed (look-ahead present).")
+            premium = unlag_cagr - std_cagr   # std_cagr = production (publication-lagged) CAGR
+            if abs(premium) < 0.005 and std_cagr > 0:
+                bias_status = "WARNING"
+                bias_desc = (
+                    f"Production ({std_cagr:.2%}) and UNLAGGED ({unlag_cagr:.2%}) are "
+                    f"near-identical (Δ {premium:+.2%}). Verify the CPI+1mo/GDP+4mo publication "
+                    f"lag is applied in classify_regimes — a ~0 premium can mean the lag was removed."
+                )
             elif premium >= 0.005:
-                ll_status = "PASS"
-                ll_desc = (f"Publication lag removes a +{premium:.2%} look-ahead premium "
-                           f"(unlagged {unlag_cagr:.2%} → production {std_cagr:.2%}). The lag is "
-                           f"applied and production is the conservative, tradable number.")
+                bias_status = "PASS"
+                bias_desc = (
+                    f"Publication lag is applied. It removes a +{premium:.2%} look-ahead premium "
+                    f"(unlagged {unlag_cagr:.2%} → production {std_cagr:.2%}). "
+                    f"Production is the conservative, tradable number."
+                )
             else:
-                ll_status = "PASS"
-                ll_desc = (f"Unlagged ({unlag_cagr:.2%}) underperforms production ({std_cagr:.2%}) by "
-                           f"{-premium:.2%} — macro timing is not a look-ahead source here.")
-            errors.append({
-                'category': 'Look-Ahead: Lagged vs Unlagged',
-                'description': ll_desc,
-                'location': 'run_dashboard.py: classify_regimes(apply_lag)',
-                'remedy': "If near-identical, re-check the CPI+1mo / GDP+4mo index shift is present.",
-                'impact': 'HIGH' if ll_status == "WARNING" else 'NONE',
-                'status': ll_status,
-            })
+                bias_status = "PASS"
+                bias_desc = (
+                    f"Unlagged ({unlag_cagr:.2%}) is below production ({std_cagr:.2%}) by "
+                    f"{-premium:.2%}. Macro timing is not adding a look-ahead premium here."
+                )
         except Exception as e:
-            logger.error(f"Lagged-vs-unlagged check error: {e}")
+            bias_status = "WARNING"
+            bias_desc = f"Error evaluating publication-lag vs unlagged: {e}"
+            logger.error(bias_desc)
+
+    audit['bias_status'] = bias_status
+    audit['bias_desc'] = bias_desc
+
+    errors.append({
+        'category': 'Look-Ahead Bias Diagnostic',
+        'description': bias_desc,
+        'location': 'run_dashboard.py: classify_regimes(apply_lag)',
+        'remedy': "Keep CPI+1mo / GDP+4mo in classify_regimes(apply_lag=True). Do not read the extra-month shift as this check.",
+        'impact': 'HIGH' if bias_status == "WARNING" else 'NONE',
+        'status': bias_status
+    })
+    errors.append({
+        'category': 'Execution / Timing Sensitivity',
+        'description': timing_desc,
+        'location': 'run_dashboard.py: regime.shift(1) after publication lag',
+        'remedy': "Informational. An extra month of regime delay is not a production look-ahead finding.",
+        'impact': 'NONE' if timing_status == "PASS" else 'MEDIUM',
+        'status': timing_status
+    })
 
     # 3. Check target weights sum to 100% (existing)
     try:
@@ -715,55 +724,60 @@ def run_independent_audit(price_data, macro, backtest_results, regime_history, a
     audit['regime_corr'] = regime_corr
 
     # ───────────────────────────────────────────────────────────────────────
-    # RISK ASSESSMENT (existing)
+    # RISK ASSESSMENT
+    # Caps come from RISK_LIMITS (max position = largest REGIME_WEIGHTS
+    # sleeve; VIX spike = REGIME_VIX_DEFENSIVE). No hardcoded 25% / 28 fallback.
     # ───────────────────────────────────────────────────────────────────────
+    from config.regime_rules import REGIME_WEIGHTS, RISK_LIMITS
     risk = {}
-    
+
     curr_weights = {}
     latest_regime = 'unknown'
     if not regime_history.empty:
         latest_regime = regime_history.iloc[-1]['regime']
         curr_weights = REGIME_WEIGHTS.get(latest_regime, {})
-        
+
+    limit_val = RISK_LIMITS.max_single_position
+    over_limit = [
+        f"{regime_name} {ticker} {weight:.1%}"
+        for regime_name, weights in REGIME_WEIGHTS.items()
+        for ticker, weight in weights.items()
+        if weight > limit_val + 1e-9
+    ]
     if curr_weights:
         max_wt = max(curr_weights.values())
         max_asset = [k for k, v in curr_weights.items() if v == max_wt][0]
-        
-        # Risk Concentration Limit check
-        try:
-            limit_val = RISK_LIMITS.max_single_position
-        except Exception:
-            limit_val = 0.25
-            
-        conc_status = "PASS" if max_wt <= limit_val else "WARNING"
+        conc_status = "WARNING" if (max_wt > limit_val + 1e-9 or over_limit) else "PASS"
         risk['concentration'] = {
             'max_weight': f"{max_wt:.1%}",
             'asset': max_asset,
             'limit': f"{limit_val:.1%}",
-            'status': conc_status
+            'status': conc_status,
+            'over': ', '.join(over_limit),
         }
     else:
-        risk['concentration'] = {'max_weight': '—', 'asset': '—', 'limit': '25%', 'status': 'NO_DATA'}
-        
+        risk['concentration'] = {
+            'max_weight': '—', 'asset': '—',
+            'limit': f"{limit_val:.1%}",
+            'status': 'WARNING' if over_limit else 'NO_DATA',
+            'over': ', '.join(over_limit),
+        }
+
     # Leverage Limit Check
     lev_etfs = {'TQQQ', 'SOXL', 'GGLL', 'SSO'}
     lev_total = sum(v for k, v in curr_weights.items() if k in lev_etfs)
-    
-    try:
-        lev_limit = RISK_LIMITS.max_leveraged_total
-    except Exception:
-        lev_limit = 0.25
-        
+    lev_limit = RISK_LIMITS.max_leveraged_total
     lev_status = "PASS" if lev_total <= lev_limit else "WARNING"
     risk['leverage'] = {
         'total_weight': f"{lev_total:.1%}",
         'limit': f"{lev_limit:.1%}",
         'status': lev_status
     }
-    
-    # VIX Stress Test
+
+    # VIX Stress Test — threshold is the same constant the classifier uses.
     risk['stress_test'] = {
         'normal_regime': latest_regime,
+        'vix_threshold': RISK_LIMITS.vix_spike_threshold,
         'vix_spike_allocation': {
             'SHY': '40.0%', 'AGG': '25.0%', 'GLD': '20.0%', 'IEF': '15.0%',
             'Equity/Leveraged': '0.0%'

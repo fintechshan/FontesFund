@@ -7,6 +7,9 @@
 **What was not done:** no Cloud Run change, no merge, no strategy-parameter edit.
 
 The live numbers below are the strings in that layout, not a remembered screenshot.
+They describe the page **before** the label and limit fixes in this branch. A short
+checklist of those fixes is at the end of this file. The findings tables are the
+before-state and are left as the audit record.
 
 ---
 
@@ -190,3 +193,16 @@ curl -sS "https://etf-regime-strategist-322569756829.asia-east2.run.app/_dash-la
 ```
 
 Search that JSON for `14.85%`, `12.21%`, `15.74%`, and `14.62%`.
+
+---
+
+## Fixes applied after this audit
+
+Engine math is unchanged. Copy, limits, and the auditor status key changed:
+
+1. Extra-month `regime.shift(1)` is **Execution / Timing Sensitivity**, not a production look-ahead warning. Look-ahead stays unlagged versus CPI+1mo / GDP+4mo.
+2. `RISK_LIMITS.max_single_position` is `MAX_REGIME_WEIGHT` (IEF 35% in deflation). Goldilocks QQQ 30% is inside the cap. The auditor imports `RISK_LIMITS` (the old 25% fallback was a `NameError`).
+3. `REGIME_VIX_DEFENSIVE` and `RISK_LIMITS.vix_spike_threshold` are **30**, the same threshold the classifiers already used. UI copy reads that constant.
+4. CDN period labels use the equity-curve dates. ZQQ.TO is labeled CAD-hedged. The book still holds ZQQ, not ZNQ.
+5. `CLAUDE.md` and `README.md` lead with v7 **14.85% / 13.90% / 1.03**. v5.1 **14.52% / 14.78% / 0.97** is marked historical.
+6. The tax panel states its CAD CAGRs are the `ab_canadian_tax.py` study, not the USD production backtest.

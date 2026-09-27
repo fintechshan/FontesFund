@@ -23,7 +23,8 @@ Steps before running:
 
 Usage:
   python scripts/ibkr_rebalance.py [--host 127.0.0.1] [--port 7497]
-        [--client-id 7] [--execute] [--max-weight 0.30]
+        [--client-id 7] [--execute]
+  # --max-weight defaults to RISK_LIMITS.max_single_position (largest regime sleeve)
 """
 import argparse
 import math
@@ -35,7 +36,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from config.regime_rules import REGIME_WEIGHTS, RISK_LIMITS
+from config.regime_rules import REGIME_WEIGHTS, RISK_LIMITS, REGIME_VIX_DEFENSIVE
 
 PRICE_CACHE = ROOT / "data" / "cache" / "price_data.csv"
 MACRO_CACHE = ROOT / "data" / "cache" / "macro_data.pkl"
@@ -68,7 +69,7 @@ def current_regime_and_weights():
     c = cpi_m.asof(now); c3 = cpi_m.asof(now - pd.DateOffset(months=3))
     growth = (g > 1.5) or (s > 0.05)
     infl = (c > 3.0) and (c > c3)
-    if vix_now > 30:
+    if vix_now > REGIME_VIX_DEFENSIVE:
         regime = "deflation"
     elif growth and not infl:
         regime = "goldilocks"
