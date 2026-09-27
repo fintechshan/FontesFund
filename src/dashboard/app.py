@@ -160,17 +160,21 @@ def make_allocation_donut(weights):
                       annotations=[dict(text=f'{len(t)}<br>ETFs', x=0.5, y=0.5, font_size=16, font_color='#c8c8d4', showarrow=False)])
     return fig
 
-def make_equity_curves(all_eq, equity_curve):
+def make_equity_curves(all_eq, equity_curve, title=None):
     """Build equity curve chart with ALL benchmarks."""
     fig = go.Figure()
     strat_colors = {'Optimized Regime Strategy': '#00d97e',
                     'Aggressive Regime Strategy': '#00d97e',
+                    'Auditor Lagged (extra month)': '#b55fe6',
+                    'Production (CPI+1mo / GDP+4mo)': '#00d97e',
                     'Basic Regime (upper bound)': '#f5a623', 'Basic Regime Strategy': '#f5a623',
                     '60/40 Benchmark': '#9b59b6', 'S&P 500': '#3498db',
                     'Nasdaq 100 (QQQ)': '#00e5ff', 'QQQ': '#00e5ff',
                     'All Weather': '#e74c3c'}
     main_names = {'Optimized Regime Strategy', 'Vol-Targeted Regime Strategy',
-                  'Aggressive Regime Strategy'}
+                  'Aggressive Regime Strategy',
+                  'Auditor Lagged (extra month)',
+                  'Production (CPI+1mo / GDP+4mo)'}
 
     if not all_eq.empty:
         for col in all_eq.columns:
@@ -187,19 +191,19 @@ def make_equity_curves(all_eq, equity_curve):
         fig.add_trace(go.Scatter(x=vals.index, y=vals.values, name='Optimized Regime Strategy',
                                   line=dict(color='#00d97e', width=2.5)))
 
-    fig.update_layout(**PL, title='Equity Curve — All Strategies ($100K Initial)', height=420,
+    fig.update_layout(**PL, title=title or 'Equity Curve — All Strategies ($100K Initial)', height=420,
                       yaxis_title='Portfolio Value ($)', hovermode='x unified',
                       legend=dict(orientation='h', y=1.12, x=0.5, xanchor='center'))
     return fig
 
-def make_drawdown(equity_curve):
+def make_drawdown(equity_curve, title='Drawdown Analysis'):
     fig = go.Figure()
     if len(equity_curve) > 0:
         rm = equity_curve.cummax()
         dd = (equity_curve - rm) / rm * 100
         fig.add_trace(go.Scatter(x=dd.index, y=dd.values, fill='tozeroy', name='Drawdown',
                                   line=dict(color='#e74c3c', width=1), fillcolor='rgba(231,76,60,0.2)'))
-    fig.update_layout(**PL, title='Drawdown Analysis', height=250, yaxis_title='Drawdown (%)')
+    fig.update_layout(**PL, title=title, height=250, yaxis_title='Drawdown (%)')
     return fig
 
 def make_monthly_heatmap(monthly_returns):
@@ -867,7 +871,8 @@ def build_tax_study_panel(data):
     return html.Div([
         html.H5('🍁 Canadian Investor — CAD Planning Study (not the USD strategy CAGR)',
                 style={'color': '#00d97e', 'marginBottom': '4px', 'fontWeight': '700'}),
-        html.Div(f"These CAD figures are not the production USD backtest on the CAGR card above. "
+        html.Div(f"These CAD figures are a separate planning study. They are not the Auditor Lagged "
+                 f"USD headline on the card above, and they are not the production CPI+1mo / GDP+4mo path. "
                  f"ab_canadian_tax.py · CAD total return including FX · window {s['window']} · "
                  f"precomputed {s['as_of']}. The study sleeve and yield assumptions can differ from the live v7 book.",
                  style={'color': '#f5a623', 'fontSize': '11px', 'marginBottom': '10px'}),
@@ -1189,20 +1194,8 @@ def build_portfolio_tab(data):
         return html.Ul([html.Li(r, style={'color': '#c8c8d4', 'fontSize': '12px'}) for r in items],
                        style={'listStyleType': 'none', 'padding': '0'})
 
-    # Live backtest headline from the result CSV — never hardcode a CAGR.
-    _btr = data.get('backtest_results')
-    _cagr = _sharpe = _dd = '—'
-    try:
-        if _btr is not None and not _btr.empty:
-            # NB: named _btrow (not _row) — this function defines a _row() helper later.
-            _btrow = (_btr.loc['Optimized Regime Strategy']
-                      if 'Optimized Regime Strategy' in _btr.index else _btr.iloc[0])
-            _cagr = str(_btrow.get('Annual Return', '—'))
-            _sh = _btrow.get('Sharpe Ratio', '—')
-            _sharpe = f'{float(_sh):.2f}' if str(_sh).replace('.', '', 1).replace('-', '', 1).isdigit() else str(_sh)
-            _dd = str(_btrow.get('Max Drawdown', '—'))
-    except Exception:
-        pass
+    # Headline is Auditor Lagged when that run is loaded. Never hardcode a CAGR.
+    _bt_title, _cagr, _bt_sub = portfolio_backtest_headline(data)
 
     return html.Div([
         make_timestamp_strip(data, 'price'),
@@ -1210,9 +1203,7 @@ def build_portfolio_tab(data):
         dbc.Row([
             dbc.Col(mc('Regime', f'{ri} {regime.upper()}', f'{conf:.0f}% confidence', rc, ''), md=3),
             dbc.Col(mc('Initial Capital', '$100,000', 'Starting value', '#c8c8d4', '💰'), md=3),
-            dbc.Col(mc('Backtest CAGR', _cagr,
-                       f'Sharpe {_sharpe} | DD {_dd} (7-ETF v7, CPI+1mo / GDP+4mo publication lag)',
-                       '#00d97e', '📈'), md=3),
+            dbc.Col(mc(_bt_title, _cagr, _bt_sub, '#00d97e', '📈'), md=3),
             dbc.Col(mc('Rebalance Freq', 'Monthly', f'Next: 1st of month', '#3498db', '📅'), md=3),
         ], className='mb-3'),
         _source_line(f"🔄 LIVE snapshot built {_built} · regime/weights from FRED macro (cache {_macro_ts}) + "
@@ -1417,40 +1408,228 @@ def build_portfolio_tab(data):
     ])
 
 # ═══════════════════════════════════════════════════════════════════════════
-# TAB 3: BACKTEST (fixed equity curve + benchmarks)
+# TAB 3: BACKTEST — default is Auditor Lagged (extra-month timing)
+# Production (CPI+1mo / GDP+4mo) stays on an explicit control.
 # ═══════════════════════════════════════════════════════════════════════════
-def build_backtest_tab(data):
+BACKTEST_PATH_AUDITOR = 'auditor_lagged'
+BACKTEST_PATH_PRODUCTION = 'production'
+AUDITOR_SERIES_LABEL = 'Auditor Lagged (extra month)'
+PRODUCTION_SERIES_LABEL = 'Production (CPI+1mo / GDP+4mo)'
+_PROD_CSV_NAMES = (
+    'Optimized Regime Strategy',
+    'Vol-Targeted Regime Strategy',
+    'Aggressive Regime Strategy',
+    'Protected Regime Strategy',
+)
+
+
+def format_backtest_display(res):
+    """Card/table strings from a BacktestResult. Display only — no new math."""
+    if res is None:
+        return {}
+    return {
+        'annual_return': f"{res.annual_return:.2%}",
+        'sharpe': f"{res.sharpe_ratio:.2f}",
+        'max_dd': f"{res.max_drawdown:.2%}",
+        'total_return': f"{res.total_return:.2%}",
+        'sortino': f"{res.sortino_ratio:.2f}",
+        'calmar': f"{res.calmar_ratio:.2f}",
+        'volatility': f"{res.volatility:.2%}",
+        'win_rate': f"{res.win_rate:.1%}",
+    }
+
+
+def pack_lagged_metrics(standard_res, lagged_res, unlagged_res):
+    """Bundle the three startup runs the Auditor and Backtest tabs read."""
+    def _curve(res):
+        c = getattr(res, 'equity_curve', None)
+        return c if isinstance(c, pd.Series) else pd.Series(dtype=float)
+
+    def _monthly(res):
+        m = getattr(res, 'monthly_returns', None)
+        return m if isinstance(m, pd.Series) else pd.Series(dtype=float)
+
+    return {
+        'standard': format_backtest_display(standard_res),
+        'lagged': format_backtest_display(lagged_res),
+        'unlagged': format_backtest_display(unlagged_res),
+        'standard_curve': _curve(standard_res),
+        'lagged_curve': _curve(lagged_res),
+        'standard_monthly': _monthly(standard_res),
+        'lagged_monthly': _monthly(lagged_res),
+    }
+
+
+def _as_series(obj):
+    if isinstance(obj, pd.Series) and len(obj) > 0:
+        return obj
+    return pd.Series(dtype=float)
+
+
+def _metrics_from_csv_row(row):
+    if row is None:
+        return {}
+    get = row.get if hasattr(row, 'get') else (lambda k, d=None: d)
+    return {
+        'annual_return': get('Annual Return', '—'),
+        'volatility': get('Volatility', '—'),
+        'sharpe': get('Sharpe Ratio', '—'),
+        'sortino': get('Sortino Ratio', '—'),
+        'max_dd': get('Max Drawdown', '—'),
+        'calmar': get('Calmar Ratio', '—'),
+        'win_rate': get('Win Rate', '—'),
+        'total_return': get('Total Return', '—'),
+    }
+
+
+def _csv_production_metrics(data):
     bt = data.get('backtest_results', pd.DataFrame())
-    eq = data.get('equity_curve', pd.Series(dtype=float))
-    all_eq = data.get('all_equity_curves', pd.DataFrame())
-    mr = data.get('monthly_returns', pd.Series(dtype=float))
+    if not isinstance(bt, pd.DataFrame) or bt.empty:
+        return {}
+    name = next((n for n in _PROD_CSV_NAMES if n in bt.index), None)
+    if name is None:
+        name = bt.index[0]
+    try:
+        return _metrics_from_csv_row(bt.loc[name])
+    except Exception:
+        return {}
 
-    ann_ret = sharpe = max_dd = sortino = calmar = total_ret = '—'
-    # Resolve the production strategy row by name, tolerating renames; else first row.
-    prod_names = ['Optimized Regime Strategy', 'Vol-Targeted Regime Strategy',
-                  'Aggressive Regime Strategy']
-    prod_row = next((n for n in prod_names if (not bt.empty and n in bt.index)), None)
-    if prod_row is None and not bt.empty:
-        prod_row = bt.index[0]
-    if prod_row is not None:
-        row = bt.loc[prod_row]
-        ann_ret, sharpe = row.get('Annual Return', '—'), row.get('Sharpe Ratio', '—')
-        max_dd, sortino = row.get('Max Drawdown', '—'), row.get('Sortino Ratio', '—')
-        calmar, total_ret = row.get('Calmar Ratio', '—'), row.get('Total Return', '—')
 
-    table_data = []
-    if not bt.empty:
-        for strat in bt.index:
-            r = bt.loc[strat]
-            table_data.append({
-                'Strategy': strat, 'Annual Return': r.get('Annual Return', '—'),
-                'Volatility': r.get('Volatility', '—'), 'Sharpe': r.get('Sharpe Ratio', '—'),
-                'Sortino': r.get('Sortino Ratio', '—'), 'Max DD': r.get('Max Drawdown', '—'),
-                'Calmar': r.get('Calmar Ratio', '—'), 'Win Rate': r.get('Win Rate', '—'),
-                'Total Return': r.get('Total Return', '—'),
-            })
+def _lagged_bundle(data):
+    audit = data.get('audit') or {}
+    lm = audit.get('lagged_metrics') or {}
+    return lm if isinstance(lm, dict) else {}
 
-    us_start, us_end, us_years = _series_span(eq)
+
+def portfolio_backtest_headline(data):
+    """Portfolio card: Auditor Lagged first. Production CAGR stays in the subtitle."""
+    lm = _lagged_bundle(data)
+    lag = lm.get('lagged') or {}
+    std = lm.get('standard') or {}
+    if lag.get('annual_return'):
+        prod = std.get('annual_return') or _csv_production_metrics(data).get('annual_return') or 'on the Backtest tab'
+        subtitle = (
+            f"Sharpe {lag.get('sharpe', '—')} | DD {lag.get('max_dd', '—')} · "
+            f"Auditor Lagged (extra-month timing). "
+            f"Production CPI+1mo / GDP+4mo is {prod} on the Backtest tab."
+        )
+        return 'Auditor Lagged CAGR', str(lag.get('annual_return')), subtitle
+    csv = _csv_production_metrics(data)
+    cagr = str(csv.get('annual_return', '—'))
+    sharpe = str(csv.get('sharpe', '—'))
+    dd = str(csv.get('max_dd', '—'))
+    subtitle = (
+        f"Sharpe {sharpe} | DD {dd} · Production CPI+1mo / GDP+4mo. "
+        f"Auditor Lagged is not loaded."
+    )
+    return 'Backtest CAGR', cagr, subtitle
+
+
+def us_backtest_comparison(data):
+    """US column on the CDN tab. Matches the Backtest default when the extra-month run exists.
+
+    CDN itself has no extra-month series. Callers should say so.
+    """
+    lm = _lagged_bundle(data)
+    lag = lm.get('lagged') or {}
+    if lag.get('annual_return'):
+        return {
+            'label': 'US Auditor Lagged (extra month)',
+            'cagr': lag.get('annual_return', '—'),
+            'max_dd': lag.get('max_dd', '—'),
+            'sharpe': lag.get('sharpe', '—'),
+            'volatility': lag.get('volatility', '—'),
+            'calmar': lag.get('calmar', '—'),
+            'win_rate': lag.get('win_rate', '—'),
+            'total_return': lag.get('total_return', '—'),
+            'uses_auditor_lag': True,
+        }
+    csv = _csv_production_metrics(data)
+    return {
+        'label': 'US production (CPI+1mo / GDP+4mo)',
+        'cagr': csv.get('annual_return', '—'),
+        'max_dd': csv.get('max_dd', '—'),
+        'sharpe': csv.get('sharpe', '—'),
+        'volatility': csv.get('volatility', '—'),
+        'calmar': csv.get('calmar', '—'),
+        'win_rate': csv.get('win_rate', '—'),
+        'total_return': csv.get('total_return', '—'),
+        'uses_auditor_lag': False,
+    }
+
+
+def _table_row(name, metrics):
+    metrics = metrics or {}
+    return {
+        'Strategy': name,
+        'Annual Return': metrics.get('annual_return', '—'),
+        'Volatility': metrics.get('volatility', '—'),
+        'Sharpe': metrics.get('sharpe', '—'),
+        'Sortino': metrics.get('sortino', '—'),
+        'Max DD': metrics.get('max_dd', '—'),
+        'Calmar': metrics.get('calmar', '—'),
+        'Win Rate': metrics.get('win_rate', '—'),
+        'Total Return': metrics.get('total_return', '—'),
+    }
+
+
+def _chart_frame(all_eq, curve, curve_name):
+    frame = all_eq.copy() if isinstance(all_eq, pd.DataFrame) else pd.DataFrame()
+    drop = [c for c in frame.columns if c in _PROD_CSV_NAMES or c in (
+        AUDITOR_SERIES_LABEL, PRODUCTION_SERIES_LABEL)]
+    if len(drop):
+        frame = frame.drop(columns=drop, errors='ignore')
+    series = _as_series(curve)
+    if len(series):
+        frame[curve_name] = series
+    return frame
+
+
+def build_backtest_path_body(data, path):
+    """Cards, curves, and comparison for one Backtest path.
+
+    ``auditor_lagged`` is the fresh-load default. It does not fall back to the
+    production CAGR when the extra-month run is missing. Those cards stay blank
+    so the production number cannot appear as the unlabeled default.
+    """
+    lm = _lagged_bundle(data)
+    lag = lm.get('lagged') or {}
+    std = lm.get('standard') or {}
+    if not std.get('annual_return'):
+        std = _csv_production_metrics(data)
+    show_auditor = path != BACKTEST_PATH_PRODUCTION
+    if show_auditor:
+        metrics = lag if lag.get('annual_return') else {}
+        curve = _as_series(lm.get('lagged_curve'))
+        monthly = _as_series(lm.get('lagged_monthly'))
+        series_name = AUDITOR_SERIES_LABEL
+        caption = (
+            'Showing Auditor Lagged: the production regime (CPI already +1 month, GDP already +4 months) '
+            'shifted one extra month. That extra month is an execution / timing sensitivity — '
+            'the publication-aware path shown first.'
+        )
+        chart_title = 'Equity Curve — Auditor Lagged vs benchmarks ($100K)'
+        dd_title = 'Drawdown — Auditor Lagged (extra month)'
+    else:
+        metrics = std if std.get('annual_return') else {}
+        curve = _as_series(lm.get('standard_curve'))
+        if len(curve) == 0:
+            curve = _as_series(data.get('equity_curve'))
+        monthly = _as_series(lm.get('standard_monthly'))
+        if len(monthly) == 0:
+            monthly = _as_series(data.get('monthly_returns'))
+        series_name = PRODUCTION_SERIES_LABEL
+        caption = (
+            'Showing production: CPI +1 month and GDP +4 months. This is the path live allocation uses. '
+            'Auditor Lagged (one extra month of regime delay) is the default on a fresh load.'
+        )
+        chart_title = 'Equity Curve — Production vs benchmarks ($100K)'
+        dd_title = 'Drawdown — Production (CPI+1mo / GDP+4mo)'
+
+    if show_auditor and not lag.get('annual_return'):
+        caption += ' Auditor Lagged metrics are not loaded yet, so these cards stay blank.'
+
+    us_start, us_end, us_years = _series_span(curve if len(curve) else _as_series(data.get('equity_curve')))
     if us_start:
         us_span = f'{us_start} → {us_end}'
         us_cagr_lbl = f'{us_years:.1f}-yr CAGR'
@@ -1458,8 +1637,30 @@ def build_backtest_tab(data):
         us_span = 'equity-curve sample'
         us_cagr_lbl = 'Sample CAGR'
 
+    ann_ret = metrics.get('annual_return', '—')
+    sharpe = metrics.get('sharpe', '—')
+    max_dd = metrics.get('max_dd', '—')
+    sortino = metrics.get('sortino', '—')
+    calmar = metrics.get('calmar', '—')
+    total_ret = metrics.get('total_return', '—')
+
+    bt = data.get('backtest_results', pd.DataFrame())
+    all_eq = data.get('all_equity_curves', pd.DataFrame())
+    auditor_row = _table_row(AUDITOR_SERIES_LABEL, lag if lag.get('annual_return') else {})
+    prod_row = _table_row(PRODUCTION_SERIES_LABEL, std if std.get('annual_return') else {})
+    bench_rows = []
+    if isinstance(bt, pd.DataFrame) and not bt.empty:
+        for strat in bt.index:
+            if strat in _PROD_CSV_NAMES:
+                continue
+            bench_rows.append(_table_row(strat, _metrics_from_csv_row(bt.loc[strat])))
+    if show_auditor:
+        table_data = [auditor_row, prod_row] + bench_rows
+    else:
+        table_data = [prod_row, auditor_row] + bench_rows
+
+    frame = _chart_frame(all_eq, curve, series_name)
     return html.Div([
-        make_timestamp_strip(data, 'backtest'),
         dbc.Row([
             dbc.Col(mc('Annual Return', str(ann_ret), us_cagr_lbl, '#00d97e', '📈'), md=2),
             dbc.Col(mc('Sharpe Ratio', str(sharpe), 'Risk-adjusted', '#00d97e', '⚡'), md=2),
@@ -1468,16 +1669,20 @@ def build_backtest_tab(data):
             dbc.Col(mc('Calmar', str(calmar), 'Return/DD', '#3498db', '🎯'), md=2),
             dbc.Col(mc('Total Return', str(total_ret), us_span, '#f5a623', '💰'), md=2),
         ], className='mb-3'),
-        html.Div(f'Production path: CPI +1 month and GDP +4 months publication lag. Sample {us_span}.',
+        html.Div(f'{caption} Sample {us_span}.',
                  style={'color': '#6c757d', 'fontSize': '11px', 'marginTop': '-8px', 'marginBottom': '12px'}),
-        html.Div([dcc.Graph(figure=make_equity_curves(all_eq, eq), config={'displayModeBar': False})],
+        html.Div([dcc.Graph(
+            figure=make_equity_curves(frame, curve, title=chart_title),
+            config={'displayModeBar': False},
+        )], style={**CS, 'marginBottom': '16px'}),
+        html.Div([dcc.Graph(figure=make_drawdown(curve, title=dd_title), config={'displayModeBar': False})],
                  style={**CS, 'marginBottom': '16px'}),
-        html.Div([dcc.Graph(figure=make_drawdown(eq), config={'displayModeBar': False})],
-                 style={**CS, 'marginBottom': '16px'}),
-        html.Div([dcc.Graph(figure=make_monthly_heatmap(mr), config={'displayModeBar': False})],
+        html.Div([dcc.Graph(figure=make_monthly_heatmap(monthly), config={'displayModeBar': False})],
                  style={**CS, 'marginBottom': '16px'}),
         html.Div([
             html.H6(f'Strategy Comparison — {us_span}', style={'color': '#c8c8d4', 'marginBottom': '10px'}),
+            html.Div('The highlighted row is the path selected above. Production stays in this table either way.',
+                     style={'color': '#6c757d', 'fontSize': '11px', 'marginBottom': '8px'}),
             dash_table.DataTable(
                 columns=[{'name': c, 'id': c} for c in ['Strategy','Annual Return','Volatility','Sharpe',
                           'Sortino','Max DD','Calmar','Win Rate','Total Return']],
@@ -1493,6 +1698,45 @@ def build_backtest_tab(data):
                 ],
             ),
         ], style=CS),
+    ])
+
+
+def build_backtest_tab(data):
+    lm = _lagged_bundle(data)
+    lag_ann = (lm.get('lagged') or {}).get('annual_return')
+    std_ann = (lm.get('standard') or {}).get('annual_return') or _csv_production_metrics(data).get('annual_return')
+    lag_lbl = 'Auditor Lagged — extra month (timing sensitivity)'
+    prod_lbl = 'Production — CPI +1mo / GDP +4mo'
+    if lag_ann:
+        lag_lbl += f' · CAGR {lag_ann}'
+    if std_ann:
+        prod_lbl += f' · CAGR {std_ann}'
+    return html.Div([
+        make_timestamp_strip(data, 'backtest'),
+        html.Div([
+            html.Div('Backtest path', style={'color': '#c8c8d4', 'fontSize': '12px',
+                                            'fontWeight': '700', 'marginBottom': '8px'}),
+            dcc.RadioItems(
+                id='backtest-path-select',
+                options=[
+                    {'label': lag_lbl, 'value': BACKTEST_PATH_AUDITOR},
+                    {'label': prod_lbl, 'value': BACKTEST_PATH_PRODUCTION},
+                ],
+                value=BACKTEST_PATH_AUDITOR,
+                inline=True,
+                labelStyle={'display': 'inline-block', 'marginRight': '22px', 'color': '#c8c8d4',
+                            'fontSize': '13px'},
+                inputStyle={'marginRight': '6px'},
+            ),
+            html.Div(
+                'Auditor Lagged is the default. It is the production regime (CPI +1 month, GDP +4 months) '
+                'shifted one extra month. That extra month is an execution / timing sensitivity: '
+                'the publication-aware path shown first. Production is the path live allocation uses; '
+                'select it here to see that CAGR. The look-ahead case (publication lag off) stays on the Auditor tab.',
+                style={'color': '#8888a0', 'fontSize': '12px', 'lineHeight': '1.45', 'marginTop': '10px'},
+            ),
+        ], style={**CS, 'marginBottom': '16px', 'border': '1px solid #b55fe6'}),
+        html.Div(id='backtest-path-body', children=build_backtest_path_body(data, BACKTEST_PATH_AUDITOR)),
     ])
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2362,7 +2606,9 @@ def build_auditor_tab(data):
                 dbc.Col([
                     html.P('Production already waits for CPI and GDP release dates. The extra-month series shifts that lagged regime one more month. '
                            'A lower CAGR on the extra-month series is timing sensitivity. It is not evidence that production used unpublished data. '
-                           'The look-ahead premium is the unlagged run versus production, in the Look-Ahead Bias Diagnostic row.',
+                           'The look-ahead premium is the unlagged run versus production, in the Look-Ahead Bias Diagnostic row. '
+                           'The Backtest tab and the Portfolio CAGR card open on this extra-month series. '
+                           'Production (CPI+1mo / GDP+4mo) stays on the Backtest control.',
                            style={'color': '#c8c8d4', 'fontSize': '12px', 'lineHeight': '1.5'}),
                     html.H6('Production vs extra-month timing', style={'color': '#c8c8d4', 'marginTop': '16px', 'marginBottom': '10px'}),
                     dash_table.DataTable(
@@ -2483,8 +2729,25 @@ def build_cdn_portfolio_tab(data):
     us_mr         = data.get('monthly_returns', pd.Series(dtype=float))
     metrics       = cdn_meta.get('metrics', {})
     from config.regime_rules import REGIME_VIX_DEFENSIVE as _CDN_VIX
+    # US column follows the Backtest default (Auditor Lagged) when that run exists.
+    # CDN has no parallel extra-month series — its own cards stay the TSX production book.
+    us_cmp = us_backtest_comparison(data)
+    us_cagr = str(us_cmp['cagr'])
+    us_maxdd = str(us_cmp['max_dd'])
+    us_sharpe = str(us_cmp['sharpe'])
+    us_vol = str(us_cmp['volatility'])
+    us_calmar = str(us_cmp['calmar'])
+    us_winrate = str(us_cmp['win_rate'])
+    us_total = str(us_cmp['total_return'])
+    us_col = us_cmp['label']
+    _lm = _lagged_bundle(data)
+    lag_eq = _as_series(_lm.get('lagged_curve'))
+    prod_eq = _as_series(_lm.get('standard_curve'))
+    if len(prod_eq) == 0:
+        prod_eq = _as_series(us_eq)
+    us_primary = lag_eq if us_cmp['uses_auditor_lag'] and len(lag_eq) else prod_eq
     cdn_start, cdn_end, cdn_years = _series_span(cdn_eq)
-    us_curve_start, us_curve_end, _us_curve_years = _series_span(us_eq)
+    us_curve_start, us_curve_end, _us_curve_years = _series_span(us_primary if len(us_primary) else us_eq)
     if cdn_start:
         cdn_span = f'{cdn_start} → {cdn_end}'
         cdn_card = f'{cdn_span} (CAD)'
@@ -2494,20 +2757,6 @@ def build_cdn_portfolio_tab(data):
     us_span_lbl = f'{us_curve_start} → {us_curve_end}' if us_curve_start else 'US equity curve'
     cdn_version   = cdn_meta.get('name', 'v1')
     ab_winner     = cdn_meta.get('name', 'Universe D')
-
-    # Dynamically retrieve US metrics directly from Tab 3 Backtest Results
-    btr = data.get('backtest_results', pd.DataFrame())
-    us_strat = ('Optimized Regime Strategy' if 'Optimized Regime Strategy' in btr.index
-                else (btr.index[0] if not btr.empty else None))
-    us_row = btr.loc[us_strat] if us_strat is not None else {}
-
-    us_cagr = str(us_row.get('Annual Return', '12.24%'))
-    us_maxdd = str(us_row.get('Max Drawdown', '12.68%'))
-    us_sharpe = str(us_row.get('Sharpe Ratio', '1.02'))
-    us_vol = str(us_row.get('Volatility', '10.17%'))
-    us_calmar = str(us_row.get('Calmar Ratio', '0.97'))
-    us_winrate = str(us_row.get('Win Rate', '54.4%'))
-    us_total = str(us_row.get('Total Return', '1122%'))
 
     _hdr  = {'backgroundColor': '#16213e', 'color': '#c8c8d4', 'fontWeight': '600',
               'border': '1px solid #2d2d44', 'fontFamily': 'Inter', 'fontSize': '11px'}
@@ -2546,35 +2795,47 @@ def build_cdn_portfolio_tab(data):
         donut_fig = go.Figure()
 
     # ── Equity curve overlay: CDN vs US ───────────────────────────────
-    # Plot on the exact same $100,000 portfolio growth scale as Tab 3 Backtest
+    # CDN stays its own production book (no extra-month series). The bold US
+    # line matches the Backtest default when Auditor Lagged is loaded.
     overlay_fig = go.Figure()
-    if not us_eq.empty:
-        us_dollars = us_eq * 100000
+    if us_cmp['uses_auditor_lag'] and len(lag_eq):
+        us_dollars = lag_eq * 100000
         overlay_fig.add_trace(go.Scatter(
             x=us_dollars.index, y=us_dollars.values,
-            name='US Portfolio (USD — Tab 3 Verified Strategy, $100K start in 2005)',
-            line=dict(color='#00d97e', width=2.5),
-            hovertemplate='%{x|%b %Y}: $%{y:,.0f} USD<extra>US Strategy (Tab 3)</extra>',
+            name='US Auditor Lagged (extra month — Backtest default)',
+            line=dict(color='#b55fe6', width=2.5),
+            hovertemplate='%{x|%b %Y}: $%{y:,.0f} USD<extra>US Auditor Lagged</extra>',
+        ))
+    if len(prod_eq):
+        prod_dollars = prod_eq * 100000
+        overlay_fig.add_trace(go.Scatter(
+            x=prod_dollars.index, y=prod_dollars.values,
+            name='US production (CPI+1mo / GDP+4mo)',
+            line=dict(color='#00d97e', width=1.4 if us_cmp['uses_auditor_lag'] else 2.5,
+                      dash='dot' if us_cmp['uses_auditor_lag'] else None),
+            hovertemplate='%{x|%b %Y}: $%{y:,.0f} USD<extra>US production</extra>',
         ))
     if not cdn_eq.empty:
         cdn_dollars = cdn_eq * 100000
         overlay_fig.add_trace(go.Scatter(
             x=cdn_dollars.index, y=cdn_dollars.values,
-            name='CDN Portfolio B (CAD — $100K start in Nov 2012)',
+            name='CDN Portfolio B (CAD — TSX production, no extra-month series)',
             line=dict(color='#f5a623', width=2.5),
             hovertemplate='%{x|%b %Y}: $%{y:,.0f} CAD<extra>CDN Portfolio B</extra>',
         ))
-    if not us_eq.empty and not cdn_eq.empty:
+    if len(us_primary) and not cdn_eq.empty:
         start = cdn_eq.index[0]
-        us_aligned = us_eq[us_eq.index >= start]
+        us_aligned = us_primary[us_primary.index >= start]
         if not us_aligned.empty:
-            # Scaled to same $100K in Nov 2012 for head-to-head comparison
             us_h2h = (us_aligned / us_aligned.iloc[0]) * 100000
+            h2h_name = ('US Auditor Lagged (re-indexed to $100K at CDN start)'
+                        if us_cmp['uses_auditor_lag'] and len(lag_eq)
+                        else 'US production (re-indexed to $100K at CDN start)')
             overlay_fig.add_trace(go.Scatter(
                 x=us_h2h.index, y=us_h2h.values,
-                name='US Portfolio (USD — Re-indexed to $100K in Nov 2012)',
+                name=h2h_name,
                 line=dict(color='#3498db', width=1.8, dash='dot'),
-                hovertemplate='%{x|%b %Y}: $%{y:,.0f} USD (2012 base)<extra>US 2012 Head-to-Head</extra>',
+                hovertemplate='%{x|%b %Y}: $%{y:,.0f} USD (CDN start)<extra>US head-to-head</extra>',
             ))
 
     overlay_fig.update_layout(
@@ -2584,7 +2845,8 @@ def build_cdn_portfolio_tab(data):
         xaxis=dict(gridcolor='#2d2d44', color='#8888a0'),
         yaxis=dict(gridcolor='#2d2d44', color='#8888a0', title='Portfolio Value ($)', tickprefix='$', tickformat=',.0f'),
         font=dict(color='#c8c8d4'), hovermode='x unified',
-        title=dict(text='CDN vs US Portfolio Growth ($100,000 Initial Capital — Matching Tab 3 Backtest Engine)', font=dict(size=13, color='#c8c8d4')),
+        title=dict(text='CDN vs US ($100K). Bold US line is Auditor Lagged when that run is loaded.',
+                   font=dict(size=13, color='#c8c8d4')),
     )
 
     # ── Monthly return heatmap ─────────────────────────────────────────
@@ -2657,7 +2919,11 @@ def build_cdn_portfolio_tab(data):
             html.Div(f'6-ETF TSX universe · CAD · Winner: {ab_winner} · '
                      f'CAGR {metrics.get("CAGR","—")} | MaxDD {metrics.get("MaxDD","—")} | '
                      f'Sharpe {metrics.get("Sharpe","—")} | Vol {metrics.get("Volatility","—")}',
-                     style={'color': '#6c757d', 'fontSize': '11px', 'marginBottom': '10px'}),
+                     style={'color': '#6c757d', 'fontSize': '11px', 'marginBottom': '4px'}),
+            html.Div('CDN cards are the TSX production backtest. There is no CDN extra-month timing series. '
+                     'The US comparison follows the Backtest tab default (Auditor Lagged) when that US run is loaded. '
+                     'US production (CPI+1mo / GDP+4mo) stays on the Backtest control and as the dotted curve below.',
+                     style={'color': '#b55fe6', 'fontSize': '11px', 'marginBottom': '10px'}),
         ], style=CS),
 
         # ── Canadian vs US Macro Regime Definition Section ──
@@ -2811,7 +3077,7 @@ def build_cdn_portfolio_tab(data):
 
         # Row 2: Equity curve overlay (CDN vs US)
         html.Div([
-            html.H6('CDN vs US Portfolio Growth Overlay ($100,000 Initial Capital — Matching Tab 3)',
+            html.H6('CDN vs US Portfolio Growth ($100,000). US default matches the Backtest tab.',
                     style={'color': '#c8c8d4', 'marginBottom': '8px'}),
             dcc.Graph(figure=overlay_fig, config={'displayModeBar': False}),
         ], style={**CS, 'marginBottom': '16px'}),
@@ -2828,23 +3094,28 @@ def build_cdn_portfolio_tab(data):
         html.Div([
             html.H6('Side-by-Side Comparison: CDN (CAD) vs US (USD)',
                     style={'color': '#c8c8d4', 'marginBottom': '4px'}),
-            html.Div(f'US Portfolio metrics are the production USD backtest ({us_span_lbl}, CPI+1mo / GDP+4mo). '
-                     f'CDN metrics are the TSX book over {cdn_span}'
-                     + (f' ({cdn_years:.1f} years)' if cdn_years else '')
-                     + '. ZQQ.TO is CAD-hedged Nasdaq-100; VFV.TO is unhedged S&P 500 (USD/CAD moves VFV, not ZQQ).',
-                     style={'color': '#8888a0', 'fontSize': '11px', 'marginBottom': '10px'}),
+            html.Div(
+                (f'US column is Auditor Lagged ({us_span_lbl}): production regime plus one extra month '
+                 f'(execution / timing sensitivity). CDN has no parallel extra-month run, so the CDN column '
+                 f'stays the TSX production book over {cdn_span}'
+                 if us_cmp['uses_auditor_lag'] else
+                 f'US Auditor Lagged is not loaded, so the US column is production ({us_span_lbl}, CPI+1mo / GDP+4mo). '
+                 f'CDN has no extra-month series. CDN sample {cdn_span}')
+                + (f' ({cdn_years:.1f} years)' if cdn_years else '')
+                + '. ZQQ.TO is CAD-hedged Nasdaq-100; VFV.TO is unhedged S&P 500 (USD/CAD moves VFV, not ZQQ).',
+                style={'color': '#8888a0', 'fontSize': '11px', 'marginBottom': '10px'}),
             dash_table.DataTable(
-                columns=[{'name': c, 'id': c} for c in ['Metric', 'CDN Portfolio (CAD)', 'US Portfolio (USD — Tab 3)']],
+                columns=[{'name': c, 'id': c} for c in ['Metric', 'CDN Portfolio (CAD)', us_col]],
                 data=[
-                    {'Metric': 'CAGR',        'CDN Portfolio (CAD)': metrics.get('CAGR','—'),       'US Portfolio (USD — Tab 3)': us_cagr},
-                    {'Metric': 'Max Drawdown', 'CDN Portfolio (CAD)': metrics.get('MaxDD','—'),      'US Portfolio (USD — Tab 3)': us_maxdd},
-                    {'Metric': 'Sharpe Ratio', 'CDN Portfolio (CAD)': metrics.get('Sharpe','—'),     'US Portfolio (USD — Tab 3)': us_sharpe},
-                    {'Metric': 'Volatility',   'CDN Portfolio (CAD)': metrics.get('Volatility','—'), 'US Portfolio (USD — Tab 3)': us_vol},
-                    {'Metric': 'Calmar Ratio', 'CDN Portfolio (CAD)': metrics.get('Calmar','—'),     'US Portfolio (USD — Tab 3)': us_calmar},
-                    {'Metric': 'Win Rate',     'CDN Portfolio (CAD)': metrics.get('WinRate','—'),    'US Portfolio (USD — Tab 3)': us_winrate},
-                    {'Metric': 'Total Return', 'CDN Portfolio (CAD)': metrics.get('TotalReturn','—'),'US Portfolio (USD — Tab 3)': us_total},
-                    {'Metric': 'Currency',     'CDN Portfolio (CAD)': 'CAD',                         'US Portfolio (USD — Tab 3)': 'USD'},
-                    {'Metric': 'Universe',     'CDN Portfolio (CAD)': '6 TSX ETFs',                  'US Portfolio (USD — Tab 3)': '7 US ETFs'},
+                    {'Metric': 'CAGR',        'CDN Portfolio (CAD)': metrics.get('CAGR','—'),       us_col: us_cagr},
+                    {'Metric': 'Max Drawdown', 'CDN Portfolio (CAD)': metrics.get('MaxDD','—'),      us_col: us_maxdd},
+                    {'Metric': 'Sharpe Ratio', 'CDN Portfolio (CAD)': metrics.get('Sharpe','—'),     us_col: us_sharpe},
+                    {'Metric': 'Volatility',   'CDN Portfolio (CAD)': metrics.get('Volatility','—'), us_col: us_vol},
+                    {'Metric': 'Calmar Ratio', 'CDN Portfolio (CAD)': metrics.get('Calmar','—'),     us_col: us_calmar},
+                    {'Metric': 'Win Rate',     'CDN Portfolio (CAD)': metrics.get('WinRate','—'),    us_col: us_winrate},
+                    {'Metric': 'Total Return', 'CDN Portfolio (CAD)': metrics.get('TotalReturn','—'), us_col: us_total},
+                    {'Metric': 'Currency',     'CDN Portfolio (CAD)': 'CAD',                         us_col: 'USD'},
+                    {'Metric': 'Universe',     'CDN Portfolio (CAD)': '6 TSX ETFs',                  us_col: '7 US ETFs'},
                 ],
                 style_header=_hdr,
                 style_cell={**_cell, 'textAlign': 'center'},
@@ -2973,5 +3244,14 @@ def create_app(data):
     @app.callback(Output('refresh-ts', 'children'), Input('refresh-interval', 'n_intervals'))
     def update_ts(n):
         return f'Last: {datetime.now().strftime("%H:%M:%S")}'
+
+    @app.callback(
+        Output('backtest-path-body', 'children'),
+        Input('backtest-path-select', 'value'),
+        prevent_initial_call=True,
+    )
+    def switch_backtest_path(path):
+        # Display only. Weights, regime classification, and the Reddit overlay are untouched.
+        return build_backtest_path_body(data, path or BACKTEST_PATH_AUDITOR)
 
     return app

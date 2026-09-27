@@ -346,28 +346,8 @@ try:
         **STRATEGY_PARAMS,
     )
 
-    lagged_metrics = {
-        'standard': {
-            'annual_return': f"{standard_res.annual_return:.2%}",
-            'sharpe': f"{standard_res.sharpe_ratio:.2f}",
-            'max_dd': f"{standard_res.max_drawdown:.2%}",
-            'total_return': f"{standard_res.total_return:.2%}"
-        },
-        'lagged': {
-            'annual_return': f"{lagged_res.annual_return:.2%}",
-            'sharpe': f"{lagged_res.sharpe_ratio:.2f}",
-            'max_dd': f"{lagged_res.max_drawdown:.2%}",
-            'total_return': f"{lagged_res.total_return:.2%}"
-        },
-        'unlagged': {
-            'annual_return': f"{unlagged_res.annual_return:.2%}",
-            'sharpe': f"{unlagged_res.sharpe_ratio:.2f}",
-            'max_dd': f"{unlagged_res.max_drawdown:.2%}",
-            'total_return': f"{unlagged_res.total_return:.2%}"
-        },
-        'standard_curve': standard_res.equity_curve,
-        'lagged_curve': lagged_res.equity_curve
-    }
+    from src.dashboard.app import pack_lagged_metrics
+    lagged_metrics = pack_lagged_metrics(standard_res, lagged_res, unlagged_res)
     logger.info("Publication-lag, timing, and unlagged runs completed.")
 except Exception as e:
     logger.error(f"Error running lagged backtest simulation: {e}")
@@ -729,28 +709,8 @@ def start_background_updater(app_data):
                             new_rh_unlag, REGIME_WEIGHTS, name="Optimized Regime Strategy (Unlagged)",
                             vix_data=vix_series_new, **STRATEGY_PARAMS,
                         )
-                        lagged_metrics = {
-                            'standard': {
-                                'annual_return': f"{standard_res.annual_return:.2%}",
-                                'sharpe': f"{standard_res.sharpe_ratio:.2f}",
-                                'max_dd': f"{standard_res.max_drawdown:.2%}",
-                                'total_return': f"{standard_res.total_return:.2%}"
-                            },
-                            'lagged': {
-                                'annual_return': f"{lagged_res.annual_return:.2%}",
-                                'sharpe': f"{lagged_res.sharpe_ratio:.2f}",
-                                'max_dd': f"{lagged_res.max_drawdown:.2%}",
-                                'total_return': f"{lagged_res.total_return:.2%}"
-                            },
-                            'unlagged': {
-                                'annual_return': f"{unlagged_res.annual_return:.2%}",
-                                'sharpe': f"{unlagged_res.sharpe_ratio:.2f}",
-                                'max_dd': f"{unlagged_res.max_drawdown:.2%}",
-                                'total_return': f"{unlagged_res.total_return:.2%}"
-                            },
-                            'standard_curve': standard_res.equity_curve,
-                            'lagged_curve': lagged_res.equity_curve
-                        }
+                        from src.dashboard.app import pack_lagged_metrics
+                        lagged_metrics = pack_lagged_metrics(standard_res, lagged_res, unlagged_res)
 
                         # Auditor
                         from src.dashboard.auditor import run_independent_audit
