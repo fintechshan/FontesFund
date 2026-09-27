@@ -16,8 +16,8 @@ Universe B: ZQQ.TO, VFV.TO, ZEB.TO, XBB.TO, CGL-C.TO, XGD.TO
 The published curve starts when every sleeve exists (about 2012-11), not a
 20-year sample. The last run's CAGR, drawdown, and Sharpe are
 ``data/backtest_results/cdn_comparison.csv``. Do not copy those figures here.
-The clock is the US targeted fix (CPI+1 / GDP+4 once; VIX and momentum on
-the prior month-end).
+The clock is the US targeted fix (CPI+1 / GDP+4 once, then
+lag_vix_and_momentum_one_month: shift(1) on VIX and VFV.TO momentum only).
 """
 
 # -- Regime allocations (weights must sum to 1.0) -------------------------

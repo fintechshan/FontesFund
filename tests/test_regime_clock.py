@@ -1,6 +1,7 @@
 """Month-end look-ahead removal and first-release vintage fallback."""
 from __future__ import annotations
 
+import inspect
 import unittest
 from unittest import mock
 
@@ -23,6 +24,7 @@ from src.backtester.regime_clock import (
     MODE_UNLAGGED,
     MODE_VINTAGE,
     classify_regimes,
+    lag_vix_and_momentum_one_month,
     market_signals,
     philly_obs_date,
     philly_vintage_stamp,
@@ -226,26 +228,47 @@ class PhillyVintageTests(unittest.TestCase):
 
 
 class OverlayAndLagTests(unittest.TestCase):
-    def test_month_end_label_is_shift1_of_the_month_start_stamp(self):
+    def test_targeted_lags_vix_and_momentum_with_shift1_only(self):
         idx = pd.bdate_range("2019-01-01", "2020-06-30")
         vix = pd.Series(15.0, index=idx)
         vix.loc["2020-02-01":"2020-02-28"] = 80.0
-        month_start, _ = market_signals(vix, pd.Series(dtype=float), same_month=True)
-        month_end, _ = market_signals(vix, pd.Series(dtype=float), same_month=False)
-        shifted = month_start.shift(1)
-        for day in pd.date_range("2019-06-01", "2020-06-01", freq="MS"):
-            left = shifted.asof(day)
-            right = month_end.asof(day)
-            if pd.notna(left) and pd.notna(right):
-                self.assertAlmostEqual(float(left), float(right), places=6)
+        spy = pd.Series(100.0, index=idx)
+        spy.iloc[-1] = 180.0
+        month_start_vix, month_start_mom = market_signals(vix, spy, same_month=True)
+        lagged_vix, lagged_mom = market_signals(vix, spy, same_month=False)
+        expected_vix, expected_mom = lag_vix_and_momentum_one_month(
+            month_start_vix, month_start_mom,
+        )
+        pd.testing.assert_series_equal(lagged_vix, expected_vix)
+        pd.testing.assert_series_equal(lagged_mom, expected_mom)
+        pd.testing.assert_series_equal(lagged_vix, month_start_vix.shift(1))
+        pd.testing.assert_series_equal(lagged_mom, month_start_mom.shift(1))
+        # February's spike is labeled on 2020-02-01 before the lag and on
+        # 2020-03-01 after it. CPI and GDP are not in this helper.
+        self.assertGreater(float(month_start_vix.loc[pd.Timestamp("2020-02-01")]), 50.0)
+        self.assertGreater(float(lagged_vix.loc[pd.Timestamp("2020-03-01")]), 50.0)
+        self.assertLess(float(lagged_vix.loc[pd.Timestamp("2020-02-01")]), 20.0)
+        source = inspect.getsource(lag_vix_and_momentum_one_month)
+        body = source.split('"""', 2)[-1]
+        self.assertEqual(body.count(".shift(1)"), 2)
+        self.assertNotIn("cpi", body.lower())
+        self.assertNotIn("gdp", body.lower())
 
     def test_publication_lag_is_not_shifted_again_with_the_market(self):
         macro, price = _calm_world()
         _, _, info = classify_regimes(macro, price, mode=MODE_TARGETED)
+        _, _, look = classify_regimes(macro, price, mode=MODE_LOOKAHEAD)
         self.assertFalse(info["same_month_market"])
         self.assertTrue(info["publication_lag"])
         self.assertEqual(info["cpi_lag_months"], 1)
         self.assertEqual(info["gdp_lag_months"], 4)
+        # The market shift(1) does not move the publication-lagged CPI or GDP.
+        pd.testing.assert_series_equal(info["cpi_monthly"], look["cpi_monthly"])
+        pd.testing.assert_series_equal(info["gdp_monthly"], look["gdp_monthly"])
+        pd.testing.assert_series_equal(info["vix_monthly"], look["vix_monthly"].shift(1))
+        pd.testing.assert_series_equal(
+            info["spy_mom_monthly"], look["spy_mom_monthly"].shift(1),
+        )
 
     def test_drawdown_scale_matches_the_engine_formula(self):
         self.assertEqual(dd_scale(-0.05, 0.07, 0.10, 0.10), 1.0)

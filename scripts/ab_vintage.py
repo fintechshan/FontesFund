@@ -6,9 +6,9 @@ Does not change ETF weights and does not shorten CPI+1 or GDP+4.
   B  same publication lag, but those two market series lagged one month
   C  first-release CPI and GDP on real release dates (no extra +1/+4)
 
-B's market lag is ``market_signals(..., same_month=False)``, which matches
-``resample('MS').shift(1)`` at each month-start. CPI and GDP are not shifted
-a second time.
+B's market lag is ``lag_vix_and_momentum_one_month``: ``resample('MS')``
+then ``shift(1)`` on the VIX monthly mean and 12-month momentum only.
+CPI and GDP are not shifted a second time. Auditor mode is not this path.
 
 CPIAUCNS (not seasonally adjusted) is reported only when FRED_API_KEY is set
 and ``get_series_all_releases('CPIAUCNS')`` succeeds. Without a key, C uses

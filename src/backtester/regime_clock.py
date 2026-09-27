@@ -4,11 +4,14 @@ The production default is ``targeted``:
 
 * CPI is lagged **+1 month** and GDP **+4 months** (publication semantics).
   Those offsets are not shortened.
-* VIX (monthly mean) and SPY 12-month momentum are dated on the **month-end
-  they describe**. A month-start rebalance therefore sees only the prior
-  month. The previous production path stamped those same-month values on
-  month-start, so January's regime was built with January's closing prices
-  and January's average VIX.
+* VIX (monthly mean) and SPY 12-month momentum are built on a month-start
+  stamp and then lagged with ``shift(1)`` in
+  ``lag_vix_and_momentum_one_month``. A decision on the 1st therefore sees
+  only the prior month. CPI and GDP are not passed into that helper.
+  The previous production path left those two series unshifted, so
+  January's regime was built with January's closing prices and January's
+  average VIX. Auditor mode is a different lag: it shifts the finished
+  regime column by one extra month and does not call this helper.
 
 Other modes exist only for comparison. They are not the live default.
 
@@ -91,28 +94,52 @@ def _as_dt_index(series: pd.Series) -> pd.Series:
     return out.sort_index()
 
 
-def market_signals(vix: pd.Series, spy: pd.Series, same_month: bool) -> tuple[pd.Series, pd.Series]:
-    """VIX monthly mean and SPY 12-month momentum.
+def lag_vix_and_momentum_one_month(
+    vix_monthly_mean: pd.Series,
+    momentum_12m: pd.Series,
+) -> tuple[pd.Series, pd.Series]:
+    """Lag only the VIX monthly mean and 12-month momentum by one month.
 
-    ``same_month=True`` reproduces the old bug: the full calendar month is
-    labeled on month-start, so a decision on the 1st sees the month-end.
-    ``same_month=False`` labels those statistics on month-end. ``asof`` at
-    the next month-start is the first time they are knowable. That is the
-    same information as labeling the month on month-start and then
-    ``shift(1)``. The shift applies only to these two series. CPI and GDP
-    keep their own +1 / +4 publication lag and are not shifted again.
+    Both inputs are stamped on month-start (the calendar month they describe).
+    ``shift(1)`` moves each value to the next month-start, which is the first
+    decision date that may use it. Do not pass CPI or GDP into this function.
+    Their publication lag is ``publication_lagged_macro`` (+1 / +4) and is
+    not shifted again here.
+
+    ``MODE_TARGETED`` and ``MODE_VINTAGE`` call this via
+    ``market_signals(..., same_month=False)``. ``MODE_LOOKAHEAD`` does not.
+    ``MODE_AUDITOR`` does not either: it shifts the finished regime column.
+    """
+    vix_lagged = vix_monthly_mean.shift(1) if len(vix_monthly_mean) else vix_monthly_mean
+    momentum_lagged = momentum_12m.shift(1) if len(momentum_12m) else momentum_12m
+    return vix_lagged, momentum_lagged
+
+
+def market_signals(vix: pd.Series, spy: pd.Series, same_month: bool) -> tuple[pd.Series, pd.Series]:
+    """VIX monthly mean and 12-month momentum, both on a month-start index.
+
+    The price argument is SPY for the US book and the Canadian momentum
+    ticker (VFV.TO) when the CDN classifier calls this.
+
+    ``same_month=True`` is the old look-ahead: the full calendar month is
+    labeled on month-start, so a decision on the 1st sees that month's
+    average VIX and that month's closing price.
+
+    ``same_month=False`` is the targeted clock. It builds the same
+    month-start series and then calls ``lag_vix_and_momentum_one_month``,
+    which is ``shift(1)`` on these two series only.
     """
     vix_m = pd.Series(dtype=float)
-    spy_m = pd.Series(dtype=float)
+    mom_m = pd.Series(dtype=float)
     if vix is not None and len(vix) > 0:
         vix = _as_dt_index(vix.dropna())
-        rule = "MS" if same_month else "ME"
-        vix_m = vix.resample(rule).mean()
+        vix_m = vix.resample("MS").mean()
     if spy is not None and len(spy) > 0:
         spy = _as_dt_index(spy.dropna())
-        rule = "MS" if same_month else "ME"
-        spy_m = spy.resample(rule).last().pct_change(12)
-    return vix_m, spy_m
+        mom_m = spy.resample("MS").last().pct_change(12)
+    if same_month:
+        return vix_m, mom_m
+    return lag_vix_and_momentum_one_month(vix_m, mom_m)
 
 
 def publication_lagged_macro(cpi: pd.Series, gdp: pd.Series, apply_lag: bool):
@@ -811,6 +838,9 @@ def classify_regimes(
     spy = pd.Series(dtype=float)
     if price_data is not None and not price_data.empty and "SPY" in price_data.columns:
         spy = price_data["SPY"]
+    # same_month is False for MODE_TARGETED and MODE_VINTAGE, so this applies
+    # lag_vix_and_momentum_one_month (shift(1) on VIX mean and momentum only).
+    # MODE_AUDITOR never reaches this line; it shifts history["regime"].
     vix_m, spy_m = market_signals(vix, spy, same_month=same_month)
 
     spy_daily = pd.Series(dtype=float)

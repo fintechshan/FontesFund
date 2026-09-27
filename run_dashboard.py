@@ -56,7 +56,7 @@ def load_backtest_results():
 
 # ── Regime classification ─────────────────────────────────────────────────
 # Source of truth: src/backtester/regime_clock.py. Default mode is the targeted
-# fix (CPI+1 / GDP+4, market data through the prior month-end).
+# fix (CPI+1 / GDP+4, then shift(1) on VIX mean and momentum only).
 from src.backtester.regime_clock import (  # noqa: E402
     MODE_AUDITOR,
     MODE_LOOKAHEAD,

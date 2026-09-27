@@ -159,8 +159,9 @@ transaction_cost_bps=5.0, borrow_spread=0.01,
 vix_data=vix, vix_gate_level=20.0,  # TQQQ/SOXL only; idle on v7
 vol_method='realized', use_har_vol=True,
 # publication lag: CPI +1mo, GDP +4mo (do not shorten)
-# market timing: month-end VIX and SPY momentum, visible next month-start
-# (mode='targeted'). Do not stamp those on month-start.
+# market timing: lag_vix_and_momentum_one_month — shift(1) on the VIX
+# monthly mean and 12-month momentum only (mode='targeted').
+# Do not shift CPI or GDP again. Auditor's regime.shift(1) is not this.
 # regime VIX override: REGIME_VIX_DEFENSIVE = 30
 # position cap: MAX_REGIME_WEIGHT (currently 0.35)
 ```

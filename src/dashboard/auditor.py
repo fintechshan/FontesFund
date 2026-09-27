@@ -517,8 +517,8 @@ def run_independent_audit(price_data, macro, backtest_results, regime_history, a
         errors.append({
             'category': 'Month-end Look-Ahead',
             'description': la_desc,
-            'location': 'src/backtester/regime_clock.py: market_signals(same_month=False)',
-            'remedy': "Keep the targeted clock as the default. Do not stamp month-end VIX or SPY momentum on month-start.",
+            'location': 'src/backtester/regime_clock.py: lag_vix_and_momentum_one_month',
+            'remedy': "Keep shift(1) on the VIX monthly mean and 12-month momentum only. Do not shift CPI or GDP again.",
             'impact': 'HIGH' if la_status == "WARNING" else 'NONE',
             'status': la_status,
         })
@@ -527,7 +527,7 @@ def run_independent_audit(price_data, macro, backtest_results, regime_history, a
         'category': 'Look-Ahead Bias Diagnostic',
         'description': bias_desc,
         'location': 'run_dashboard.py: classify_regimes(apply_lag)',
-        'remedy': "Keep CPI+1 / GDP+4 and the month-end market rule in classify_regimes(mode='targeted'). Do not shorten the lags.",
+        'remedy': "Keep CPI+1 / GDP+4, and keep lag_vix_and_momentum_one_month (shift(1) on VIX and momentum only) in classify_regimes(mode='targeted'). Do not shorten the lags.",
         'impact': 'HIGH' if bias_status == "WARNING" else 'NONE',
         'status': bias_status
     })

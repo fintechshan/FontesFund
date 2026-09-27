@@ -11,9 +11,9 @@ The curve starts when every sleeve exists (about 2012-11), not 20 years.
 ZQQ.TO is CAD-hedged Nasdaq-100; VFV.TO is unhedged. The book does not hold ZNQ.TO.
 
 Regime clock matches the US targeted fix: CPI +1 month and GDP +4 months,
-applied once. VIX monthly mean and 12-month momentum are labeled on month-end
-(the same information as ``shift(1)`` on a month-start stamp). Momentum is
-VFV.TO, not SPY.
+applied once. VIX monthly mean and 12-month momentum then take
+``lag_vix_and_momentum_one_month`` (``shift(1)`` on those two series only).
+Momentum is VFV.TO, not SPY. Auditor's extra regime shift is not used here.
 
 Outputs:
   data/backtest_results/cdn_equity_curve.csv
@@ -75,9 +75,9 @@ def classify_regimes(macro, price_data, momentum_ticker='VFV.TO'):
     """Canadian regimes on the US targeted clock.
 
     CPI +1 and GDP +4 are applied once in ``publication_lagged_macro``.
-    VIX monthly mean and 12-month momentum use month-end labels
-    (``market_signals(..., same_month=False)``), which is the same information
-    as shifting a month-start stamp by one month. Momentum is
+    VIX monthly mean and 12-month momentum then go through
+    ``lag_vix_and_momentum_one_month`` (``shift(1)`` on those two series only),
+    via ``market_signals(..., same_month=False)``. Momentum is
     ``momentum_ticker`` (VFV.TO). CPI and GDP are not shifted a second time.
     """
     vix = macro.get('vix', pd.Series(dtype=float))

@@ -274,10 +274,11 @@ if os.getenv('FORCE_REFRESH'):
         sys.exit(2)
 
 # ── Regime clock (targeted fix is the saved production path) ─────────────
-# CPI stays +1 month and GDP stays +4 months. VIX and SPY momentum are dated
-# on the month-end they describe, so a month-start rebalance cannot see the
-# rest of that month. The old month-stamped path is MODE_LOOKAHEAD and is not
-# what this script writes to 20yr_comparison.csv.
+# CPI stays +1 month and GDP stays +4 months. VIX monthly mean and SPY
+# 12-month momentum take lag_vix_and_momentum_one_month (shift(1) on those
+# two series only). The old unshifted month-start path is MODE_LOOKAHEAD
+# and is not what this script writes to 20yr_comparison.csv. Auditor mode
+# shifts the finished regime column and is not this path.
 # Unemployment is still not a regime input (Gemini, 2026-06-22).
 logger.info("Computing targeted regime classification (no month-end look-ahead)...")
 from src.backtester.regime_clock import classify_regimes, MODE_TARGETED

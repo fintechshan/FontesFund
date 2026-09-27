@@ -205,7 +205,8 @@ def policy_lines() -> list[str]:
         "Live orders use the same daily overlay as run_optimized_regime_backtest. "
         "The monthly sleeve is only the starting book.",
         "1. Monthly sleeve from the targeted clock: CPI +1 month, GDP +4 months, "
-        "VIX monthly mean and SPY 12-month momentum lagged to the prior month-end. "
+        "VIX monthly mean and SPY 12-month momentum lagged with shift(1) "
+        "(lag_vix_and_momentum_one_month). "
         "That market lag is not a second CPI/GDP lag. Merrill weights stay. "
         "GDPNow is not the clock. The Auditor extra month is not the default.",
         "2. Daily 200-day trend: yesterday's SPY versus yesterday's 200-day average. "
