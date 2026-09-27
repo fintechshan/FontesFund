@@ -13,8 +13,11 @@ Universe B: ZQQ.TO, VFV.TO, ZEB.TO, XBB.TO, CGL-C.TO, XGD.TO
   CGL-C.TO -- iShares Gold Bullion ETF (CAD) -- gold/tail-risk crisis hedge
   XGD.TO   -- iShares S&P/TSX Global Gold Index -- gold miners / inflation spike
 
-Published equity curve is about 2012-11-27 → 2026-09-18 (not a 20-year sample):
-  CAGR = 14.62%  |  Max Drawdown = 15.53%  |  Sharpe Ratio = 1.16  |  Vol = 10.90%
+The published curve starts when every sleeve exists (about 2012-11), not a
+20-year sample. The last run's CAGR, drawdown, and Sharpe are
+``data/backtest_results/cdn_comparison.csv``. Do not copy those figures here.
+The clock is the US targeted fix (CPI+1 / GDP+4 once; VIX and momentum on
+the prior month-end).
 """
 
 # -- Regime allocations (weights must sum to 1.0) -------------------------

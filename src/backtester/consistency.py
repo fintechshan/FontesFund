@@ -169,7 +169,7 @@ def verify_series(
 
 
 def parse_percent(value) -> float:
-    """'10.92%' -> 0.1092. A bare float is returned as-is."""
+    """'8.00%' -> 0.08. A bare float is returned as-is."""
     if value is None or (isinstance(value, float) and not np.isfinite(value)):
         return float("nan")
     if isinstance(value, (int, float)) and not isinstance(value, bool):

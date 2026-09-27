@@ -50,7 +50,7 @@ def _fixture():
         index=['Optimized Regime Strategy', 'S&P 500'],
     )
     targeted = {
-        'annual_return': '13.43%',
+        'annual_return': '7.01%',
         'sharpe': '0.93',
         'max_dd': '14.13%',
         'total_return': '1438.39%',
@@ -60,7 +60,7 @@ def _fixture():
         'win_rate': '54.2%',
     }
     lookahead = {
-        'annual_return': '14.81%',
+        'annual_return': '8.02%',
         'sharpe': '1.03',
         'max_dd': '13.90%',
         'total_return': '1901.15%',
@@ -70,7 +70,7 @@ def _fixture():
         'win_rate': '54.5%',
     }
     auditor = {
-        'annual_return': '12.17%',
+        'annual_return': '6.03%',
         'sharpe': '0.83',
         'max_dd': '14.10%',
         'total_return': '1108.46%',
@@ -129,7 +129,7 @@ def _fixture():
         'cdn_backtest_meta': {
             'name': 'Portfolio B',
             'metrics': {
-                'CAGR': '14.62%',
+                'CAGR': '4.44%',
                 'MaxDD': '15.53%',
                 'Sharpe': '1.16',
                 'Volatility': '10.90%',
@@ -282,16 +282,16 @@ class BacktestDefaultTests(unittest.TestCase):
         self.assertIn(BACKTEST_PATH_LOOKAHEAD, values)
         self.assertIn(BACKTEST_PATH_UNLAGGED, values)
         self.assertIn(BACKTEST_PATH_AUDITOR, values)
-        self.assertTrue(any('Targeted fix' in label and '13.43%' in label for label in labels))
-        self.assertTrue(any('month-end look-ahead' in label and '14.81%' in label for label in labels))
-        self.assertTrue(any('overly conservative' in label and '12.17%' in label for label in labels))
+        self.assertTrue(any('Targeted fix' in label and '7.01%' in label for label in labels))
+        self.assertTrue(any('month-end look-ahead' in label and '8.02%' in label for label in labels))
+        self.assertTrue(any('overly conservative' in label and '6.03%' in label for label in labels))
         blob = ' '.join(_texts(tab))
         self.assertIn('no month-end look-ahead', blob)
         self.assertIn('overly conservative', blob.lower() + blob)
 
         body = _find_id(tab, 'backtest-path-body')
         texts = _texts(body)
-        self.assertEqual(_card_after(texts, 'Annual Return'), '13.43%')
+        self.assertEqual(_card_after(texts, 'Annual Return'), '7.01%')
         self.assertEqual(_card_after(texts, 'Sharpe Ratio'), '0.93')
         self.assertEqual(_card_after(texts, 'Max Drawdown'), '14.13%')
         self.assertIn('Daily peak-to-trough', texts)
@@ -299,7 +299,7 @@ class BacktestDefaultTests(unittest.TestCase):
         self.assertIn('month-end snapshot', ' '.join(texts))
         table = _tables(body)[0]
         self.assertEqual(table.data[0]['Strategy'], TARGETED_SERIES_LABEL)
-        self.assertEqual(table.data[0]['Annual Return'], '13.43%')
+        self.assertEqual(table.data[0]['Annual Return'], '7.01%')
 
     def test_heatmap_matches_selected_path_not_the_stale_file(self):
         data = _fixture()
@@ -313,14 +313,14 @@ class BacktestDefaultTests(unittest.TestCase):
         old_body = build_backtest_path_body(data, BACKTEST_PATH_LOOKAHEAD)
         old_heat = _heatmap_text(old_body)
         self.assertIn('15.0', old_heat)
-        self.assertEqual(_card_after(_texts(old_body), 'Annual Return'), '14.81%')
+        self.assertEqual(_card_after(_texts(old_body), 'Annual Return'), '8.02%')
 
     def test_radio_switches_cards_curve_and_heatmap_together(self):
         data = _fixture()
         targeted = build_backtest_path_body(data, BACKTEST_PATH_TARGETED)
         auditor = build_backtest_path_body(data, BACKTEST_PATH_AUDITOR)
-        self.assertEqual(_card_after(_texts(targeted), 'Annual Return'), '13.43%')
-        self.assertEqual(_card_after(_texts(auditor), 'Annual Return'), '12.17%')
+        self.assertEqual(_card_after(_texts(targeted), 'Annual Return'), '7.01%')
+        self.assertEqual(_card_after(_texts(auditor), 'Annual Return'), '6.03%')
         self.assertIn('2.0', _heatmap_text(targeted))
         self.assertNotIn('15.0', _heatmap_text(targeted))
         auditor_heat = _heatmap_text(auditor)
@@ -338,12 +338,12 @@ class BacktestDefaultTests(unittest.TestCase):
     def test_lookahead_radio_is_labeled_and_not_the_default(self):
         body = build_backtest_path_body(_fixture(), BACKTEST_PATH_LOOKAHEAD)
         texts = _texts(body)
-        self.assertEqual(_card_after(texts, 'Annual Return'), '14.81%')
+        self.assertEqual(_card_after(texts, 'Annual Return'), '8.02%')
         self.assertEqual(_card_after(texts, 'Max Drawdown'), '13.90%')
         self.assertIn('month-end look-ahead', ' '.join(texts))
         table = _tables(body)[0]
         self.assertEqual(table.data[0]['Strategy'], LOOKAHEAD_SERIES_LABEL)
-        self.assertEqual(table.data[0]['Annual Return'], '14.81%')
+        self.assertEqual(table.data[0]['Annual Return'], '8.02%')
 
     def test_missing_auditor_run_does_not_silently_show_targeted_cards(self):
         data = _fixture()
@@ -359,15 +359,15 @@ class BacktestDefaultTests(unittest.TestCase):
     def test_portfolio_headline_matches_backtest_default(self):
         title, cagr, subtitle = portfolio_backtest_headline(_fixture())
         self.assertEqual(title, 'Targeted-fix CAGR')
-        self.assertEqual(cagr, '13.43%')
-        self.assertIn('14.81%', subtitle)
+        self.assertEqual(cagr, '7.01%')
+        self.assertIn('8.02%', subtitle)
         self.assertIn('no month-end look-ahead', subtitle)
 
     def test_cdn_us_column_follows_targeted_fix(self):
         cmp = us_backtest_comparison(_fixture())
         self.assertTrue(cmp['uses_targeted_fix'])
         self.assertFalse(cmp['uses_auditor_lag'])
-        self.assertEqual(cmp['cagr'], '13.43%')
+        self.assertEqual(cmp['cagr'], '7.01%')
         tab = build_cdn_portfolio_tab(_fixture())
         blob = ' '.join(_texts(tab))
         self.assertIn('TSX production', blob)
@@ -377,8 +377,8 @@ class BacktestDefaultTests(unittest.TestCase):
             if any(c.get('id') == 'US targeted fix (no month-end look-ahead)' for c in (t.columns or []))
         )
         cagr = next(row for row in us_table.data if row['Metric'] == 'CAGR')
-        self.assertEqual(cagr['US targeted fix (no month-end look-ahead)'], '13.43%')
-        self.assertEqual(cagr['CDN Portfolio (CAD)'], '14.62%')
+        self.assertEqual(cagr['US targeted fix (no month-end look-ahead)'], '7.01%')
+        self.assertEqual(cagr['CDN Portfolio (CAD)'], '4.44%')
 
 
 if __name__ == '__main__':

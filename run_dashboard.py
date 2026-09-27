@@ -527,7 +527,9 @@ def start_background_updater(app_data):
                     new_backtest = load_backtest_results()
                     
                     if not new_price.empty and new_macro:
-                        new_rh, new_curr, new_derived = classify_regimes(new_macro, new_price)
+                        new_rh, new_curr, new_derived = classify_regimes(
+                            new_macro, new_price, mode=MODE_TARGETED,
+                        )
                         
                         # Get weights
                         from config.regime_rules import REGIME_WEIGHTS
