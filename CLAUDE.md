@@ -4,7 +4,7 @@
 > Gemini, etc.):** this file is the single source of truth for the *current* strategy,
 > results, and deployment. It supersedes any older numbers in `README.md` or in code
 > comments. Read this before changing the backtester or the strategy. Last updated
-> **2026-06-22** by Claude Opus 4.8.
+> **2026-09-27** (v7 sleeve and publication-lag headline; v5.1 figures below are historical).
 
 ---
 
@@ -15,51 +15,59 @@
 strategy, driven by [`run_backtest.py`](run_backtest.py) (CLI/validation) and
 [`run_dashboard.py`](run_dashboard.py) (deployed app). Both call it with identical params.
 
-**20-year backtest (2005-01 → 2026-06), net of 5 bps tx + 1% leverage financing,
-NO LOOK-AHEAD (macro signals lagged to their real release dates):**
+**Sample 2005-01-04 → 2026-09-21, net of 5 bps tx + 1% leverage financing.
+Publication lag is on (CPI +1 month, GDP +4 months). That is the no-look-ahead path.**
+An extra `regime.shift(1)` after that lag is an execution/timing test, not evidence
+that production used unpublished data. Turning the publication lag off (unlagged) is
+about **15.74%** CAGR on this sample; that higher number is the look-ahead case.
 
-**8-ETF portfolio (v5.1):** QQQ, SOXX, SPY, SPYI, TLT, GLD, DBMF, URA.
+**7-ETF portfolio (v7):** QQQ, SOXX, SPY, IEF, GLD, DBMF, AIPO.
+Weights live in `REGIME_WEIGHTS`. Goldilocks QQQ **30%** is intentional AI-trend
+exposure and is not clipped. The largest base weight is IEF **35%** (deflation).
+`RISK_LIMITS.max_single_position` equals that maximum (`MAX_REGIME_WEIGHT`), so
+both the 30% QQQ sleeve and the 35% IEF sleeve are inside the cap. VIX above `REGIME_VIX_DEFENSIVE`
+(**30**) forces deflation. `vix_gate_level` 20 only zeroes TQQQ/SOXL; v7 holds neither,
+so that gate is idle. The Goldman-style throttle is **off**.
 
 | Metric | Result | Target | Status |
 |---|--:|--:|:--:|
-| CAGR | **14.52%** | 16.0% | ❌ |
-| Max Drawdown | **14.78%** | < 14.8% | ✅ |
-| Sharpe | **0.97** | 1.2 | ❌ |
-| Volatility | 13.00% | ~11.8% | — |
-| Sortino | 1.30 | — | — |
-| Calmar | 0.98 | — | — |
-| Total Return | 1,730% | — | — |
+| CAGR | **14.85%** | 16.0% | ❌ |
+| Max Drawdown | **13.90%** | < 14.8% | ✅ |
+| Sharpe | **1.03** | 1.2 | ❌ |
+| Volatility | 12.60% | ~11.8% | — |
+| Sortino | 1.39 | — | — |
+| Calmar | 1.07 | — | — |
+| Total Return | 1,909% | — | — |
 
-> **Data-pipeline correction (Gemini audit, 2026-06-27).** Headline updated
-> 14.68%/0.99 → **14.52%/0.97** on data through 2026-06-26. Two real bugs in the
-> fresh-download path were fixed (a broken download had been giving 13.57%):
-> (1) **SHY & AGG were missing** from `ALL_TICKERS`, collapsing the defense basket
-> `{SHY,AGG,GLD,TLT}` to GLD+TLT; (2) **CADUSD=X / .TO holiday rows** (5399→5601 days)
-> diluted rolling vol via forward-filled flat returns. Fix added SHY/AGG and reindexes
-> to SPY's US trading calendar (`run_backtest.py`). The 14.52 vs 14.68 residual is the
-> 5 extra market days (Jun 22–26); MaxDD still 14.78% (PASS). Verified by clean run.
+Source: `data/backtest_results/20yr_comparison.csv`, row `Optimized Regime Strategy`.
+Same file: SPY 10.97% / Sharpe 0.48 / 55.19% DD; 60/40 8.19% / 0.55 / 34.70% DD.
+Regenerate with `python run_backtest.py`. Do not drop the CPI+1mo / GDP+4mo lag to
+"restore" a higher CAGR.
 
-> **⚠️ Honest-timing correction (Gemini audit, 2026-06-22).** The earlier headline
-> **15.85% / 14.76% / 1.21 contained look-ahead bias**: FRED dates CPI/GDP at the
-> period *start*, but the figures aren't released for weeks/months. Lagging the macro
-> signals to their actual release dates (CPI +1mo, GDP +4mo) gives the truthful,
-> tradable number — currently **14.52% / 14.78% / 0.97** (8-ETF v5.1, data thru 2026-06-26;
-> see the data-pipeline correction note above). The DD target is
-> met; CAGR/Sharpe fall short of 16/1.2. Still beats SPY (10.9% / 0.48 / 55% DD) and
-> 60/40 (8.2% / 0.55) handily. Do not revert the lag to "restore" the targets.
+> **Historical — 8-ETF v5.1 (do not quote as current).** Sleeve was QQQ, SOXX, SPY,
+> SPYI, TLT, GLD, DBMF, URA. Honest lagged headline through 2026-06-26 was
+> **14.52% / 14.78% MaxDD / Sharpe 0.97**. The 2026-06-22 look-ahead correction
+> (an earlier 15.85% / 1.21 used unpublished CPI/GDP dates) and the 2026-06-27
+> SHY/AGG + US-calendar fix still describe how the engine is run. They are not
+> the live v7 result.
 
-**Production config (do not silently change — these are the validated values):**
+**Production config (do not silently change — these are the validated overlay values):**
 ```python
 risk_parity=True, rp_vol_lookback=60,
 target_vol=0.130, vol_lookback=21, vol_lo=0.50, vol_hi=1.50,
-bear_equity_frac=0.70, dd_trigger=0.07,        # v5.1 (8-ETF)
+bear_equity_frac=0.70, dd_trigger=0.07,  # overlay knobs; sleeve is v7
 transaction_cost_bps=5.0, borrow_spread=0.01,
-vix_data=vix, vix_gate_level=20.0,   # zeroes TQQQ/SOXL when yesterday's VIX >= 20
-vol_method='realized', use_har_vol=True, # HAR-RV vol overlay engaged
-# macro publication lag (in run_backtest.py / run_dashboard.py): CPI +1mo, GDP +4mo
+vix_data=vix, vix_gate_level=20.0,  # TQQQ/SOXL only; idle on v7
+vol_method='realized', use_har_vol=True,
+# publication lag: CPI +1mo, GDP +4mo (classify_regimes apply_lag=True)
+# regime VIX override: REGIME_VIX_DEFENSIVE = 30
+# position cap: MAX_REGIME_WEIGHT (currently 0.35)
 ```
 
 ## 2. What changed and WHY (do not revert)
+
+The CAGR and Sharpe figures in this section are the 2026-06 overlay history. The current
+headline is §1 (v7, 14.85% / 13.90% / 1.03).
 
 This replaced the old `run_vol_targeted_regime_backtest` (13.18% / 19.58% / 0.75). Two
 root causes were fixed — **do not reintroduce them:**

@@ -47,6 +47,7 @@ from config.settings import FRED_API_KEY
 from config.regime_rules import (
     REGIME_WEIGHTS, PERFORMANCE_TARGETS,
     MOMENTUM_CONFIG, VOL_TARGET_CONFIG,
+    REGIME_VIX_DEFENSIVE,
 )
 
 logger.info("=" * 70)
@@ -363,9 +364,9 @@ def classify_regime(date):
     
     inflation_rising = (cpi_val > 3.0) and (cpi_val > cpi_3m_ago)
     
-    # VIX override: if VIX > 30, force defensive
+    # VIX override: force deflation above REGIME_VIX_DEFENSIVE (same constant as the UI).
     vix_val = vix_monthly.asof(date) if len(vix_monthly) > 0 else 15.0
-    if vix_val > 30:
+    if vix_val > REGIME_VIX_DEFENSIVE:
         return 'deflation'  # Crisis mode
     
     if growth_rising and not inflation_rising:

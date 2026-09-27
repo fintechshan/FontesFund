@@ -1,11 +1,14 @@
 """
 Risk Manager Module
 ====================
-Pre-trade risk validation engine with 6 checks:
-1. Position concentration (max 30% single position)
-2. Daily turnover (max 25% of portfolio)
-3. Drawdown circuit breaker (trigger at 12% drawdown)
-4. VIX spike guard (halt equity buys if VIX > 35)
+Pre-trade risk validation engine with 6 checks.
+Numeric caps come from config.regime_rules.RISK_LIMITS
+(max single position = largest REGIME_WEIGHTS sleeve;
+ VIX spike = REGIME_VIX_DEFENSIVE).
+1. Position concentration
+2. Daily turnover
+3. Drawdown circuit breaker
+4. VIX spike guard (halt equity buys above the deflation threshold)
 5. Correlation check (no 3+ correlated positions > 60% combined)
 6. Liquidity check (min 500K avg daily volume)
 """
@@ -70,12 +73,13 @@ class RiskManager:
                     'vix_spike_threshold': RISK_LIMITS.vix_spike_threshold,
                 }
             except (ImportError, AttributeError):
+                # Match REGIME_WEIGHTS max (IEF 35% deflation) and REGIME_VIX_DEFENSIVE.
                 self._limits = {
-                    'max_single_position': 0.25,
+                    'max_single_position': 0.35,
                     'max_leveraged_total': 0.25,
                     'max_daily_turnover': 0.30,
                     'drawdown_circuit_breaker': 0.08,
-                    'vix_spike_threshold': 28.0,
+                    'vix_spike_threshold': 30.0,
                 }
         else:
             self._limits = risk_limits

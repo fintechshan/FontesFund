@@ -39,6 +39,7 @@ REGIME_WEIGHTS: dict[str, dict[str, float]] = {
 
     # -----------------------------------------------------------------
     # Goldilocks — Rising growth, Falling inflation (AGGRESSIVE)
+    # QQQ 30% is intentional AI-trend exposure (accepted; not clipped to 25%).
     # QQQ 30% + SOXX 20% = concentrated AI/tech exposure.
     # SPY 25% = broad equity core (SPY 15% + SPYI 10%).
     # AIPO 3% = AI datacenter & power infrastructure thesis.
@@ -141,6 +142,26 @@ CAPITAL_CONFIG = CapitalConfig()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Shared thresholds (classifiers, UI, auditor, and RISK_LIMITS)
+# ═══════════════════════════════════════════════════════════════════════════
+
+# VIX level above which the regime classifier forces deflation. Production
+# paths compare against this constant. The separate STRATEGY_PARAMS
+# vix_gate_level (20) only zeroes TQQQ/SOXL and is idle on the v7 sleeve.
+REGIME_VIX_DEFENSIVE: float = 30.0
+
+# Position cap = largest base sleeve in REGIME_WEIGHTS.
+# Goldilocks QQQ at 30% is intentional AI-trend exposure and must not be
+# clipped to the old 25% limit. IEF is 35% in deflation, so the cap is that
+# maximum: both published weights sit inside policy.
+MAX_REGIME_WEIGHT: float = max(
+    weight
+    for weights in REGIME_WEIGHTS.values()
+    for weight in weights.values()
+)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Risk limits
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -148,11 +169,11 @@ CAPITAL_CONFIG = CapitalConfig()
 class RiskLimits:
     """Hard risk constraints enforced at rebalance and intra-day."""
 
-    max_single_position: float = 0.25
-    """No single ETF may exceed 25 % of the portfolio."""
+    max_single_position: float = MAX_REGIME_WEIGHT
+    """Cap equals the largest REGIME_WEIGHTS sleeve. Goldilocks QQQ 30% is inside it and is not clipped."""
 
     max_leveraged_total: float = 0.25
-    """Combined leveraged exposure capped at 25 % (aggressive Goldilocks)."""
+    """Combined leveraged exposure capped at 25 % (v7 holds no leveraged ETFs)."""
 
     max_daily_turnover: float = 0.30
     """Maximum portfolio turnover in a single rebalance (30 % — faster pivots)."""
@@ -160,15 +181,17 @@ class RiskLimits:
     drawdown_circuit_breaker: float = 0.08
     """De-risk to defensive posture if drawdown from peak hits 8 % (tight for <10% DD target)."""
 
-    vix_spike_threshold: float = 28.0
-    """Override regime to deflation stance when VIX > 28 (earlier defensive pivot)."""
+    vix_spike_threshold: float = REGIME_VIX_DEFENSIVE
+    """Force deflation when VIX is above REGIME_VIX_DEFENSIVE. Same threshold the classifiers use."""
 
 
 RISK_LIMITS = RiskLimits()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Production strategy overlay parameters — SINGLE SOURCE OF TRUTH (v5.1)
+# Production strategy overlay parameters — SINGLE SOURCE OF TRUTH
+# Sleeve weights are REGIME_WEIGHTS (v7). These overlay knobs are the
+# validated settings still passed to run_optimized_regime_backtest.
 # ═══════════════════════════════════════════════════════════════════════════
 # These are the exact kwargs passed to `run_optimized_regime_backtest` by BOTH
 # run_backtest.py (CLI) and run_dashboard.py (deployed app), AND read by the

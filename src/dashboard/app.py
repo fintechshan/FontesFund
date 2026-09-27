@@ -312,6 +312,21 @@ def _source_line(text):
                                   'marginTop': '6px', 'fontStyle': 'italic'})
 
 
+def _series_span(series):
+    """Return (start, end, years) for a dated series, or (None, None, None)."""
+    try:
+        if series is None or len(series) < 2:
+            return None, None, None
+        idx = pd.to_datetime(series.index)
+        start, end = idx.min(), idx.max()
+        if pd.isna(start) or pd.isna(end):
+            return None, None, None
+        years = (end - start).days / 365.25
+        return start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d'), years
+    except Exception:
+        return None, None, None
+
+
 def render_ai_intelligence(data):
     """Enhanced AI Trend Intelligence: generated report + strategy verification,
     sector signal table, live SemiAnalysis feed, and config-driven bank research.
@@ -822,29 +837,30 @@ def build_tax_study_panel(data):
     cmp_rows = [{'name': c['name'], 'cagr': f"{c['cagr']:.2%}", 'sharpe': f"{c['sharpe']:.2f}",
                  'maxdd': f"{c['maxdd']:.2%}", 'vol': f"{c['vol']:.2%}"} for c in s['compare']]
     return html.Div([
-        html.H5('🍁 Canadian Investor — After-US-Tax & Account Location',
+        html.H5('🍁 Canadian Investor — CAD Planning Study (not the USD strategy CAGR)',
                 style={'color': '#00d97e', 'marginBottom': '4px', 'fontWeight': '700'}),
-        html.Div(f"Planning study · CAD terms · window {s['window']} · read-only "
-                 f"(precomputed by ab_canadian_tax.py on {s['as_of']})",
-                 style={'color': '#6c757d', 'fontSize': '11px', 'marginBottom': '10px'}),
+        html.Div(f"These CAD figures are not the production USD backtest on the CAGR card above. "
+                 f"ab_canadian_tax.py · CAD total return including FX · window {s['window']} · "
+                 f"precomputed {s['as_of']}. The study sleeve and yield assumptions can differ from the live v7 book.",
+                 style={'color': '#f5a623', 'fontSize': '11px', 'marginBottom': '10px'}),
         html.Div([
-            html.Span('US withholding drag on the strategy book: ',
+            html.Span('US withholding drag inside this study: ',
                       style={'color': '#c8c8d4', 'fontSize': '12px'}),
             html.Span(f"≈{s['wht_avg']:.2%}/yr",
                       style={'color': '#f5a623', 'fontWeight': '700', 'fontSize': '13px'}),
-            html.Span(f" (range {s['wht_min']:.2%}–{s['wht_max']:.2%}; {s['wht_current']:.2%} at current weights). "
-                      f"Concentrated in DBMF / IEF / AIPO; GLD pays 0%. ",
+            html.Span(f" (range {s['wht_min']:.2%}–{s['wht_max']:.2%}; {s['wht_current']:.2%} at the study's weights). "
+                      f"Charged on US-listed distributions in that study; GLD pays 0%. ",
                       style={'color': '#8888a0', 'fontSize': '12px'}),
             html.Span('Zero inside an RRSP.', style={'color': '#00d97e', 'fontSize': '12px', 'fontWeight': '600'}),
         ], style={'backgroundColor': '#16213e', 'border': '1px solid #2d2d44', 'borderRadius': '6px',
                   'padding': '10px 12px', 'marginBottom': '12px'}),
         dbc.Row([
             dbc.Col(html.Div([
-                html.H6('Net annual return by account location (CAD)',
+                html.H6('CAD CAGR by account location (this study only)',
                         style={'color': '#c8c8d4', 'marginBottom': '8px'}),
                 dash_table.DataTable(
                     columns=[{'name': 'Account', 'id': 'account'}, {'name': 'US Withholding', 'id': 'wht'},
-                             {'name': 'Net CAGR', 'id': 'cagr'}, {'name': 'Note', 'id': 'note'}],
+                             {'name': 'CAD CAGR (study)', 'id': 'cagr'}, {'name': 'Note', 'id': 'note'}],
                     data=acc_rows, style_header=_hdr, style_cell=_cell,
                     style_cell_conditional=[{'if': {'column_id': 'cagr'}, 'textAlign': 'center', 'fontWeight': '700'}],
                     style_data_conditional=[
@@ -854,7 +870,7 @@ def build_tax_study_panel(data):
                     ]),
             ], style=CS), md=6),
             dbc.Col(html.Div([
-                html.H6('US strategy vs all-Canadian, after tax (CAD)',
+                html.H6('Study book vs all-Canadian, CAD (not the USD production CAGR)',
                         style={'color': '#c8c8d4', 'marginBottom': '8px'}),
                 dash_table.DataTable(
                     columns=[{'name': 'Portfolio', 'id': 'name'}, {'name': 'CAGR', 'id': 'cagr'},
@@ -873,13 +889,15 @@ def build_tax_study_panel(data):
             ], style=CS), md=6),
         ], className='mb-2'),
         html.Div([
-            html.Span('Takeaway: ', style={'color': '#00d97e', 'fontWeight': '700', 'fontSize': '12px'}),
-            html.Span('the US withholding tax is a rounding error and is eliminated by holding the US ETFs in an '
-                      'RRSP. Going all-Canadian to avoid it sacrifices ~11%/yr of return and doubles the drawdown, '
-                      'because Canada has no listed semis / AI / managed-futures / uranium equivalent.',
+            html.Span('Takeaway (inside this study, not vs the USD card): ',
+                      style={'color': '#00d97e', 'fontWeight': '700', 'fontSize': '12px'}),
+            html.Span('US withholding in the study is small and is zero in an RRSP. '
+                      'The all-Canadian sleeve in the same table earns less than the study\'s US-listed sleeve. '
+                      'Do not read either CAD CAGR as the production USD strategy return.',
                       style={'color': '#8888a0', 'fontSize': '12px'}),
         ], style={'marginTop': '6px', 'marginBottom': '4px'}),
-        _source_line(s['caveats'] + ' — informational, not tax advice.'),
+        _source_line('Study caveats (not the production USD CAGR): ' + s.get('caveats', '')
+                     + ' — informational, not tax advice.'),
     ], style={**CS, 'marginBottom': '16px'})
 
 
@@ -1102,7 +1120,11 @@ def build_portfolio_tab(data):
 
     # ── Rebalancing-rule strings, rendered from the SINGLE SOURCE OF TRUTH so the
     #    displayed rules can never drift from what the engine actually runs ──
-    from config.regime_rules import STRATEGY_PARAMS as _SP, RISK_LIMITS as _RL
+    from config.regime_rules import (
+        STRATEGY_PARAMS as _SP, RISK_LIMITS as _RL, REGIME_VIX_DEFENSIVE as _VIX_DEF,
+        REGIME_WEIGHTS as _RW,
+    )
+    _qqq_gold = (_RW.get('goldilocks') or {}).get('QQQ', 0.0)
     _lev_book = sorted({t for w in (all_rw or {}).values() for t in w}
                        & {'TQQQ', 'SOXL', 'SSO', 'GGLL', 'TECL', 'SPXL', 'UPRO'})
     _freq_rules = [
@@ -1113,10 +1135,11 @@ def build_portfolio_tab(data):
     _regime_rules = [
         'Growth rising: GDP > 1.5% OR SPY 12m mom > 5%',
         'Inflation rising: CPI YoY > 3% AND accelerating',
-        'VIX > 30 → override to Deflation',
+        f'VIX > {_VIX_DEF:.0f} → override to Deflation',
     ]
     _risk_rules = [
-        f"Max single position: {_RL.max_single_position:.0%}",
+        f"Max single position: {_RL.max_single_position:.0%} "
+        f"(Goldilocks QQQ {_qqq_gold:.0%} is accepted AI-trend weight, not clipped)",
         f"Max leveraged total: {_RL.max_leveraged_total:.0%}",
         f"Max daily turnover: {_RL.max_daily_turnover:.0%}",
     ]
@@ -1131,8 +1154,7 @@ def build_portfolio_tab(data):
         return html.Ul([html.Li(r, style={'color': '#c8c8d4', 'fontSize': '12px'}) for r in items],
                        style={'listStyleType': 'none', 'padding': '0'})
 
-    # Live backtest headline from the result CSV — never hardcode, so it always
-    # matches the daily-refreshed numbers (14.52% today, whatever it is tomorrow).
+    # Live backtest headline from the result CSV — never hardcode a CAGR.
     _btr = data.get('backtest_results')
     _cagr = _sharpe = _dd = '—'
     try:
@@ -1153,7 +1175,9 @@ def build_portfolio_tab(data):
         dbc.Row([
             dbc.Col(mc('Regime', f'{ri} {regime.upper()}', f'{conf:.0f}% confidence', rc, ''), md=3),
             dbc.Col(mc('Initial Capital', '$100,000', 'Starting value', '#c8c8d4', '💰'), md=3),
-            dbc.Col(mc('Backtest CAGR', _cagr, f'Sharpe {_sharpe} | DD {_dd} (7-ETF v7, no look-ahead)', '#00d97e', '📈'), md=3),
+            dbc.Col(mc('Backtest CAGR', _cagr,
+                       f'Sharpe {_sharpe} | DD {_dd} (7-ETF v7, CPI+1mo / GDP+4mo publication lag)',
+                       '#00d97e', '📈'), md=3),
             dbc.Col(mc('Rebalance Freq', 'Monthly', f'Next: 1st of month', '#3498db', '📅'), md=3),
         ], className='mb-3'),
         _source_line(f"🔄 LIVE snapshot built {_built} · regime/weights from FRED macro (cache {_macro_ts}) + "
@@ -1300,7 +1324,7 @@ def build_portfolio_tab(data):
                     _row('GDP Growth: ', f'{_gdp:.1f}%', '#00d97e' if _gdp > 1.5 else '#f5a623'),
                     _row('Core CPI (YoY): ', f'{_cpi:.1f}%', '#00d97e' if _cpi < 3 else '#f5a623'),
                     _row('Fed Funds: ', f'{_ff_val:.2f}%' if _ff_val is not None else '—', '#f5a623'),
-                    _row('VIX: ', f'{_vix:.1f}', '#00d97e' if _vix < 20 else ('#f5a623' if _vix < 30 else '#e74c3c')),
+                    _row('VIX: ', f'{_vix:.1f}', '#00d97e' if _vix < _SP['vix_gate_level'] else ('#f5a623' if _vix < _VIX_DEF else '#e74c3c')),
                     _row('Yield Curve: ', f'{_yc:+.2f}%', '#00d97e' if _yc > 0 else '#e74c3c'),
                     html.Div('Same FRED series as the Regime Monitor.', style={'color': '#6c757d', 'fontSize': '10px', 'marginTop': '4px'}),
                 ], style={**CS, 'padding': '14px'}), md=4),
@@ -1309,7 +1333,7 @@ def build_portfolio_tab(data):
                     html.Div([html.Span('Current: ', style={'color': '#8888a0'}), html.Span(f'{regime.upper()} ({conf:.0f}% conf)', style={'color': rc, 'fontWeight': '700'})], style={'marginBottom': '6px', 'fontSize': '13px'}),
                     _row('Growth: ', f'GDP {_gdp:.1f}% · SPY 12m {_spymom:+.0%} → {"rising" if _growth_ok else "stalling"}', '#00d97e' if _growth_ok else '#e74c3c'),
                     _row('Inflation: ', f'CPI {_cpi:.1f}% → {"elevated" if _cpi > 3 else "contained"}', '#f5a623' if _cpi > 3 else '#00d97e'),
-                    _row('Crisis gate: ', f'VIX {_vix:.0f} → {"DEFENSIVE >30" if _vix > 30 else "normal"}', '#e74c3c' if _vix > 30 else '#00d97e'),
+                    _row('Crisis gate: ', f'VIX {_vix:.0f} → {"DEFENSIVE >" + f"{_VIX_DEF:.0f}" if _vix > _VIX_DEF else "normal"}', '#e74c3c' if _vix > _VIX_DEF else '#00d97e'),
                     html.Div(_triggers.get(regime, ''), style={'color': '#c8c8d4', 'fontSize': '11px', 'marginTop': '6px', 'lineHeight': '1.4'}),
                 ], style={**CS, 'padding': '14px'}), md=4),
                 dbc.Col(html.Div([
@@ -1390,16 +1414,26 @@ def build_backtest_tab(data):
                 'Total Return': r.get('Total Return', '—'),
             })
 
+    us_start, us_end, us_years = _series_span(eq)
+    if us_start:
+        us_span = f'{us_start} → {us_end}'
+        us_cagr_lbl = f'{us_years:.1f}-yr CAGR'
+    else:
+        us_span = 'equity-curve sample'
+        us_cagr_lbl = 'Sample CAGR'
+
     return html.Div([
         make_timestamp_strip(data, 'backtest'),
         dbc.Row([
-            dbc.Col(mc('Annual Return', str(ann_ret), '20yr CAGR', '#00d97e', '📈'), md=2),
+            dbc.Col(mc('Annual Return', str(ann_ret), us_cagr_lbl, '#00d97e', '📈'), md=2),
             dbc.Col(mc('Sharpe Ratio', str(sharpe), 'Risk-adjusted', '#00d97e', '⚡'), md=2),
             dbc.Col(mc('Max Drawdown', str(max_dd), 'Worst loss', '#00d97e', '🛡️'), md=2),
             dbc.Col(mc('Sortino', str(sortino), 'Downside risk', '#3498db', '📊'), md=2),
             dbc.Col(mc('Calmar', str(calmar), 'Return/DD', '#3498db', '🎯'), md=2),
-            dbc.Col(mc('Total Return', str(total_ret), '2005-2026', '#f5a623', '💰'), md=2),
+            dbc.Col(mc('Total Return', str(total_ret), us_span, '#f5a623', '💰'), md=2),
         ], className='mb-3'),
+        html.Div(f'Production path: CPI +1 month and GDP +4 months publication lag. Sample {us_span}.',
+                 style={'color': '#6c757d', 'fontSize': '11px', 'marginTop': '-8px', 'marginBottom': '12px'}),
         html.Div([dcc.Graph(figure=make_equity_curves(all_eq, eq), config={'displayModeBar': False})],
                  style={**CS, 'marginBottom': '16px'}),
         html.Div([dcc.Graph(figure=make_drawdown(eq), config={'displayModeBar': False})],
@@ -1407,7 +1441,7 @@ def build_backtest_tab(data):
         html.Div([dcc.Graph(figure=make_monthly_heatmap(mr), config={'displayModeBar': False})],
                  style={**CS, 'marginBottom': '16px'}),
         html.Div([
-            html.H6('Strategy Comparison — 20-Year Backtest', style={'color': '#c8c8d4', 'marginBottom': '10px'}),
+            html.H6(f'Strategy Comparison — {us_span}', style={'color': '#c8c8d4', 'marginBottom': '10px'}),
             dash_table.DataTable(
                 columns=[{'name': c, 'id': c} for c in ['Strategy','Annual Return','Volatility','Sharpe',
                           'Sortino','Max DD','Calmar','Win Rate','Total Return']],
@@ -1882,13 +1916,13 @@ def make_auditor_curves(std_curve, lagged_curve):
     fig = go.Figure()
     if std_curve is not None and not std_curve.empty:
         vals = std_curve * 100000
-        fig.add_trace(go.Scatter(x=vals.index, y=vals.values, name='Standard Strategy (Look-Ahead Bias)',
+        fig.add_trace(go.Scatter(x=vals.index, y=vals.values, name='Production (CPI+1mo / GDP+4mo)',
                                   line=dict(color='#00d97e', width=2)))
     if lagged_curve is not None and not lagged_curve.empty:
         vals = lagged_curve * 100000
-        fig.add_trace(go.Scatter(x=vals.index, y=vals.values, name='Lagged Strategy (1-Month Reporting Lag)',
+        fig.add_trace(go.Scatter(x=vals.index, y=vals.values, name='Extra month (timing sensitivity)',
                                   line=dict(color='#b55fe6', width=2, dash='dash')))
-    fig.update_layout(**PL, title='Standard Strategy vs 1-Month Lagged Strategy ($100K Initial)', height=380,
+    fig.update_layout(**PL, title='Production vs one extra month of regime delay ($100K)', height=380,
                       yaxis_title='Portfolio Value ($)', hovermode='x unified',
                       legend=dict(orientation='h', y=1.12, x=0.5, xanchor='center'))
     return fig
@@ -1929,7 +1963,7 @@ def build_audit_findings_panel(data_checks, errors, math_audit, bias_status, bia
             'category': 'Look-Ahead Bias',
             'status': bias_status,
             'issue': bias_desc,
-            'remedy': "Ensure all backtest signals use shift(1) of macro variables and monthly rebalancing is lagged to prevent look-ahead bias."
+            'remedy': "Keep classify_regimes(apply_lag=True): CPI +1 month, GDP +4 months. The extra regime.shift(1) is a timing test, not this check."
         })
         
     # 2. Data Checks
@@ -2132,16 +2166,27 @@ def build_auditor_tab(data):
     std_tot = std_m.get('total_return', '—')
     lag_tot = lag_m.get('total_return', '—')
     
+    prod_col = 'Production (CPI+1/GDP+4)'
+    extra_col = 'Extra month'
     comparison_table = [
-        {'Metric': 'Annual Return', 'Standard': std_ann, 'Lagged': lag_ann, 'Difference': get_diff_str(std_ann, lag_ann, True)},
-        {'Metric': 'Sharpe Ratio', 'Standard': std_sharpe, 'Lagged': lag_sharpe, 'Difference': get_diff_str(std_sharpe, lag_sharpe, False)},
-        {'Metric': 'Max Drawdown', 'Standard': std_dd, 'Lagged': lag_dd, 'Difference': get_diff_str(std_dd, lag_dd, True)},
-        {'Metric': 'Total Return', 'Standard': std_tot, 'Lagged': lag_tot, 'Difference': get_diff_str(std_tot, lag_tot, True)},
+        {'Metric': 'Annual Return', prod_col: std_ann, extra_col: lag_ann, 'Difference': get_diff_str(std_ann, lag_ann, True)},
+        {'Metric': 'Sharpe Ratio', prod_col: std_sharpe, extra_col: lag_sharpe, 'Difference': get_diff_str(std_sharpe, lag_sharpe, False)},
+        {'Metric': 'Max Drawdown', prod_col: std_dd, extra_col: lag_dd, 'Difference': get_diff_str(std_dd, lag_dd, True)},
+        {'Metric': 'Total Return', prod_col: std_tot, extra_col: lag_tot, 'Difference': get_diff_str(std_tot, lag_tot, True)},
     ]
-    
+
+    from config.regime_rules import RISK_LIMITS as _AUD_RL, REGIME_WEIGHTS as _AUD_RW
     vix_stress = risk.get('stress_test', {})
+    try:
+        _vix_thr = float(vix_stress.get('vix_threshold', _AUD_RL.vix_spike_threshold))
+    except (TypeError, ValueError):
+        _vix_thr = _AUD_RL.vix_spike_threshold
+    _vix_lbl = f'VIX Spike (VIX > {_vix_thr:.0f})'
+    _conc_limit = risk.get('concentration', {}).get('limit', f'{_AUD_RL.max_single_position:.0%}')
+    _qqq_pol = (_AUD_RW.get('goldilocks') or {}).get('QQQ', 0.0)
+    _lev_limit = risk.get('leverage', {}).get('limit', f'{_AUD_RL.max_leveraged_total:.0%}')
     stress_table_data = [
-        {'Asset Category': k, 'Normal Weight': 'Matches active regime weights', 'VIX Spike (VIX > 28)': v}
+        {'Asset Category': k, 'Normal Weight': 'Matches active regime weights', _vix_lbl: v}
         for k, v in vix_stress.get('vix_spike_allocation', {}).items()
     ]
 
@@ -2160,7 +2205,7 @@ def build_auditor_tab(data):
             dbc.Col(mc('1. Data Accuracy', data_status, 'Integrity Check', get_color(data_status), '🔍'), md=True),
             dbc.Col(mc('2. System Errors', sys_status, 'Diagnostics', get_color(sys_status), '🛡️'), md=True),
             dbc.Col(mc('3. Regime Corr', corr_status, 'Strategy Alignment', get_color(corr_status), '📊'), md=True),
-            dbc.Col(mc('4. Look-Ahead Bias', bias_status, 'Information Lag', get_color(bias_status), '⌛'), md=True),
+            dbc.Col(mc('4. Look-Ahead Bias', bias_status, 'Publication lag', get_color(bias_status), '⌛'), md=True),
             dbc.Col(mc('5. Risk Assessment', risk_status, 'Limits & Stress Test', get_color(risk_status), '⚠️'), md=True),
         ], className='mb-3'),
         
@@ -2273,18 +2318,19 @@ def build_auditor_tab(data):
         
         # Panel 4: Look-Ahead Bias
         html.Div([
-            html.H5('⌛ 4. Information Gaps & Look-Ahead Bias Diagnostic', style={'color': '#b55fe6', 'marginBottom': '6px', 'fontWeight': '700'}),
-            html.Div('Exposes look-ahead bias by comparing standard backtests against a simulated 1-Month reporting lag on GDP and CPI.',
+            html.H5('⌛ 4. Publication Lag and Execution Timing', style={'color': '#b55fe6', 'marginBottom': '6px', 'fontWeight': '700'}),
+            html.Div('Look-ahead is unlagged macro versus production (CPI+1mo / GDP+4mo). '
+                     'The table and chart are a different test: production versus one extra month of regime delay (execution / timing sensitivity).',
                      style={'color': '#8888a0', 'fontSize': '12px', 'marginBottom': '16px'}),
             dbc.Row([
                 dbc.Col([
-                    html.P('Macro indicators are released with lags. For example, Q3 GDP is reported in late November (2-month lag), '
-                           'and April inflation is released in mid-May (2-week lag). Standard backtests assume this data is known instantly on the first of the month. '
-                           'This diagnostic quantifies the impact by lagging macro indices.',
+                    html.P('Production already waits for CPI and GDP release dates. The extra-month series shifts that lagged regime one more month. '
+                           'A lower CAGR on the extra-month series is timing sensitivity. It is not evidence that production used unpublished data. '
+                           'The look-ahead premium is the unlagged run versus production, in the Look-Ahead Bias Diagnostic row.',
                            style={'color': '#c8c8d4', 'fontSize': '12px', 'lineHeight': '1.5'}),
-                    html.H6('Lagged Simulation Performance Comparison', style={'color': '#c8c8d4', 'marginTop': '16px', 'marginBottom': '10px'}),
+                    html.H6('Production vs extra-month timing', style={'color': '#c8c8d4', 'marginTop': '16px', 'marginBottom': '10px'}),
                     dash_table.DataTable(
-                        columns=[{'name': c, 'id': c} for c in ['Metric', 'Standard', 'Lagged', 'Difference']],
+                        columns=[{'name': c, 'id': c} for c in ['Metric', prod_col, extra_col, 'Difference']],
                         data=comparison_table,
                         style_header={'backgroundColor': '#16213e', 'color': '#c8c8d4', 'fontWeight': '600', 'border': '1px solid #2d2d44', 'fontFamily': 'Inter', 'fontSize': '11px'},
                         style_cell={'backgroundColor': '#1a1a2e', 'color': '#c8c8d4', 'border': '1px solid #2d2d44', 'fontFamily': 'Inter', 'fontSize': '11px', 'padding': '8px', 'textAlign': 'center'},
@@ -2295,7 +2341,7 @@ def build_auditor_tab(data):
                             {'if': {'filter_query': '{Difference} contains "+"' }, 'color': '#00d97e'}
                         ]
                     ),
-                    html.Div('Audit Findings: Shifting macro signals forward by 1 month causes a minor decrease in Sharpe but the model remains highly robust.',
+                    html.Div('Difference is extra-month minus production. It is a timing sensitivity, not a look-ahead score.',
                              style={'color': '#6c757d', 'fontSize': '11px', 'marginTop': '8px', 'fontStyle': 'italic'})
                 ], md=6),
                 dbc.Col([
@@ -2314,36 +2360,36 @@ def build_auditor_tab(data):
                     html.H6('Compliance Limits & Stance', style={'color': '#c8c8d4', 'marginBottom': '10px'}),
                     html.Div([
                         html.Div([
-                            html.Span('Single Asset Concentration Limit (25%): ', style={'color': '#8888a0'}),
+                            html.Span('Single-asset base-weight limit: ', style={'color': '#8888a0'}),
                             html.Span(f"{risk.get('concentration', {}).get('max_weight', '—')} in {risk.get('concentration', {}).get('asset', '—')}", style={'color': '#00d97e', 'fontWeight': 'bold'}),
-                            html.Span(f" (Limit: {risk.get('concentration', {}).get('limit', '25%')})", style={'color': '#6c757d', 'fontSize': '11px'}),
+                            html.Span(f" (limit {_conc_limit}; Goldilocks QQQ {_qqq_pol:.0%} is inside this cap and is not clipped)", style={'color': '#6c757d', 'fontSize': '11px'}),
                             html.Span(f"  {fmt_status(risk.get('concentration', {}).get('status', 'PASS'))}", style={'float': 'right'})
                         ], style={'padding': '8px 0', 'borderBottom': '1px solid #2d2d44'}),
                         html.Div([
-                            html.Span('Leveraged ETF Allocation Limit (25%): ', style={'color': '#8888a0'}),
+                            html.Span(f'Leveraged ETF allocation limit ({_lev_limit}): ', style={'color': '#8888a0'}),
                             html.Span(risk.get('leverage', {}).get('total_weight', '—'), style={'color': '#00d97e', 'fontWeight': 'bold'}),
-                            html.Span(f" (Limit: {risk.get('leverage', {}).get('limit', '25%')})", style={'color': '#6c757d', 'fontSize': '11px'}),
+                            html.Span(f" (limit {_lev_limit})", style={'color': '#6c757d', 'fontSize': '11px'}),
                             html.Span(f"  {fmt_status(risk.get('leverage', {}).get('status', 'PASS'))}", style={'float': 'right'})
                         ], style={'padding': '8px 0', 'borderBottom': '1px solid #2d2d44'}),
                         html.Div([
                             html.Span('VIX Spillover/Crisis Stance: ', style={'color': '#8888a0'}),
                             html.Span('DEFENSIVE OVERRIDE ACTIVE', style={'color': '#e74c3c', 'fontWeight': 'bold'}),
-                            html.Span(' (Triggered if VIX > 28)', style={'color': '#6c757d', 'fontSize': '11px'}),
+                            html.Span(f' (deflation override if VIX > {_vix_thr:.0f})', style={'color': '#6c757d', 'fontSize': '11px'}),
                             html.Span('✅ PASS', style={'float': 'right', 'color': '#00d97e', 'fontWeight': 'bold'})
                         ], style={'padding': '8px 0'})
                     ])
                 ], md=6),
                 dbc.Col([
-                    html.H6('Stress Test Allocation: VIX Spike (VIX > 28)', style={'color': '#c8c8d4', 'marginBottom': '10px'}),
+                    html.H6(f'Stress Test Allocation: {_vix_lbl}', style={'color': '#c8c8d4', 'marginBottom': '10px'}),
                     dash_table.DataTable(
-                        columns=[{'name': c, 'id': c} for c in ['Asset Category', 'Normal Weight', 'VIX Spike (VIX > 28)']],
+                        columns=[{'name': c, 'id': c} for c in ['Asset Category', 'Normal Weight', _vix_lbl]],
                         data=stress_table_data,
                         style_header={'backgroundColor': '#16213e', 'color': '#c8c8d4', 'fontWeight': '600', 'border': '1px solid #2d2d44', 'fontFamily': 'Inter', 'fontSize': '11px'},
                         style_cell={'backgroundColor': '#1a1a2e', 'color': '#c8c8d4', 'border': '1px solid #2d2d44', 'fontFamily': 'Inter', 'fontSize': '11px', 'padding': '6px', 'textAlign': 'center'},
                         style_cell_conditional=[{'if': {'column_id': 'Asset Category'}, 'textAlign': 'left', 'fontWeight': '600'}],
                         style_data_conditional=[
                             {'if': {'row_index': 'odd'}, 'backgroundColor': '#16213e'},
-                            {'if': {'filter_query': '{VIX Spike (VIX > 28)} ne "0.0%"'}, 'color': '#00d97e', 'fontWeight': '600'}
+                            {'if': {'filter_query': '{' + _vix_lbl + '} ne "0.0%"'}, 'color': '#00d97e', 'fontWeight': '600'}
                         ]
                     ),
                     html.Div('Safety Profile: Scaling shifts assets completely to defensive fixed income (SHY/AGG/IEF) and GLD.',
@@ -2358,7 +2404,7 @@ def build_auditor_tab(data):
 # TAB 6: CANADIAN ETF PORTFOLIO
 # ═══════════════════════════════════════════════════════════════════════════
 CDN_ETF_NAMES = {
-    'ZQQ.TO':   'BMO NASDAQ 100 Index ETF',
+    'ZQQ.TO':   'BMO Nasdaq 100 Equity Hedged to CAD',
     'VFV.TO':   'Vanguard S&P 500 Index ETF (CAD)',
     'ZEB.TO':   'BMO Equal Weight Banks ETF',
     'XBB.TO':   'iShares Core Canadian Bond Index',
@@ -2371,7 +2417,7 @@ CDN_ETF_NAMES = {
     'ZDB.TO':   'BMO Discount Bond',
 }
 CDN_ETF_ROLES = {
-    'ZQQ.TO':   'Global Tech / AI Growth Engine',
+    'ZQQ.TO':   'Nasdaq-100 growth, CAD-hedged (not unhedged ZNQ)',
     'VFV.TO':   'Core US Large-Cap Equity (Unhedged)',
     'ZEB.TO':   'Canadian Banks (Income & Yield)',
     'XBB.TO':   'Canadian Bonds (Defensive Buffer)',
@@ -2400,6 +2446,16 @@ def build_cdn_portfolio_tab(data):
     us_eq         = data.get('equity_curve', pd.Series(dtype=float))
     us_mr         = data.get('monthly_returns', pd.Series(dtype=float))
     metrics       = cdn_meta.get('metrics', {})
+    from config.regime_rules import REGIME_VIX_DEFENSIVE as _CDN_VIX
+    cdn_start, cdn_end, cdn_years = _series_span(cdn_eq)
+    us_curve_start, us_curve_end, _us_curve_years = _series_span(us_eq)
+    if cdn_start:
+        cdn_span = f'{cdn_start} → {cdn_end}'
+        cdn_card = f'{cdn_span} (CAD)'
+    else:
+        cdn_span = 'CDN equity curve'
+        cdn_card = 'CAD holdings window'
+    us_span_lbl = f'{us_curve_start} → {us_curve_end}' if us_curve_start else 'US equity curve'
     cdn_version   = cdn_meta.get('name', 'v1')
     ab_winner     = cdn_meta.get('name', 'Universe D')
 
@@ -2621,7 +2677,7 @@ def build_cdn_portfolio_tab(data):
                     ], style={'marginBottom': '4px'}),
                     html.Div([
                         html.Span('Volatility / Tail Risk Gate: ', style={'color': '#8888a0', 'fontSize': '11px'}),
-                        html.Span('CBOE VIX Index (VIX > 25/30 triggers defense)', style={'color': '#c8c8d4', 'fontWeight': '600', 'fontSize': '11px'}),
+                        html.Span(f'CBOE VIX Index (VIX > {_CDN_VIX:.0f} forces deflation)', style={'color': '#c8c8d4', 'fontWeight': '600', 'fontSize': '11px'}),
                     ]),
                 ], style={'backgroundColor': '#16213e', 'padding': '12px', 'borderRadius': '6px', 'border': '1px solid #2d2d44'}), md=6),
             ], className='mb-2'),
@@ -2666,7 +2722,7 @@ def build_cdn_portfolio_tab(data):
                         },
                         {
                             'Regime': '❄️ Deflation / Recession',
-                            'Condition': 'Credit contraction, VIX > 30 spike, aggressive BoC emergency cuts',
+                            'Condition': f'Credit contraction, VIX > {_CDN_VIX:.0f} spike, aggressive BoC emergency cuts',
                             'Winner': 'XBB.TO (Govt/Corporate Bonds), CGL-C.TO (Cash / Gold Hedge)',
                             'Loser': 'Cyclical TSX Equities, Banks, Commodities',
                             'Stance': 'Capital Preservation (50% XBB Bonds, 20% Gold, Equity cut to 15%)',
@@ -2689,11 +2745,11 @@ def build_cdn_portfolio_tab(data):
 
         # Metric cards
         dbc.Row([
-            dbc.Col(mc('CAGR (CDN)',  metrics.get('CAGR', '—'),  '20-yr backtest (CAD)', '#00d97e', '📈'), md=2),
+            dbc.Col(mc('CAGR (CDN)',  metrics.get('CAGR', '—'),  cdn_card, '#00d97e', '📈'), md=2),
             dbc.Col(mc('Max DD',      metrics.get('MaxDD','—'),   'Worst peak-to-trough', '#e74c3c', '📉'), md=2),
             dbc.Col(mc('Sharpe',      metrics.get('Sharpe','—'),  'Risk-adjusted return', '#3498db', '⚡'), md=2),
             dbc.Col(mc('Volatility',  metrics.get('Volatility','—'), 'Annual std dev', '#9b59b6', '〰️'), md=2),
-            dbc.Col(mc('Win Rate',    metrics.get('WinRate','—'), 'Monthly positive %', '#f5a623', '🎯'), md=2),
+            dbc.Col(mc('Win Rate',    metrics.get('WinRate','—'), 'Share of up days (daily)', '#f5a623', '🎯'), md=2),
             dbc.Col(mc('Total Return',metrics.get('TotalReturn','—'),'Full period', '#1abc9c', '💰'), md=2),
         ], className='mb-3'),
 
@@ -2736,7 +2792,10 @@ def build_cdn_portfolio_tab(data):
         html.Div([
             html.H6('Side-by-Side Comparison: CDN (CAD) vs US (USD)',
                     style={'color': '#c8c8d4', 'marginBottom': '4px'}),
-            html.Div('US Portfolio metrics link directly to Tab 3 Backtest engine (2005–2026). CDN metrics reflect TSX 2012–2026 backtest.',
+            html.Div(f'US Portfolio metrics are the production USD backtest ({us_span_lbl}, CPI+1mo / GDP+4mo). '
+                     f'CDN metrics are the TSX book over {cdn_span}'
+                     + (f' ({cdn_years:.1f} years)' if cdn_years else '')
+                     + '. ZQQ.TO is CAD-hedged Nasdaq-100; VFV.TO is unhedged S&P 500 (USD/CAD moves VFV, not ZQQ).',
                      style={'color': '#8888a0', 'fontSize': '11px', 'marginBottom': '10px'}),
             dash_table.DataTable(
                 columns=[{'name': c, 'id': c} for c in ['Metric', 'CDN Portfolio (CAD)', 'US Portfolio (USD — Tab 3)']],
@@ -2826,9 +2885,10 @@ def build_cdn_portfolio_tab(data):
 
         # Footer note
         _source_line(
-            f'CDN portfolio: 6-ETF TSX universe (Portfolio B - 14.6% High Growth). '
-            f'Prices in CAD. Same BacktestEngine + regime classification as US strategy. '
-            f'ZQQ.TO and VFV.TO start late 2012. Not investment advice.'
+            f'CDN portfolio: 6 TSX ETFs (Portfolio B). Prices in CAD. '
+            f'ZQQ.TO is BMO Nasdaq-100 hedged to CAD; this book does not hold unhedged ZNQ.TO. '
+            f'VFV.TO is unhedged S&P 500, so USD/CAD is in VFV and not in ZQQ. '
+            f'Sample {cdn_span}. Not investment advice.'
         ),
     ], style={'padding': '0 4px'})
 
