@@ -39,6 +39,7 @@ REGIME_WEIGHTS: dict[str, dict[str, float]] = {
 
     # -----------------------------------------------------------------
     # Goldilocks — Rising growth, Falling inflation (AGGRESSIVE)
+    # QQQ 30% is intentional AI-trend exposure (accepted; not clipped to 25%).
     # QQQ 30% + SOXX 20% = concentrated AI/tech exposure.
     # SPY 25% = broad equity core (SPY 15% + SPYI 10%).
     # AIPO 3% = AI datacenter & power infrastructure thesis.
@@ -149,9 +150,10 @@ CAPITAL_CONFIG = CapitalConfig()
 # vix_gate_level (20) only zeroes TQQQ/SOXL and is idle on the v7 sleeve.
 REGIME_VIX_DEFENSIVE: float = 30.0
 
-# Largest base sleeve in REGIME_WEIGHTS. v7 uses QQQ 30% in goldilocks and
-# IEF 35% in deflation; the position cap is that maximum so the published
-# weights and the limit cannot contradict each other.
+# Position cap = largest base sleeve in REGIME_WEIGHTS.
+# Goldilocks QQQ at 30% is intentional AI-trend exposure and must not be
+# clipped to the old 25% limit. IEF is 35% in deflation, so the cap is that
+# maximum: both published weights sit inside policy.
 MAX_REGIME_WEIGHT: float = max(
     weight
     for weights in REGIME_WEIGHTS.values()
@@ -168,7 +170,7 @@ class RiskLimits:
     """Hard risk constraints enforced at rebalance and intra-day."""
 
     max_single_position: float = MAX_REGIME_WEIGHT
-    """No single ETF base weight may exceed the largest sleeve in REGIME_WEIGHTS."""
+    """Cap equals the largest REGIME_WEIGHTS sleeve. Goldilocks QQQ 30% is inside it and is not clipped."""
 
     max_leveraged_total: float = 0.25
     """Combined leveraged exposure capped at 25 % (v7 holds no leveraged ETFs)."""

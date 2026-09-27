@@ -22,9 +22,10 @@ that production used unpublished data. Turning the publication lag off (unlagged
 about **15.74%** CAGR on this sample; that higher number is the look-ahead case.
 
 **7-ETF portfolio (v7):** QQQ, SOXX, SPY, IEF, GLD, DBMF, AIPO.
-Weights live in `REGIME_WEIGHTS`. The largest base weight is IEF **35%** (deflation);
-goldilocks QQQ is **30%**. `RISK_LIMITS.max_single_position` equals that maximum
-(`MAX_REGIME_WEIGHT`), so the cap matches the book. VIX above `REGIME_VIX_DEFENSIVE`
+Weights live in `REGIME_WEIGHTS`. Goldilocks QQQ **30%** is intentional AI-trend
+exposure and is not clipped. The largest base weight is IEF **35%** (deflation).
+`RISK_LIMITS.max_single_position` equals that maximum (`MAX_REGIME_WEIGHT`), so
+both the 30% QQQ sleeve and the 35% IEF sleeve are inside the cap. VIX above `REGIME_VIX_DEFENSIVE`
 (**30**) forces deflation. `vix_gate_level` 20 only zeroes TQQQ/SOXL; v7 holds neither,
 so that gate is idle. The Goldman-style throttle is **off**.
 

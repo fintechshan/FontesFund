@@ -129,7 +129,7 @@ SSO, MOAT, VOO. (GGLL was removed entirely. AIPO is in the v7 sleeve.)
 
 | Check | Rule | Action |
 |---|---|---|
-| Position Limit | ≤ max sleeve in `REGIME_WEIGHTS` (35% today: IEF in deflation; goldilocks QQQ is 30%) | Auto-reduce |
+| Position Limit | ≤ max sleeve in `REGIME_WEIGHTS` (35% today: IEF in deflation). Goldilocks QQQ 30% is accepted AI-trend exposure and is not reduced to 25% | Auto-reduce only above that cap |
 | Daily Turnover | ≤ 25% of portfolio | Queue excess |
 | Drawdown Breaker | Trigger at 12% DD | Cut equity 50% |
 | VIX Guard | VIX > 30 (`REGIME_VIX_DEFENSIVE`) forces deflation | Defensive regime |

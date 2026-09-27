@@ -201,7 +201,7 @@ Search that JSON for `14.85%`, `12.21%`, `15.74%`, and `14.62%`.
 Engine math is unchanged. Copy, limits, and the auditor status key changed:
 
 1. Extra-month `regime.shift(1)` is **Execution / Timing Sensitivity**, not a production look-ahead warning. Look-ahead stays unlagged versus CPI+1mo / GDP+4mo.
-2. `RISK_LIMITS.max_single_position` is `MAX_REGIME_WEIGHT` (IEF 35% in deflation). Goldilocks QQQ 30% is inside the cap. The auditor imports `RISK_LIMITS` (the old 25% fallback was a `NameError`).
+2. `RISK_LIMITS.max_single_position` is `MAX_REGIME_WEIGHT` (IEF 35% in deflation). Goldilocks QQQ 30% is intentional AI-trend exposure and is not clipped to 25%. The auditor imports `RISK_LIMITS` (the old 25% fallback was a `NameError`).
 3. `REGIME_VIX_DEFENSIVE` and `RISK_LIMITS.vix_spike_threshold` are **30**, the same threshold the classifiers already used. UI copy reads that constant.
 4. CDN period labels use the equity-curve dates. ZQQ.TO is labeled CAD-hedged. The book still holds ZQQ, not ZNQ.
 5. `CLAUDE.md` and `README.md` lead with v7 **14.85% / 13.90% / 1.03**. v5.1 **14.52% / 14.78% / 0.97** is marked historical.

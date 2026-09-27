@@ -1122,7 +1122,9 @@ def build_portfolio_tab(data):
     #    displayed rules can never drift from what the engine actually runs ──
     from config.regime_rules import (
         STRATEGY_PARAMS as _SP, RISK_LIMITS as _RL, REGIME_VIX_DEFENSIVE as _VIX_DEF,
+        REGIME_WEIGHTS as _RW,
     )
+    _qqq_gold = (_RW.get('goldilocks') or {}).get('QQQ', 0.0)
     _lev_book = sorted({t for w in (all_rw or {}).values() for t in w}
                        & {'TQQQ', 'SOXL', 'SSO', 'GGLL', 'TECL', 'SPXL', 'UPRO'})
     _freq_rules = [
@@ -1136,7 +1138,8 @@ def build_portfolio_tab(data):
         f'VIX > {_VIX_DEF:.0f} → override to Deflation',
     ]
     _risk_rules = [
-        f"Max single position: {_RL.max_single_position:.0%}",
+        f"Max single position: {_RL.max_single_position:.0%} "
+        f"(Goldilocks QQQ {_qqq_gold:.0%} is accepted AI-trend weight, not clipped)",
         f"Max leveraged total: {_RL.max_leveraged_total:.0%}",
         f"Max daily turnover: {_RL.max_daily_turnover:.0%}",
     ]
@@ -2172,7 +2175,7 @@ def build_auditor_tab(data):
         {'Metric': 'Total Return', prod_col: std_tot, extra_col: lag_tot, 'Difference': get_diff_str(std_tot, lag_tot, True)},
     ]
 
-    from config.regime_rules import RISK_LIMITS as _AUD_RL
+    from config.regime_rules import RISK_LIMITS as _AUD_RL, REGIME_WEIGHTS as _AUD_RW
     vix_stress = risk.get('stress_test', {})
     try:
         _vix_thr = float(vix_stress.get('vix_threshold', _AUD_RL.vix_spike_threshold))
@@ -2180,6 +2183,7 @@ def build_auditor_tab(data):
         _vix_thr = _AUD_RL.vix_spike_threshold
     _vix_lbl = f'VIX Spike (VIX > {_vix_thr:.0f})'
     _conc_limit = risk.get('concentration', {}).get('limit', f'{_AUD_RL.max_single_position:.0%}')
+    _qqq_pol = (_AUD_RW.get('goldilocks') or {}).get('QQQ', 0.0)
     _lev_limit = risk.get('leverage', {}).get('limit', f'{_AUD_RL.max_leveraged_total:.0%}')
     stress_table_data = [
         {'Asset Category': k, 'Normal Weight': 'Matches active regime weights', _vix_lbl: v}
@@ -2358,7 +2362,7 @@ def build_auditor_tab(data):
                         html.Div([
                             html.Span('Single-asset base-weight limit: ', style={'color': '#8888a0'}),
                             html.Span(f"{risk.get('concentration', {}).get('max_weight', '—')} in {risk.get('concentration', {}).get('asset', '—')}", style={'color': '#00d97e', 'fontWeight': 'bold'}),
-                            html.Span(f" (limit {_conc_limit}, max sleeve in REGIME_WEIGHTS)", style={'color': '#6c757d', 'fontSize': '11px'}),
+                            html.Span(f" (limit {_conc_limit}; Goldilocks QQQ {_qqq_pol:.0%} is inside this cap and is not clipped)", style={'color': '#6c757d', 'fontSize': '11px'}),
                             html.Span(f"  {fmt_status(risk.get('concentration', {}).get('status', 'PASS'))}", style={'float': 'right'})
                         ], style={'padding': '8px 0', 'borderBottom': '1px solid #2d2d44'}),
                         html.Div([
