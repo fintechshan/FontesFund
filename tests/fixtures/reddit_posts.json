@@ -1,0 +1,74 @@
+[
+  {
+    "id": "mu1",
+    "sub": "wallstreetbets",
+    "title": "$MU to the moon",
+    "text": "$MU to the moon. Micron is ripping",
+    "compound": 0.8,
+    "upvotes": 0,
+    "comments": 0
+  },
+  {
+    "id": "mu2",
+    "sub": "stocks",
+    "title": "MU YOLO",
+    "text": "MU YOLO still holding",
+    "compound": 0.6,
+    "upvotes": 0,
+    "comments": 0
+  },
+  {
+    "id": "mu3",
+    "sub": "semiconductors",
+    "title": "Micron earnings beat",
+    "text": "Micron earnings beat and guidance up",
+    "compound": 0.4,
+    "upvotes": 0,
+    "comments": 0
+  },
+  {
+    "id": "nvda1",
+    "sub": "options",
+    "title": "NVDA puts",
+    "text": "NVDA looks extended, buying puts",
+    "compound": -0.5,
+    "upvotes": 0,
+    "comments": 0
+  },
+  {
+    "id": "nvda2",
+    "sub": "options",
+    "title": "nvda again",
+    "text": "nvda dumping hard",
+    "compound": -0.5,
+    "upvotes": 0,
+    "comments": 0
+  },
+  {
+    "id": "msft1",
+    "sub": "stocks",
+    "title": "MSFT is fine",
+    "text": "MSFT is fine",
+    "compound": 0.0,
+    "upvotes": 0,
+    "comments": 0
+  },
+  {
+    "id": "smci1",
+    "sub": "wallstreetbets",
+    "title": "SMCI breakout",
+    "text": "The AI trade and $SMCI breakout",
+    "compound": 0.4,
+    "upvotes": 0,
+    "comments": 0
+  },
+  {
+    "id": "noise",
+    "sub": "investing",
+    "title": "words",
+    "text": "I think IT is FOR ALL of US and the AI trade",
+    "compound": 0.2,
+    "upvotes": 0,
+    "comments": 0
+  }
+]
