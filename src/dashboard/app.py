@@ -1178,15 +1178,13 @@ def build_portfolio_tab(data):
         'That market lag is not a second CPI/GDP lag. A name with no price is dropped and the sleeve is renormalized.',
         f"Daily 200-MA: yesterday's SPY vs yesterday's average. If below, keep "
         f"{_SP['bear_equity_frac']:.0%} of the sleeve and move {1 - _SP['bear_equity_frac']:.0%} to defense.",
-        'Daily equity cut, mandatory: VIX linear 28→40 and SPY vs its prior 20-session high '
-        '(full equity to −4%, zero at −10%). The tighter scale cuts risk assets; freed weight goes to SHY/AGG/GLD/IEF. '
-        'This is not the monthly VIX>30 deflation label.',
         f"Daily vol target {_SP['target_vol']:.0%} (HAR-RV), scale clipped to "
         f"[{_SP['vol_lo']:.2f}, {_SP['vol_hi']:.2f}] using yesterday's forecast.",
         f"Daily portfolio drawdown shrink at −{_SP['dd_trigger']:.0%}, "
         f"floor {_SP['dd_floor']:.0%}, span {_SP['dd_span']:.0%}.",
         'Live orders use that same daily stack. CPI/GDP days change the sleeve only. '
-        'The data refresh does not send orders. There is no event-only live mode.',
+        'The data refresh does not send orders. There is no event-only live mode. '
+        'The VIX 28→40 and 20-session SPY-high cut is not this stack.',
     ]
     _regime_rules = [
         'Growth rising: GDP > 1.5% OR SPY 12m mom > 5%',

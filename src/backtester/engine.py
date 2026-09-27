@@ -410,18 +410,18 @@ class BacktestEngine:
     #   scaled a MULTI-ASSET portfolio by SPY's volatility — wrong proxy #
     #   (it levered bond-heavy defensive books and de-risked exactly the #
     #   assets you want in a crisis).  The trusted path is the targeted   #
-    #   clock plus the daily overlay in this function. Do not quote a     #
-    #   CAGR from here. The overlay is mandatory: 200-MA trend, VIX      #
-    #   28→40 and 20-session SPY-high equity cut, portfolio vol target,  #
-    #   and portfolio drawdown shrink. Live orders use the same stack.   #
+    #   clock plus the daily overlay already in this function: 200-MA,    #
+    #   portfolio vol target, and portfolio drawdown. The VIX 28→40 /     #
+    #   20-session SPY cut is off unless apply_equity_cut=True. That cut   #
+    #   is a different return path. It is not the month-end look-ahead fix.#
     #                                                                     #
     #   Design (all signals lagged 1 day — no look-ahead):               #
     #     1. Monthly regime base weights, renormalised to ETFs that      #
     #        actually have data on the prior day (no phantom cash drag). #
     #     2. 200-day SPY trend filter: when SPY < 200-MA, hold           #
     #        bear_equity_frac of the regime book + the rest in defense.  #
-    #     3. Daily equity cut: min(VIX 28→40, SPY 20-session drawdown).  #
-    #        Risk assets only. Not a second CPI/GDP lag.                 #
+    #     3. Optional equity cut (off by default): min(VIX 28→40, SPY      #
+    #        20-session drawdown). Not part of the headline path.        #
     #     4. PORTFOLIO-LEVEL vol targeting: scale by the STRATEGY's own  #
     #        lagged vol (not SPY's) toward target_vol.                   #
     #     5. Drawdown circuit breaker: cut exposure once portfolio DD    #
@@ -458,6 +458,8 @@ class BacktestEngine:
         vol_method: str = "realized",   # 'realized' (21d std) | 'ewma'  (HAR via use_har_vol)
         ewma_lambda: float = 0.94,      # RiskMetrics decay for vol_method='ewma'
         rebalance_freq: str = "monthly",  # 'monthly' (default) | 'weekly'
+        apply_equity_cut: bool = False,
+        turnover_basis: str = "legacy",  # 'legacy' | 'sleeve' | 'book'
     ) -> BacktestResult:
         """Optimized regime strategy — see class-level comment block above.
 
@@ -568,10 +570,11 @@ class BacktestEngine:
 
         r_mf = mf_proxy() if mf_alloc > 0 else pd.Series(0.0, index=daily_returns.index)
 
-        # ── 2-3. Trend blend, then the daily equity cut. Turnover is the
-        #        pre-leverage book (sleeve + trend + equity cut), so the cut
-        #        is not free. The cut uses yesterday's VIX and yesterday's
-        #        20-session SPY high. It does not shift CPI or GDP. ──
+        # ── 2-3. Trend blend, then an optional equity cut. ──
+        # legacy: sleeve turnover on the base book, then the 200-day return
+        # blend. No VIX 28→40 / 20-session SPY cut. This is the pre-cut path.
+        # book: turnover of the pre-leverage weights, including any cut.
+        # sleeve: those weights, but only base-sleeve turnover is charged.
         spy_px = self.price_data['SPY'] if 'SPY' in self.price_data.columns else None
         if spy_px is not None:
             trend_ok = (spy_px.shift(1) >= spy_px.rolling(200).mean().shift(1))
@@ -580,15 +583,33 @@ class BacktestEngine:
             trend_ok = pd.Series(1.0, index=daily_returns.index)
 
         bear = float(bear_equity_frac)
+        r_base = (W_base * rf_filled).sum(axis=1)
+        r_def = (W_def * rf_filled).sum(axis=1)
+        sleeve_turnover = W_base.diff().abs().sum(axis=1) / 2.0
+        sleeve_tx = sleeve_turnover * (transaction_cost_bps / 10_000)
         w_mix = (
             W_base.mul(trend_ok + (1.0 - trend_ok) * bear, axis=0)
             + W_def.mul((1.0 - trend_ok) * (1.0 - bear), axis=0)
         )
         overlay_scales = equity_scales(daily_returns.index, spy_px, vix_lag)
-        w_book = derisk_frame(w_mix, overlay_scales['equity_scale'])
-        turnover = w_book.diff().abs().sum(axis=1) / 2.0
-        tx = turnover * (transaction_cost_bps / 10_000)
-        r_trend = (w_book * rf_filled).sum(axis=1) - tx
+        if turnover_basis == "legacy":
+            base = r_base - sleeve_tx
+            r_trend = (trend_ok * base
+                       + (1.0 - trend_ok) * (bear * base + (1.0 - bear) * r_def))
+            overlay_scales = overlay_scales.assign(
+                equity_scale=1.0, vix_scale=1.0, spy_dd_scale=1.0,
+            )
+            w_book = w_mix
+        else:
+            if not apply_equity_cut:
+                overlay_scales = overlay_scales.assign(equity_scale=1.0)
+            w_book = derisk_frame(w_mix, overlay_scales["equity_scale"])
+            if turnover_basis == "sleeve":
+                tx = sleeve_tx
+            else:
+                turnover = w_book.diff().abs().sum(axis=1) / 2.0
+                tx = turnover * (transaction_cost_bps / 10_000)
+            r_trend = (w_book * rf_filled).sum(axis=1) - tx
 
         # ── 3b. Blend the managed-futures sleeve in BEFORE vol targeting, so the
         #        vol-target levers the (lower-vol, diversified) combination up. ──

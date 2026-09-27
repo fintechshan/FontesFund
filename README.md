@@ -80,7 +80,7 @@ python scripts/run_backtest.py
 - **Initial Capital**: $100,000
 - **Monthly Contribution**: $10,000 (paused if 3-month return < -5%)
 - **Rebalancing**: Monthly regime sleeve; daily overlay every session (200-MA,
-  VIX 28→40, 20-session SPY drawdown, vol target, portfolio drawdown shrink)
+  vol target, portfolio drawdown shrink). The VIX 28→40 cut is not this book.
 - **Validated targets**: CAGR ≥ 16%, Max Drawdown < 14.8%, Sharpe ≥ 1.2.
   The latest run’s distance to those targets is `20yr_comparison.csv`, not a number
   frozen here. Dashboard default is the targeted path (B), including the daily overlay.
@@ -106,9 +106,9 @@ python scripts/verify_consistency.py   # cards, heatmap compound, equity curve, 
 Path B is the dashboard default. The Backtest radio drives the CAGR cards, the
 equity curve, and the monthly heatmap from that one curve. CPI stays +1 month and
 GDP stays +4 months. VIX and 12-month momentum use only the prior month. That
-market lag is not a second CPI/GDP lag. The daily overlay (VIX 28→40, 20-session
-SPY drawdown, portfolio drawdown shrink, plus the 200-MA and vol target) is on
-every honesty path. It is not a separate live calendar.
+market lag is not a second CPI/GDP lag. The daily overlay on every honesty path
+is the 200-day trend, the portfolio vol target, and the portfolio drawdown shrink.
+The VIX 28→40 cut is not part of those paths.
 
 The full-sample row drops ETFs that have not listed yet and renormalizes. Read
 `coverage_windows.csv` before treating that row as what the live book held.

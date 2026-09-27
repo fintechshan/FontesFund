@@ -320,14 +320,29 @@ class OverlayAndLagTests(unittest.TestCase):
         )
         overlay = result.overlay
         self.assertEqual(overlay["policy"], "optimized_daily")
-        self.assertAlmostEqual(overlay["vix_scale"], vix_linear_scale(35.0))
-        self.assertAlmostEqual(
-            overlay["equity_scale"],
-            min(overlay["vix_scale"], overlay["spy_dd_scale"]),
+        self.assertEqual(overlay["equity_scale"], 1.0)
+        self.assertEqual(overlay["vix_scale"], 1.0)
+        cut = engine.run_optimized_regime_backtest(
+            regime,
+            {"goldilocks": {"SPY": 0.6, "IEF": 0.4}},
+            vix_data=vix,
+            use_har_vol=False,
+            risk_parity=False,
+            target_vol=0.50,
+            vol_lo=1.0,
+            vol_hi=1.0,
+            apply_equity_cut=True,
+            turnover_basis="book",
         )
-        self.assertLess(overlay["spy_dd_scale"], 1.0)
-        live = weights_from_overlay(overlay)
-        expected_spy = 0.6 * overlay["equity_scale"] * overlay["vol_scale"] * overlay["dd_scale"]
+        cut_overlay = cut.overlay
+        self.assertAlmostEqual(cut_overlay["vix_scale"], vix_linear_scale(35.0))
+        self.assertAlmostEqual(
+            cut_overlay["equity_scale"],
+            min(cut_overlay["vix_scale"], cut_overlay["spy_dd_scale"]),
+        )
+        self.assertLess(cut_overlay["equity_scale"], 1.0)
+        live = weights_from_overlay(cut_overlay)
+        expected_spy = 0.6 * cut_overlay["equity_scale"] * cut_overlay["vol_scale"] * cut_overlay["dd_scale"]
         self.assertAlmostEqual(live.get("SPY", 0.0), expected_spy, places=6)
         self.assertGreater(sum(live.values()), 0.0)
 

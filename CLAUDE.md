@@ -22,33 +22,36 @@ drift. The method below is the source of truth. Each run writes its own metrics.
 the daily overlay**. A calendar of “trade only on CPI/GDP days, or when monthly
 VIX > 30” is not that strategy.
 
-The daily overlay, exactly as coded in `src/backtester/daily_overlay.py`. It is
-mandatory on the headline path. Live orders apply the same stack:
+The daily overlay, exactly as coded. It is mandatory on the headline path.
+Live orders apply the same stack. Defaults are ``apply_equity_cut=False`` and
+``turnover_basis='legacy'``.
 
 1. **200-day trend.** Yesterday’s SPY versus yesterday’s 200-day average. If SPY is
    below it, keep `bear_equity_frac` (0.70) of the regime sleeve and move the rest
    to the defense basket.
-2. **Equity de-risk.** Yesterday’s VIX scales risk assets linearly from 28 (full
-   equity) to 40 (zero equity). SPY versus its trailing 20-session high, window
-   ending yesterday, scales risk assets from a 4% drawdown (full) to 10% (zero).
-   The tighter scale wins. Freed weight goes to SHY / AGG / GLD / IEF. This cut
-   is not a second CPI or GDP lag, and it is not the monthly VIX>30 deflation label.
-3. **Portfolio vol target.** `scale = clip(target_vol / lagged own vol, vol_lo, vol_hi)`
+2. **Portfolio vol target.** `scale = clip(target_vol / lagged own vol, vol_lo, vol_hi)`
    with target 13%, band 0.50–1.50. Production uses the HAR-RV forecast
    (`use_har_vol=True`). The scale uses yesterday’s forecast.
-4. **Portfolio drawdown shrink.** If strategy equity is more than `dd_trigger` (7%)
+3. **Portfolio drawdown shrink.** If strategy equity is more than `dd_trigger` (7%)
    below its own peak, exposure falls toward `dd_floor` (10%) over a further
    `dd_span` (10%).
 
+Costs are 5 bp on monthly sleeve turnover, plus financing above 1x gross.
+The trend blend is not charged a second time.
+
 `scripts/ibkr_rebalance.py` runs that same engine and sends the last day’s
-`result.overlay` (trend blend, then the equity cut, then vol scale × drawdown
-scale). Gross exposure can differ from 100%. That is the backtest’s leverage.
-The daily scheduler refresh updates caches. It does not send orders.
+`result.overlay` (trend blend, then vol scale × drawdown scale). Gross exposure
+can differ from 100%. That is the backtest’s leverage. The daily scheduler
+refresh updates caches. It does not send orders.
+
+A VIX 28→40 linear cut and a 20-session SPY-high cut exist in
+`daily_overlay.py` and run only when `apply_equity_cut=True` (with book
+turnover if `turnover_basis='book'`). That is a different path. It is not the
+month-end look-ahead fix and it is not the live book.
 
 CPI and GDP **advance** release days, and a VIX or momentum flip, change the
 **monthly sleeve only**. They do not turn the daily overlay off. Do not wait an
-extra Auditor month. An event-only calendar is not a live mode. It would need
-its own backtest and its own metrics before anyone quoted it.
+extra Auditor month. An event-only calendar is not a live mode.
 
 The monthly regime (Merrill clock, CPI+1 / GDP+4, prior-month VIX mean and
 SPY momentum) and this daily overlay are both part of the headline. The regime
@@ -224,11 +227,10 @@ monthly rebalance.
   - Manual refresh of results is still `python run_backtest.py` (~30s) + deploy, or just
     hit `/tasks/refresh`.
 - **Live rebalance:** `scripts/ibkr_rebalance.py` runs `run_optimized_regime_backtest`
-  and orders the last day’s overlay: 200-MA blend, VIX 28→40 and 20-session SPY
-  drawdown equity cut, HAR vol scale, and portfolio drawdown shrink. CPI and GDP
-  advance releases change the monthly sleeve. They do not replace the daily overlay.
-  The scheduler does not send orders. Do not wait an extra Auditor month. There is
-  no event-only live mode.
+  and orders the last day’s overlay: 200-MA blend, HAR vol scale, and portfolio
+  drawdown shrink. CPI and GDP advance releases change the monthly sleeve. They
+  do not replace the daily overlay. The scheduler does not send orders. Do not
+  wait an extra Auditor month. The VIX 28→40 cut is not this script.
 - **Reproduce:** `python run_backtest.py` (full engine, ~30s). Fast parameter
   exploration: `python optimize_strategy.py` and `python extend_rp_mf.py` (vectorized
   harnesses, <2s; same data/regime logic as production). Production-faithful variant

@@ -1,28 +1,28 @@
 """Daily overlay shared by the production backtest and live orders.
 
 The monthly Merrill sleeve is the starting book. The headline path then
-applies this overlay every day, in ``run_optimized_regime_backtest`` and in
+applies this overlay every day, in ``run_optimized_regime_backtest``
+(``turnover_basis='legacy'``, ``apply_equity_cut=False``) and in
 ``scripts/ibkr_rebalance.py``. Both read the same last-day record.
 
-Order:
+Headline order:
 
 1. 200-day SPY trend. Yesterday's close versus yesterday's 200-day average.
    If SPY is below it, keep ``bear_equity_frac`` of the sleeve and blend the
    rest into the defense basket.
-2. Equity de-risk, the tighter of two scales. Yesterday's VIX is full equity
-   at 28 and zero equity at 40, linear in between. SPY versus its trailing
-   20-session high (window ending yesterday) is full equity down to a 4%
-   drawdown and zero equity at 10%, linear in between. Only risk-asset
-   tickers are cut. Freed weight goes to the safe basket. This is not a
-   second CPI or GDP lag, and it is not the monthly VIX>30 deflation label.
-3. Portfolio vol target. ``scale = clip(target / lagged own vol, vol_lo, vol_hi)``.
+2. Portfolio vol target. ``scale = clip(target / lagged own vol, vol_lo, vol_hi)``.
    Production uses the HAR-RV forecast. The scale is yesterday's.
-4. Portfolio drawdown shrink. If strategy equity is more than ``dd_trigger``
+3. Portfolio drawdown shrink. If strategy equity is more than ``dd_trigger``
    below its own peak, exposure falls toward ``dd_floor`` over ``dd_span``.
 
-An event-only calendar (trade on CPI/GDP release days, or only when the
-monthly VIX mean exceeds 30) is not this policy and is not a live mode.
-Quoting that calendar would require a separate backtest and its own metrics.
+Transaction cost on this path is 5 bp on monthly sleeve turnover. The 200-day
+blend is not charged a second time.
+
+The VIX 28→40 and 20-session SPY-high scales below are not the headline.
+``apply_equity_cut=True`` turns them on. Measured on the same cache, that
+switch is a different strategy, not the month-end look-ahead fix.
+
+An event-only calendar is not this policy and is not a live mode.
 """
 from __future__ import annotations
 
@@ -211,22 +211,23 @@ def policy_lines() -> list[str]:
         "2. Daily 200-day trend: yesterday's SPY versus yesterday's 200-day average. "
         f"If SPY is below it, keep {sp['bear_equity_frac']:.0%} of the sleeve and "
         f"move {1 - sp['bear_equity_frac']:.0%} into the defense basket.",
-        "3. Daily equity de-risk, mandatory on this path: yesterday's VIX scales "
-        f"equity from {VIX_FULL_EXPOSURE:.0f} (full) to {VIX_ZERO_EQUITY:.0f} (zero), "
-        f"and SPY's drawdown from its prior {SPY_DD_WINDOW:.0f}-session high scales "
-        f"equity from {SPY_DD_START:.0%} to {SPY_DD_ZERO:.0%}. The tighter scale wins. "
-        "Freed weight goes to SHY/AGG/GLD/IEF. This is not the monthly VIX>30 label.",
-        "4. Daily portfolio vol target: scale = clip(target / lagged own vol, "
+        "3. Daily portfolio vol target: scale = clip(target / lagged own vol, "
         f"{sp['vol_lo']:.2f}, {sp['vol_hi']:.2f}) with target {sp['target_vol']:.0%}. "
         "Production uses the HAR-RV forecast (use_har_vol). The scale is yesterday's.",
-        "5. Daily portfolio drawdown: if strategy equity is more than "
+        "4. Daily portfolio drawdown: if strategy equity is more than "
         f"{sp['dd_trigger']:.0%} below its own peak, exposure falls toward "
         f"{sp['dd_floor']:.0%} over a further {sp['dd_span']:.0%} of drawdown.",
+        "Costs are 5 bp on monthly sleeve turnover, plus financing when gross "
+        "exposure exceeds 1. The trend blend is not charged again.",
+        "Not this book: VIX linear "
+        f"{VIX_FULL_EXPOSURE:.0f}→{VIX_ZERO_EQUITY:.0f} and the "
+        f"{SPY_DD_WINDOW:.0f}-session SPY-high cut. Those run only if "
+        "apply_equity_cut is set. They are not the month-end look-ahead fix.",
         "CPI and GDP advance release days, and a VIX or momentum regime flip, "
         "change the monthly sleeve. They do not turn the daily overlay off. "
         "The daily data refresh does not send orders. There is no event-only "
         "live mode; that calendar would be a different backtest with its own metrics.",
-        "Separate from the equity cut: yesterday's VIX at or above "
+        "Separate rule: yesterday's VIX at or above "
         f"{sp['vix_gate_level']:.0f} drops TQQQ/SOXL. The v7 sleeve holds neither. "
         "A latest VIX print above 30 forces the deflation label for the current month.",
     ]

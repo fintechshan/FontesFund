@@ -49,8 +49,8 @@ def current_regime_and_weights():
     """Target notionals from the production engine's last day.
 
     The monthly regime sleeve is not the order. ``run_optimized_regime_backtest``
-    then applies the daily overlay: 200-MA blend, VIX 28→40 and 20-session SPY
-    drawdown equity cut, portfolio vol scale, and portfolio drawdown shrink.
+    then applies the daily overlay: 200-MA blend, portfolio vol scale, and
+    portfolio drawdown shrink. The VIX 28→40 cut is not applied.
     This function runs that same engine and reads ``result.overlay``. Names with
     no price are dropped and the sleeve is renormalized inside the engine. They
     are not left as cash. There is no event-only order mode.
