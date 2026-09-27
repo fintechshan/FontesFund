@@ -1,5 +1,5 @@
 Strategy,Annual Return,Volatility,Sharpe Ratio,Sortino Ratio,Max Drawdown,Calmar Ratio,Win Rate,Total Return
-Optimized Regime Strategy,13.43%,12.41%,0.93,1.25,14.13%,0.95,54.4%,1438.39%
+Optimized Regime Strategy,10.92%,11.85%,0.76,0.99,15.07%,0.72,54.2%,846.37%
 Basic Regime (upper bound),13.74%,13.34%,0.89,1.15,24.28%,0.57,54.9%,1531.63%
 60/40 Benchmark,8.15%,11.53%,0.55,0.67,34.70%,0.23,55.3%,447.44%
 S&P 500,10.95%,18.89%,0.48,0.59,55.19%,0.20,55.0%,852.60%
