@@ -777,6 +777,8 @@ if __name__ == '__main__':
             # Regression tripwire: one day of new data moves the 21-yr CAGR by basis
             # points; a data problem moves it by whole points (11.82% vs 14.60% on
             # 2026-07-12, when an in-container FRED failure produced garbage regimes).
+            # run_backtest.py also exits 3 when the equity curve, the monthly
+            # heatmap, and the reported CAGR/total/daily max DD are not one series.
             new = _headline()
             if prev and new and (abs(new[0] - prev[0]) > 1.0 or (new[1] - prev[1]) > 1.0):
                 logger.error(f"/tasks/refresh: headline jump {prev} -> {new}; data problem "

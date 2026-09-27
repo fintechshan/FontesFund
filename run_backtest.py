@@ -489,4 +489,18 @@ if vol_result.monthly_returns is not None:
     vol_result.monthly_returns.to_csv(results_dir / "aggressive_monthly_returns.csv")
 
 logger.info(f"\nResults saved to {results_dir}")
+
+from src.backtester.consistency import verify_series
+_consistency = verify_series(
+    vol_result.annual_return,
+    vol_result.total_return,
+    vol_result.max_drawdown,
+    vol_result.equity_curve,
+    vol_result.monthly_returns,
+)
+print("\n" + _consistency.text())
+if not _consistency.ok:
+    logger.error("Consistency check failed. This run is not publishable.")
+    sys.exit(3)
+
 logger.info("Backtest complete!")

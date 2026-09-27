@@ -100,6 +100,7 @@ treat an old table in this file as the result.
 ```bash
 python run_backtest.py          # path B → 20yr_comparison.csv
 python scripts/ab_vintage.py    # A / B / C, common inception, coverage, release lags
+python scripts/verify_consistency.py   # cards, heatmap compound, equity curve, daily max DD
 ```
 
 Path B is the dashboard default. The Backtest radio drives the CAGR cards, the

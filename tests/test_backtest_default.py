@@ -294,6 +294,9 @@ class BacktestDefaultTests(unittest.TestCase):
         self.assertEqual(_card_after(texts, 'Annual Return'), '13.43%')
         self.assertEqual(_card_after(texts, 'Sharpe Ratio'), '0.93')
         self.assertEqual(_card_after(texts, 'Max Drawdown'), '14.13%')
+        self.assertIn('Daily peak-to-trough', texts)
+        self.assertIn('252-day year count', texts)
+        self.assertIn('month-end snapshot', ' '.join(texts))
         table = _tables(body)[0]
         self.assertEqual(table.data[0]['Strategy'], TARGETED_SERIES_LABEL)
         self.assertEqual(table.data[0]['Annual Return'], '13.43%')

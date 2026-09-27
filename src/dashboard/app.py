@@ -202,7 +202,7 @@ def make_equity_curves(all_eq, equity_curve, title=None, main_name=None):
                       legend=dict(orientation='h', y=1.12, x=0.5, xanchor='center'))
     return fig
 
-def make_drawdown(equity_curve, title='Drawdown Analysis'):
+def make_drawdown(equity_curve, title='Daily drawdown'):
     fig = go.Figure()
     if len(equity_curve) > 0:
         rm = equity_curve.cummax()
@@ -1724,7 +1724,7 @@ def _table_row(name, metrics):
         'Volatility': metrics.get('volatility', '—'),
         'Sharpe': metrics.get('sharpe', '—'),
         'Sortino': metrics.get('sortino', '—'),
-        'Max DD': metrics.get('max_dd', '—'),
+        'Max DD (daily)': metrics.get('max_dd', '—'),
         'Calmar': metrics.get('calmar', '—'),
         'Win Rate': metrics.get('win_rate', '—'),
         'Total Return': metrics.get('total_return', '—'),
@@ -1770,15 +1770,15 @@ def build_backtest_path_body(data, path):
         caption += ' This path is not loaded, so these cards stay blank.'
     monthly = monthly_from_equity(curve)
     chart_title = f'Equity Curve — {series_name} vs benchmarks ($100K)'
-    dd_title = f'Drawdown — {series_name}'
+    dd_title = f'Daily drawdown — {series_name}'
 
     us_start, us_end, us_years = _series_span(curve)
     if us_start:
         us_span = f'{us_start} → {us_end}'
-        us_cagr_lbl = f'{us_years:.1f}-yr CAGR'
+        us_cagr_lbl = '252-day year count'
     else:
         us_span = 'equity-curve sample'
-        us_cagr_lbl = 'Sample CAGR'
+        us_cagr_lbl = '252-day year count'
 
     ann_ret = metrics.get('annual_return', '—')
     sharpe = metrics.get('sharpe', '—')
@@ -1814,7 +1814,7 @@ def build_backtest_path_body(data, path):
         dbc.Row([
             dbc.Col(mc('Annual Return', str(ann_ret), us_cagr_lbl, '#00d97e', '📈'), md=2),
             dbc.Col(mc('Sharpe Ratio', str(sharpe), 'Risk-adjusted', '#00d97e', '⚡'), md=2),
-            dbc.Col(mc('Max Drawdown', str(max_dd), 'Worst loss', '#00d97e', '🛡️'), md=2),
+            dbc.Col(mc('Max Drawdown', str(max_dd), 'Daily peak-to-trough', '#00d97e', '🛡️'), md=2),
             dbc.Col(mc('Sortino', str(sortino), 'Downside risk', '#3498db', '📊'), md=2),
             dbc.Col(mc('Calmar', str(calmar), 'Return/DD', '#3498db', '🎯'), md=2),
             dbc.Col(mc('Total Return', str(total_ret), us_span, '#f5a623', '💰'), md=2),
@@ -1828,14 +1828,20 @@ def build_backtest_path_body(data, path):
         html.Div([dcc.Graph(figure=make_drawdown(curve, title=dd_title), config={'displayModeBar': False})],
                  style={**CS, 'marginBottom': '16px'}),
         html.Div([dcc.Graph(figure=make_monthly_heatmap(monthly), config={'displayModeBar': False})],
-                 style={**CS, 'marginBottom': '16px'}),
+                 style={**CS, 'marginBottom': '4px'}),
+        html.Div(
+            'Monthly returns of the equity curve above. A calendar-year CAGR of that same total return '
+            'can differ by a few basis points from the 252-day CAGR on the cards. '
+            'Max drawdown on this page is the daily peak-to-trough. A month-end snapshot is shallower and is not shown.',
+            style={'color': '#6c757d', 'fontSize': '11px', 'marginBottom': '16px'},
+        ),
         html.Div([
             html.H6(f'Strategy Comparison — {us_span}', style={'color': '#c8c8d4', 'marginBottom': '10px'}),
         html.Div('The highlighted row is the path selected above. Cards, the equity curve, and the heatmap are that path’s series.',
                      style={'color': '#6c757d', 'fontSize': '11px', 'marginBottom': '8px'}),
             dash_table.DataTable(
                 columns=[{'name': c, 'id': c} for c in ['Strategy','Annual Return','Volatility','Sharpe',
-                          'Sortino','Max DD','Calmar','Win Rate','Total Return']],
+                          'Sortino','Max DD (daily)','Calmar','Win Rate','Total Return']],
                 data=table_data, sort_action='native',
                 style_header={'backgroundColor': '#16213e', 'color': '#c8c8d4', 'fontWeight': '600',
                               'border': '1px solid #2d2d44', 'fontFamily': 'Inter'},
@@ -2614,7 +2620,7 @@ def build_auditor_tab(data):
     comparison_table = [
         {'Metric': 'Annual Return', prod_col: std_ann, extra_col: lag_ann, 'Difference': get_diff_str(std_ann, lag_ann, True)},
         {'Metric': 'Sharpe Ratio', prod_col: std_sharpe, extra_col: lag_sharpe, 'Difference': get_diff_str(std_sharpe, lag_sharpe, False)},
-        {'Metric': 'Max Drawdown', prod_col: std_dd, extra_col: lag_dd, 'Difference': get_diff_str(std_dd, lag_dd, True)},
+        {'Metric': 'Max Drawdown (daily)', prod_col: std_dd, extra_col: lag_dd, 'Difference': get_diff_str(std_dd, lag_dd, True)},
         {'Metric': 'Total Return', prod_col: std_tot, extra_col: lag_tot, 'Difference': get_diff_str(std_tot, lag_tot, True)},
     ]
 
@@ -3212,7 +3218,7 @@ def build_cdn_portfolio_tab(data):
         # Metric cards
         dbc.Row([
             dbc.Col(mc('CAGR (CDN)',  metrics.get('CAGR', '—'),  cdn_card, '#00d97e', '📈'), md=2),
-            dbc.Col(mc('Max DD',      metrics.get('MaxDD','—'),   'Worst peak-to-trough', '#e74c3c', '📉'), md=2),
+            dbc.Col(mc('Max DD',      metrics.get('MaxDD','—'),   'Daily peak-to-trough', '#e74c3c', '📉'), md=2),
             dbc.Col(mc('Sharpe',      metrics.get('Sharpe','—'),  'Risk-adjusted return', '#3498db', '⚡'), md=2),
             dbc.Col(mc('Volatility',  metrics.get('Volatility','—'), 'Annual std dev', '#9b59b6', '〰️'), md=2),
             dbc.Col(mc('Win Rate',    metrics.get('WinRate','—'), 'Share of up days (daily)', '#f5a623', '🎯'), md=2),
@@ -3268,7 +3274,7 @@ def build_cdn_portfolio_tab(data):
                 columns=[{'name': c, 'id': c} for c in ['Metric', 'CDN Portfolio (CAD)', us_col]],
                 data=[
                     {'Metric': 'CAGR',        'CDN Portfolio (CAD)': metrics.get('CAGR','—'),       us_col: us_cagr},
-                    {'Metric': 'Max Drawdown', 'CDN Portfolio (CAD)': metrics.get('MaxDD','—'),      us_col: us_maxdd},
+                    {'Metric': 'Max Drawdown (daily)', 'CDN Portfolio (CAD)': metrics.get('MaxDD','—'),      us_col: us_maxdd},
                     {'Metric': 'Sharpe Ratio', 'CDN Portfolio (CAD)': metrics.get('Sharpe','—'),     us_col: us_sharpe},
                     {'Metric': 'Volatility',   'CDN Portfolio (CAD)': metrics.get('Volatility','—'), us_col: us_vol},
                     {'Metric': 'Calmar Ratio', 'CDN Portfolio (CAD)': metrics.get('Calmar','—'),     us_col: us_calmar},
@@ -3283,7 +3289,7 @@ def build_cdn_portfolio_tab(data):
                 style_data_conditional=[
                     {'if': {'row_index': 'odd'}, 'backgroundColor': '#16213e'},
                     {'if': {'filter_query': '{Metric} = "CAGR"'}, 'fontWeight': '700'},
-                    {'if': {'filter_query': '{Metric} = "Max Drawdown"'}, 'fontWeight': '700'},
+                    {'if': {'filter_query': '{Metric} = "Max Drawdown (daily)"'}, 'fontWeight': '700'},
                 ],
             ),
         ], style={**CS, 'marginBottom': '16px'}),

@@ -119,8 +119,21 @@ so that gate is idle. The Goldman-style throttle is **off**.
 The Backtest tab, the Portfolio CAGR card, and the CDN US column display path B
 from that run (`pack_lagged_metrics`, path `targeted`). Switching the Backtest
 radio changes the CAGR cards, the equity curve, and the monthly heatmap together.
-The heatmap is the month-end change of the curve on screen. It does not keep a
-production monthly file under another path’s cards. Targets remain 16% CAGR, max drawdown under 14.8%, Sharpe
+The heatmap is the month-end change of that path’s equity curve. Cards, curve,
+and heatmap are one series. A cross-path wiring bug (Auditor cards over a
+production heatmap) is what a radio must not do.
+
+On one series, two small gaps are expected and are not a second backtest:
+
+- CAGR uses a 252-day year (`len(days) / 252`). Annualizing the same total
+  return with a calendar year can move the CAGR by a few basis points.
+- Max drawdown on the page is the **daily** peak-to-trough. A month-end
+  snapshot of the same curve is shallower. The page does not print that
+  snapshot. The card, the drawdown chart, and the comparison column say daily.
+
+`python scripts/verify_consistency.py` compares the saved row, the equity
+curve, and the monthly file. `run_backtest.py` runs the same check and exits
+3 on a failure, so `/tasks/refresh` does not upload a split series. Targets remain 16% CAGR, max drawdown under 14.8%, Sharpe
 1.2. Whether the latest run meets them is the CSV’s job, not a sentence in this file.
 
 **CDN:** `scripts/run_cdn_backtest.py` has no extra-month run, so the CDN cards stay the
