@@ -296,7 +296,8 @@ and cannot reach the local TWS socket, the bridge is a **snapshot file**:
 | `src/backtester/daily_overlay.py` | Live notionals from the engine’s last-day overlay |
 | `scripts/ibkr_snapshot.py` | Read-only IBKR snapshot → `data/cache/ibkr_account.json` (Execution tab) |
 | `scripts/ibkr_rebalance.py` | Local paper/live rebalance to current regime weights (`--execute`) |
-| `run_backtest.py` | CLI 20-yr validation; regenerates result CSVs |
+| `run_backtest.py` | CLI 20-yr validation; regenerates result CSVs; exits 3 if the series check fails |
+| `scripts/verify_consistency.py` | Reported CAGR/total vs heatmap compound vs equity CAGR and daily max DD |
 | `run_dashboard.py` | Deployed Dash app (Cloud Run); calls the production method |
 | `config/regime_rules.py` | `REGIME_WEIGHTS`, risk limits, targets |
 | `optimize_strategy.py`, `extend_rp_mf.py` | Vectorized research harnesses (RP + MF prototypes) |
