@@ -1168,9 +1168,18 @@ def build_portfolio_tab(data):
     _lev_book = sorted({t for w in (all_rw or {}).values() for t in w}
                        & {'TQQQ', 'SOXL', 'SSO', 'GGLL', 'TECL', 'SPXL', 'UPRO'})
     _freq_rules = [
-        'Monthly rebalance (base weights, 1st trading day)',
-        f"Daily drawdown circuit breaker at −{_SP['dd_trigger']:.0%}",
-        f"Daily 200-MA trend hedge → {1 - _SP['bear_equity_frac']:.0%} to defense when SPY < 200-MA",
+        'Monthly sleeve from the targeted clock (CPI+1, GDP+4, prior month-end VIX and momentum). '
+        'A name with no price is dropped and the sleeve is renormalized. It is not held as cash.',
+        f"Daily 200-MA: yesterday's SPY vs yesterday's average. If below, keep "
+        f"{_SP['bear_equity_frac']:.0%} of the sleeve and move {1 - _SP['bear_equity_frac']:.0%} to defense.",
+        f"Daily vol target {_SP['target_vol']:.0%} (HAR-RV), scale clipped to "
+        f"[{_SP['vol_lo']:.2f}, {_SP['vol_hi']:.2f}] using yesterday's forecast.",
+        f"Daily portfolio drawdown breaker at −{_SP['dd_trigger']:.0%}, "
+        f"floor {_SP['dd_floor']:.0%}, span {_SP['dd_span']:.0%}. "
+        'This scale uses the strategy equity peak, not the monthly VIX>30 label.',
+        'Live orders use those three daily scales. CPI/GDP release days change the sleeve only. '
+        'The data refresh does not send orders. VIX 28→40 and the 20-day SPY-high cut '
+        'are only in the unused aggressive backtest.',
     ]
     _regime_rules = [
         'Growth rising: GDP > 1.5% OR SPY 12m mom > 5%',

@@ -76,6 +76,9 @@ class BacktestResult:
     num_trades: int = 0
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    # Last-day daily overlay from run_optimized_regime_backtest. Live orders
+    # read this so they use the same scales as the backtest. None for other methods.
+    overlay: Optional[dict] = None
 
 
 class BacktestEngine:
@@ -404,10 +407,9 @@ class BacktestEngine:
     #   Audit by Claude Opus 4.8 (2026-06-22) found the prior strategy   #
     #   scaled a MULTI-ASSET portfolio by SPY's volatility — wrong proxy #
     #   (it levered bond-heavy defensive books and de-risked exactly the #
-    #   assets you want in a crisis).  The trusted headline is the       #
-    #   targeted fix in CLAUDE.md (CPI+1 / GDP+4, no month-end look-ahead).#
-    #   The older ~14.85% row was that path with same-month VIX and       #
-    #   momentum stamped on month-start. Do not restore it.               #
+    #   assets you want in a crisis).  The trusted path is the targeted   #
+    #   clock plus the daily overlay in this function (200-MA, portfolio  #
+    #   vol target, portfolio drawdown). Do not quote a CAGR from here.   #
     #                                                                     #
     #   Design (all signals lagged 1 day — no look-ahead):               #
     #     1. Monthly regime base weights, renormalised to ETFs that      #
@@ -641,9 +643,11 @@ class BacktestEngine:
         arr = r_vt.values
         out = np.empty_like(arr)
         eq = peak = 1.0
+        last_dd_scale = 1.0
         for i in range(len(arr)):
             dd = eq / peak - 1.0
             sc = max(dd_floor, 1.0 - (abs(dd) - dd_trigger) / dd_span) if dd < -dd_trigger else 1.0
+            last_dd_scale = sc
             out[i] = arr[i] * sc
             eq *= (1 + out[i])
             peak = max(peak, eq)
@@ -651,7 +655,28 @@ class BacktestEngine:
 
         # Count monthly base-weight changes as "trades"
         regime_changes = int((W_base.resample('MS').first().diff().abs().sum(axis=1) > 1e-9).sum())
-        return self._compute_result(port_returns, name, regime_changes)
+        result = self._compute_result(port_returns, name, regime_changes)
+        # Same object the live rebalance reads. Recording it does not change returns.
+        def _nz(row):
+            return {t: float(w) for t, w in row.items() if w > 1e-8}
+        result.overlay = {
+            "policy": "optimized_daily",
+            "as_of": str(pd.Timestamp(port_returns.index[-1]).date()) if len(port_returns) else None,
+            "trend_risk_on": bool(float(trend_ok.iloc[-1]) >= 0.5) if len(trend_ok) else True,
+            "vol_scale": float(scale.iloc[-1]) if len(scale) else 1.0,
+            "dd_scale": float(last_dd_scale),
+            "bear_equity_frac": float(bear_equity_frac),
+            "dd_trigger": float(dd_trigger),
+            "dd_floor": float(dd_floor),
+            "dd_span": float(dd_span),
+            "target_vol": float(target_vol),
+            "vol_lo": float(vol_lo),
+            "vol_hi": float(vol_hi),
+            "use_har_vol": bool(use_har_vol),
+            "base_weights": _nz(W_base.iloc[-1]) if len(W_base) else {},
+            "defense_weights": _nz(W_def.iloc[-1]) if len(W_def) else {},
+        }
+        return result
 
     def run_protected_regime_backtest(
         self,

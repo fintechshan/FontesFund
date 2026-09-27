@@ -11,28 +11,17 @@ They describe the page **before** the label and limit fixes in this branch. A sh
 checklist of those fixes is at the end of this file. The findings tables are the
 before-state and are left as the audit record.
 
-**Honesty fix (2026-09-27, this branch — not yet what the live Cloud Run page shows):**
-the trusted path is the **targeted fix**. CPI stays +1 month and GDP stays +4 months.
-The month-start rebalance no longer sees that same month's average VIX or month-end
-SPY close. On a fresh sample **2005-01-04 → 2026-09-25** (mean DFF over the window
-1.87%, not the full history):
+**Honesty fix (2026-09-27, this branch — not what the live Cloud Run page shows):**
+the default clock is path B (CPI+1, GDP+4, VIX and SPY momentum lagged one month).
+The backtest number for that path includes the daily overlay in
+`run_optimized_regime_backtest` (200-MA, portfolio vol target, portfolio drawdown).
+Live orders read that same overlay. Do not freeze a CAGR from this note; read
+`data/backtest_results/lag_honesty.csv` and `coverage_windows.csv` from
+`python scripts/ab_vintage.py`. AIPO and DBMF are missing for most of the long
+window; the engine renormalizes, it does not hold the gap as cash.
 
-| Path | CAGR | MaxDD | Sharpe | Role |
-|---|--:|--:|--:|---|
-| Targeted fix | **13.43%** | **14.13%** | **0.93** | Default, `20yr_comparison.csv`, heatmap |
-| Old production (month-end look-ahead) | 14.81% | 13.90% | 1.03 | Comparison. The published 14.85% was this path through 2026-09-21 |
-| Unlagged | 15.70% | 14.58% | 1.11 | Diagnostic |
-| Auditor extra month | 12.17% | 14.10% | 0.83 | Overly conservative. Not the default |
-| First-release vintage (Philly Fed RTDSM) | 12.65% | 15.23% | 0.87 | Comparison. Lower is expected |
-
-A prior write-up estimated the targeted fix near **13.36% / 0.93 / 14.13%**. The re-run
-is 13.43% CAGR with the same Sharpe and MaxDD. Do not hardcode 13.36%. The monthly
-heatmap uses the selected path's return series. Live trades go out on CPI and GDP
-advance release days and when VIX or momentum flips. The daily refresh does not place
-trades and does not wait an extra Auditor month.
-
-The tables below are the **live site before this fix**. They still describe 14.85% and
-12.21% as captured on 2026-09-27. This branch does not deploy Cloud Run.
+The tables below are the **live site before this fix**. They describe the page that
+was captured on 2026-09-27. This branch does not deploy Cloud Run.
 
 ---
 

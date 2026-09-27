@@ -2,19 +2,16 @@
 
 A Python-based ETF investment application that detects macroeconomic regimes, constructs optimized portfolios, backtests strategies, and executes trades via Interactive Brokers.
 
-> **📌 Current strategy & results live in [`CLAUDE.md`](CLAUDE.md).** Production strategy =
-> `run_optimized_regime_backtest` (risk-parity + portfolio-level vol targeting).
-> **7-ETF v7** (QQQ, SOXX, SPY, IEF, GLD, DBMF, AIPO), sample **2005-01-04 → 2026-09-25**.
-> **Dashboard default (Backtest tab, Portfolio CAGR card): targeted fix** — CPI+1 month /
-> GDP+4 months, and no month-end look-ahead in VIX or SPY momentum:
-> **13.43% CAGR / 14.13% MaxDD / Sharpe 0.93**.
-> The old **14.85%** headline (this sample: **14.81% / 13.90% / 1.03**) kept same-month
-> market data and is a labeled comparison, not the default.
-> The extra Auditor month (**12.17% / 14.10% / 0.83**) is overly conservative and is not the default.
-> First-release vintage (Philadelphia Fed RTDSM): **12.65% / 15.23% / 0.87**.
-> That production path beats SPY (10.95% / 0.48) and 60/40 (8.15% / 0.55) on the same file.
-> Unlagged (publication lag off) is **15.70%** and stays a diagnostic.
-> The older 8-ETF v5.1 figure (14.52% / 14.78% / 0.97) is historical. [`RECOMMENDATION.md`](RECOMMENDATION.md) is the 2026-06 audit, not the current sleeve.
+> **📌 Current strategy & method live in [`CLAUDE.md`](CLAUDE.md).** Do not copy a CAGR
+> out of an old README. Production is `run_optimized_regime_backtest`: the targeted
+> clock (CPI+1 month, GDP+4 months, prior-month VIX and momentum) **plus** the daily
+> overlay (200-day trend, portfolio vol target, portfolio drawdown). Live orders use
+> that same overlay. **7-ETF v7** (QQQ, SOXX, SPY, IEF, GLD, DBMF, AIPO). A name with
+> no history is dropped and the sleeve is renormalized, not held as cash. DBMF and
+> AIPO are missing for most of a 20-year window; see `coverage_windows.csv`.
+> Dashboard default is that targeted path, computed each run. The month-end look-ahead
+> path, the unlagged diagnostic, the extra Auditor month, and the first-release vintage
+> are labeled radios. [`RECOMMENDATION.md`](RECOMMENDATION.md) is the 2026-06 audit, not the current sleeve.
 
 ## Architecture
 
@@ -83,48 +80,42 @@ python scripts/run_backtest.py
 - **Initial Capital**: $100,000
 - **Monthly Contribution**: $10,000 (paused if 3-month return < -5%)
 - **Rebalancing**: Monthly base weights; daily trend/vol/DD overlays
-- **Validated targets**: CAGR ≥ 16%, Max Drawdown < 14.8%, Sharpe ≥ 1.2
-  (targeted fix, CPI+1mo / GDP+4mo, no month-end look-ahead: 13.43% / 14.13% / 0.93 —
-  MaxDD met; CAGR and Sharpe short of 16 / 1.2. Dashboard default is that path.)
-- **Live rebalance:** trade on CPI and GDP advance release days, and when VIX or
-  momentum flips under the existing rules. The daily data refresh does not place
-  trades. Do not wait an extra Auditor month.
+- **Validated targets**: CAGR ≥ 16%, Max Drawdown < 14.8%, Sharpe ≥ 1.2.
+  The latest run’s distance to those targets is `20yr_comparison.csv`, not a number
+  frozen here. Dashboard default is the targeted path (B), including the daily overlay.
+- **Live rebalance:** same daily overlay as the backtest (200-MA, vol scale, portfolio
+  drawdown). CPI and GDP advance releases change the monthly sleeve only. The daily
+  data refresh does not place trades. Do not wait an extra Auditor month. The VIX
+  28→40 cut is a different, unused backtest.
 - **Production strategy**: `run_optimized_regime_backtest` — risk-parity sleeve
   weighting + portfolio-level vol targeting + 200-MA trend hedge + DD breaker.
   See [`CLAUDE.md`](CLAUDE.md) for the exact config and rationale.
 - **Vol-estimator note** (`ab_vol.py` A/B): EWMA and HAR-RV do **not** beat the simple
   21-day realised vol on Sharpe (all ≈1.03); however, the OLS-based walk-forward HAR-RV vol overlay (`use_har_vol=True`) runs hotter/better under tuned overlays to clear the Max Drawdown target.
 
-## Backtest Results (2005-01-04 → 2026-09-25)
+## Backtest results
 
-Net of 5 bps transaction cost + 1% leverage financing. Regenerate with `python run_backtest.py`.
-The production row matches `data/backtest_results/20yr_comparison.csv`. The other clocks are in
-`data/backtest_results/lag_honesty.csv` and on the Backtest radios. The heatmap uses the
-monthly returns of whichever radio is selected.
+Net of 5 bp turnover and 1% financing on gross exposure above 1. Regenerate; do not
+treat an old table in this file as the result.
 
-Macro signals use CPI +1 month and GDP +4 months. VIX and 12-month momentum use only the
-prior month-end. That is the production path and the dashboard default. Do not shorten the
-publication lags. The daily scheduler refresh does not place trades; rebalance on CPI and
-GDP advance release days and when VIX or momentum flips.
+```bash
+python run_backtest.py          # path B → 20yr_comparison.csv
+python scripts/ab_vintage.py    # A / B / C, common inception, coverage, release lags
+```
 
-| Strategy | CAGR | Vol | Sharpe | Max DD | Calmar | Total Return |
-|---|--:|--:|--:|--:|--:|--:|
-| **Targeted fix (default)** | **13.43%** | 12.41% | **0.93** | **14.13%** | 0.95 | 1,438% |
-| Old production (month-end look-ahead) | 14.81% | 12.60% | 1.03 | 13.90% | 1.07 | 1,901% |
-| First-release vintage | 12.65% | 12.35% | 0.87 | 15.23% | 0.83 | 1,225% |
-| Auditor extra month (overly conservative) | 12.17% | 12.40% | 0.83 | 14.10% | 0.86 | 1,108% |
-| Unlagged diagnostic | 15.70% | 12.52% | 1.11 | 14.58% | 1.08 | 2,266% |
-| 60/40 Benchmark | 8.15% | 11.53% | 0.55 | 34.70% | 0.23 | 447% |
-| S&P 500 (SPY) | 10.95% | 18.89% | 0.48 | 55.19% | 0.20 | 853% |
-| All Weather | 6.72% | 8.25% | 0.59 | 23.37% | 0.29 | 282% |
+Path B is the dashboard default. The heatmap uses the monthly returns of the radio
+you select. CPI stays +1 month and GDP stays +4 months. VIX and 12-month momentum
+use only the prior month. That market lag is not a second CPI/GDP lag.
 
-> The 16% / 14.8% / 1.2 targets are **not** fully met on the targeted fix. An earlier 15.85% / 1.21 figure
-> used CPI/GDP before their release dates. The later **14.85%** figure still used same-month VIX and
-> momentum (14.81% on this sample). The number the Backtest tab shows first is the targeted fix
-> **13.43% / 0.93 / 14.13%**. A prior estimate of ~13.36% was re-run; do not hardcode it.
-> First-release vintage is lower (**12.65%**). That is an honest result, not a bug to tune away.
-> The 8-ETF v5.1 result (14.52% / 0.97 / 14.78%, data through 2026-06-26) is historical.
-> See [`CLAUDE.md`](CLAUDE.md).
+The full-sample row drops ETFs that have not listed yet and renormalizes. Read
+`coverage_windows.csv` before treating that row as what the live book held.
+`lag_honesty.csv` also has path B from the first day every live sleeve name exists.
+
+With `FRED_API_KEY`, `ab_vintage.py` adds a CPIAUCNS (not seasonally adjusted)
+first-release row. Without a key that row is skipped. Cached YoY series go to
+`data/cache/vintage_*.csv`.
+
+See [`CLAUDE.md`](CLAUDE.md). The 8-ETF v5.1 result is historical.
 
 ## Portfolio / ETF Universe
 

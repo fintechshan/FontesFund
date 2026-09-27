@@ -6,6 +6,7 @@ from unittest import mock
 
 import pandas as pd
 
+from src.backtester.daily_overlay import AGGRESSIVE_ONLY, dd_scale, weights_from_overlay
 from src.backtester.regime_clock import (
     CPI_RELEASE_LAG_M,
     GDP_RELEASE_LAG_M,
@@ -18,8 +19,10 @@ from src.backtester.regime_clock import (
     market_signals,
     philly_obs_date,
     philly_vintage_stamp,
+    publication_lag_days,
     publication_lagged_macro,
     releases_from_philly_sheet,
+    summarize_lags,
     vintage_table_payload,
     yoy_on_release_dates,
 )
@@ -213,6 +216,72 @@ class PhillyVintageTests(unittest.TestCase):
             path = Path(tmp) / "vintage_release_yoy.csv"
             path.write_text("release_date,cpi_yoy,gdp_yoy\n2004-01-31,3.7,2.1\n")
             self.assertIsNone(vintage_table_payload(path))
+
+
+class OverlayAndLagTests(unittest.TestCase):
+    def test_month_end_label_is_shift1_of_the_month_start_stamp(self):
+        idx = pd.bdate_range("2019-01-01", "2020-06-30")
+        vix = pd.Series(15.0, index=idx)
+        vix.loc["2020-02-01":"2020-02-28"] = 80.0
+        month_start, _ = market_signals(vix, pd.Series(dtype=float), same_month=True)
+        month_end, _ = market_signals(vix, pd.Series(dtype=float), same_month=False)
+        shifted = month_start.shift(1)
+        for day in pd.date_range("2019-06-01", "2020-06-01", freq="MS"):
+            left = shifted.asof(day)
+            right = month_end.asof(day)
+            if pd.notna(left) and pd.notna(right):
+                self.assertAlmostEqual(float(left), float(right), places=6)
+
+    def test_publication_lag_is_not_shifted_again_with_the_market(self):
+        macro, price = _calm_world()
+        _, _, info = classify_regimes(macro, price, mode=MODE_TARGETED)
+        self.assertFalse(info["same_month_market"])
+        self.assertTrue(info["publication_lag"])
+        self.assertEqual(info["cpi_lag_months"], 1)
+        self.assertEqual(info["gdp_lag_months"], 4)
+
+    def test_drawdown_scale_matches_the_engine_formula(self):
+        self.assertEqual(dd_scale(-0.05, 0.07, 0.10, 0.10), 1.0)
+        self.assertAlmostEqual(dd_scale(-0.12, 0.07, 0.10, 0.10), 0.50)
+        self.assertEqual(dd_scale(-0.30, 0.07, 0.10, 0.10), 0.10)
+
+    def test_live_weights_apply_trend_blend_and_both_scales(self):
+        overlay = {
+            "policy": "optimized_daily",
+            "trend_risk_on": False,
+            "bear_equity_frac": 0.70,
+            "vol_scale": 1.20,
+            "dd_scale": 0.50,
+            "base_weights": {"SPY": 1.0},
+            "defense_weights": {"IEF": 1.0},
+        }
+        weights = weights_from_overlay(overlay)
+        self.assertAlmostEqual(weights["SPY"], 0.42)
+        self.assertAlmostEqual(weights["IEF"], 0.18)
+        self.assertAlmostEqual(sum(weights.values()), 0.60)
+
+    def test_aggressive_vix_band_is_not_the_production_policy(self):
+        from config.regime_rules import STRATEGY_PARAMS
+        self.assertNotIn(28, STRATEGY_PARAMS.values())
+        self.assertNotIn(40, STRATEGY_PARAMS.values())
+        self.assertEqual(AGGRESSIVE_ONLY["vix_full_exposure"], 28.0)
+        self.assertEqual(AGGRESSIVE_ONLY["vix_zero_equity"], 40.0)
+        self.assertEqual(AGGRESSIVE_ONLY["spy_dd_window"], 20)
+
+    def test_publication_lag_percentiles(self):
+        releases = pd.DataFrame([
+            # Opening snapshot: already-published history, not a measured lag.
+            {"date": "2020-01-01", "realtime_start": "2020-02-15", "value": 1.0},
+            {"date": "2020-03-01", "realtime_start": "2020-04-15", "value": 1.0},
+            {"date": "2020-04-01", "realtime_start": "2020-05-12", "value": 1.0},
+        ])
+        days = publication_lag_days(releases, quarterly=False)
+        self.assertNotIn(pd.Timestamp("2020-01-01"), days.index)
+        self.assertEqual(int(days.loc[pd.Timestamp("2020-03-01")]), 15)
+        self.assertEqual(int(days.loc[pd.Timestamp("2020-04-01")]), 12)
+        summary = summarize_lags(days)
+        self.assertEqual(summary["n"], 2)
+        self.assertAlmostEqual(summary["median"], 13.5)
 
 
 if __name__ == "__main__":

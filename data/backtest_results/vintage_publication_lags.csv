@@ -1,0 +1,3 @@
+series,source,n,p10,median,p90
+PCPI,philadelphia_fed_rtdsm_midmonth,344,15.0,15.0,15.0
+ROUTPUT,philadelphia_fed_rtdsm_midmonth,243,45.0,46.0,46.0

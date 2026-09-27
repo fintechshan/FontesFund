@@ -58,6 +58,9 @@ GDP_YOY_SERIES = "A191RL1Q225SBEA"
 # First-release levels. YoY is computed from the vintage, not from this id's latest print.
 GDP_LEVEL_SERIES = "GDPC1"
 CPI_LEVEL_SERIES = "CPIAUCSL"
+# Not seasonally adjusted CPI. Prefer this for a first-release YoY when ALFRED
+# is available. The Philadelphia Fed PCPI file tracks the seasonally adjusted index.
+CPI_NSA_SERIES = "CPIAUCNS"
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 VINTAGE_CACHE = _PROJECT_ROOT / "data" / "cache" / "vintage_clock.pkl"
@@ -94,7 +97,10 @@ def market_signals(vix: pd.Series, spy: pd.Series, same_month: bool) -> tuple[pd
     ``same_month=True`` reproduces the old bug: the full calendar month is
     labeled on month-start, so a decision on the 1st sees the month-end.
     ``same_month=False`` labels those statistics on month-end. ``asof`` at
-    the next month-start is the first time they are knowable.
+    the next month-start is the first time they are knowable. That is the
+    same information as labeling the month on month-start and then
+    ``shift(1)``. The shift applies only to these two series. CPI and GDP
+    keep their own +1 / +4 publication lag and are not shifted again.
     """
     vix_m = pd.Series(dtype=float)
     spy_m = pd.Series(dtype=float)
@@ -405,6 +411,54 @@ def fetch_philadelphia_vintage(
     return payload
 
 
+def _period_end(obs: pd.Timestamp, quarterly: bool) -> pd.Timestamp:
+    obs = pd.Timestamp(obs)
+    if quarterly:
+        return obs + pd.offsets.QuarterEnd(0)
+    return obs + pd.offsets.MonthEnd(0)
+
+
+def publication_lag_days(all_releases: pd.DataFrame, quarterly: bool) -> pd.Series:
+    """Days from the end of the observation period to its first release.
+
+    ``all_releases`` has ``date`` (period start) and ``realtime_start``.
+    Observations that already exist in the archive's first snapshot are
+    left-censored history, not a measured release, and are dropped.
+    """
+    if all_releases is None or len(all_releases) == 0:
+        return pd.Series(dtype=float)
+    df = all_releases.dropna(subset=["value"]).copy()
+    df["date"] = pd.to_datetime(df["date"])
+    df["realtime_start"] = pd.to_datetime(df["realtime_start"])
+    first = df.groupby("date")["realtime_start"].min()
+    if len(first) == 0:
+        return pd.Series(dtype=float)
+    opening = first.min()
+    first = first[first > opening]
+    lags = []
+    for obs, released in first.items():
+        end = _period_end(pd.Timestamp(obs), quarterly)
+        lags.append((pd.Timestamp(obs), (pd.Timestamp(released) - end).days))
+    if not lags:
+        return pd.Series(dtype=float)
+    out = pd.Series({obs: days for obs, days in lags}).sort_index()
+    out.index = pd.to_datetime(out.index)
+    return out
+
+
+def summarize_lags(days: pd.Series) -> dict:
+    """p10 / median / p90 of a publication-lag sample, in days."""
+    clean = pd.to_numeric(days, errors="coerce").dropna()
+    if len(clean) == 0:
+        return {"n": 0, "p10": None, "median": None, "p90": None}
+    return {
+        "n": int(len(clean)),
+        "p10": float(clean.quantile(0.10)),
+        "median": float(clean.quantile(0.50)),
+        "p90": float(clean.quantile(0.90)),
+    }
+
+
 def fetch_fredapi_vintage(api_key: str) -> dict:
     """First-release clock via fredapi.
 
@@ -424,11 +478,24 @@ def fetch_fredapi_vintage(api_key: str) -> dict:
     # of its filter. The full history still comes from the cached all-releases
     # frame (as-of on every release date would re-download the whole archive).
     _ = fred.get_series_as_of_date(CPI_LEVEL_SERIES, "2020-02-14")
-    return {
+    payload = {
         "cpi_yoy_release": yoy_on_release_dates(cpi_all, 12, cpi_first),
         "gdp_yoy_release": yoy_on_release_dates(gdp_all, 4, gdp_first),
+        "cpi_release_lag_days": publication_lag_days(cpi_all, quarterly=False),
+        "gdp_release_lag_days": publication_lag_days(gdp_all, quarterly=True),
         "source": "fredapi_first_release",
+        "cpi_series": CPI_LEVEL_SERIES,
     }
+    try:
+        nsa_first = fred.get_series_first_release(CPI_NSA_SERIES)
+        nsa_all = fred.get_series_all_releases(CPI_NSA_SERIES)
+        payload["cpi_nsa_yoy_release"] = yoy_on_release_dates(nsa_all, 12, nsa_first)
+        payload["cpi_nsa_release_lag_days"] = publication_lag_days(nsa_all, quarterly=False)
+        payload["cpi_nsa_series"] = CPI_NSA_SERIES
+    except Exception as exc:
+        logger.warning("CPIAUCNS vintage unavailable: %s", exc)
+        payload["cpi_nsa_error"] = str(exc)
+    return payload
 
 
 def fetch_public_vintage(directory: Path = ALFRED_DIR) -> dict:
@@ -563,9 +630,25 @@ def load_realtime_vintage(
         logger.warning("Could not write vintage cache: %s", exc)
     try:
         write_vintage_table(payload)
+        _write_vintage_cache(payload)
     except Exception as exc:
         logger.warning("Could not write vintage release table: %s", exc)
     return payload
+
+
+def _write_vintage_cache(payload: dict) -> None:
+    """Point-in-time YoY files under data/cache (gitignored)."""
+    cache = _PROJECT_ROOT / "data" / "cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    series = {
+        "vintage_cpi_yoy.csv": payload.get("cpi_yoy_release"),
+        "vintage_gdp_yoy.csv": payload.get("gdp_yoy_release"),
+        "vintage_cpi_nsa_yoy.csv": payload.get("cpi_nsa_yoy_release"),
+    }
+    for name, values in series.items():
+        if values is None or len(values) == 0:
+            continue
+        values.to_csv(cache / name, header=True)
 
 
 def _decision_dates(price_data: pd.DataFrame, vix: pd.Series) -> pd.DatetimeIndex:
