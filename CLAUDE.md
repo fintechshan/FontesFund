@@ -4,7 +4,7 @@
 > Gemini, etc.):** this file is the single source of truth for the *current* strategy,
 > results, and deployment. It supersedes any older numbers in `README.md` or in code
 > comments. Read this before changing the backtester or the strategy. Last updated
-> **2026-09-27** (Backtest tab defaults to Auditor Lagged; production CSV stays CPI+1/GDP+4).
+> **2026-09-27** (targeted fix is the default: CPI+1 / GDP+4, no month-end look-ahead).
 
 ---
 
@@ -14,27 +14,49 @@
 [`src/backtester/engine.py`](src/backtester/engine.py). It is the *single* production
 strategy, driven by [`run_backtest.py`](run_backtest.py) (CLI/validation) and
 [`run_dashboard.py`](run_dashboard.py) (deployed app). Both call it with identical params.
+The regime clock is [`src/backtester/regime_clock.py`](src/backtester/regime_clock.py),
+mode `targeted`.
 
-**Sample 2005-01-04 → 2026-09-21, net of 5 bps tx + 1% leverage financing.**
-Three published views of the same engine. Weights, `REGIME_WEIGHTS`, and live allocation
-stay on the production path. The dashboard **display default** is the extra-month view.
+**Sample 2005-01-04 → 2026-09-25, net of 5 bps tx + 1% leverage financing.**
+Risk-free rate is the mean of FRED DFF over that price window (**1.87%**), not the
+full history back to the 1950s. Weights, `REGIME_WEIGHTS`, and live allocation stay
+on the targeted path. The dashboard **display default** is the targeted fix.
+
+The bug that produced the old **14.85%** headline was not the CPI+1 / GDP+4 offset.
+Those offsets stay. The bug was stamping the full calendar month's average VIX and
+the month-end SPY close onto month-start, so a rebalance on the 1st saw the rest of
+that month. On this fresh Yahoo sample that old path prints **14.81%** (the published
+14.85% was the same path through 2026-09-21). Removing only that stamp, and keeping
+CPI+1 / GDP+4, is the targeted fix. An earlier note estimated ~13.36% CAGR; the
+re-run below is **13.43%**. Do not hardcode the estimate.
 
 | View | What it is | Where it shows | CAGR | MaxDD | Sharpe |
 |---|---|---|--:|--:|--:|
-| **Auditor Lagged (dashboard default)** | Production regime, then one extra `regime.shift(1)` | Backtest tab on first load, Portfolio CAGR card, CDN tab US column | **12.21%** | **14.10%** | **0.83** |
-| **Production (CPI+1mo / GDP+4mo)** | Publication lag on. Live allocation and `run_backtest.py` | Backtest tab control; `20yr_comparison.csv` | **14.85%** | **13.90%** | **1.03** |
-| **Unlagged (look-ahead)** | `classify_regimes(apply_lag=False)` | Auditor diagnostic only | **15.74%** | 14.58% | 1.11 |
+| **Targeted fix (default)** | CPI+1 / GDP+4. VIX and SPY momentum dated on the month-end they describe, so the next month-start is the first time they are knowable | Backtest tab on first load, Portfolio CAGR card, CDN tab US column, `20yr_comparison.csv` | **13.43%** | **14.13%** | **0.93** |
+| **Old production (month-end look-ahead)** | Same CPI+1 / GDP+4, but same-month VIX and momentum | Backtest radio, not the default | **14.81%** | **13.90%** | **1.03** |
+| **Unlagged diagnostic** | Publication lag off, plus same-month market data | Backtest radio | **15.70%** | 14.58% | 1.11 |
+| **Auditor extra month** | Old month-stamped regime, then one extra `regime.shift(1)` | Backtest radio. Overly conservative | **12.17%** | **14.10%** | **0.83** |
+| **First-release vintage** | Philadelphia Fed RTDSM first prints of CPI and real GDP, dated on the mid-month vintage. No extra +1/+4. Market rule matches targeted | Backtest radio when the vintage table loads | **12.65%** | **15.23%** | **0.87** |
 
-Auditor Lagged vol **12.40%**, total return **1,113.59%** (live Auditor column; fresh
-recompute total 1,113.48%). Source for that row: the extra-month startup run, recorded in
-`out/LIVE_APP_ACCURACY_AUDIT.md`. The UI prints the live run. Those figures are not a new
-backtest and are not in `20yr_comparison.csv`. Sortino and Calmar for the extra-month path
-are computed in the app from that same run.
+Targeted-fix detail: vol **12.41%**, Sortino **1.25**, Calmar **0.95**, total return
+**1,438.39%**. Twelve of 256 months (4.7%) differ from the month-end look-ahead path.
+Vintage detail: vol **12.35%**, Sortino **1.15**, Calmar **0.83**, total return
+**1,225.00%**, source `philadelphia_fed_rtdsm` (not a fallback). Side-by-side file:
+`data/backtest_results/lag_honesty.csv`.
 
-The extra month is an **execution / timing sensitivity**. It is a stricter publication-aware
-path. It is not evidence that production used unpublished data. Turning the publication lag
-off is the look-ahead case (**15.74%**). Do not drop the CPI+1mo / GDP+4mo lag to "restore"
-a higher CAGR, and do not replace the production CSV with the extra-month series.
+The vintage path is lower than the targeted fix. That is the expected cost of using
+the first print and the real release date instead of a revised final shoved by a
+fixed offset. It is a comparison, not a new weight target. Do not shorten CPI+1 or
+GDP+4 to chase the old 14.81% / 14.85% number, and do not put the extra Auditor month
+back as the default. Turning the publication lag off is the unlagged diagnostic
+(**15.70%**), which is look-ahead.
+
+`fredapi` `get_series_first_release('GDPC1')`, `get_series_first_release('CPIAUCSL')`,
+`get_series_all_releases`, and `get_series_as_of_date` are the refresh path when
+`FRED_API_KEY` is set (`USE_REALTIME_VINTAGE=1`). With no key, the same flag downloads
+Philadelphia Fed RTDSM workbooks `pcpiMvMd.xlsx` and `routputMvQd.xlsx`. A failed
+refresh keeps `data/backtest_results/vintage_release_yoy.csv`. A one-row or collapsed
+"latest print" file is rejected. Unit tests do not call the network.
 
 **7-ETF portfolio (v7):** QQQ, SOXX, SPY, IEF, GLD, DBMF, AIPO.
 Weights live in `REGIME_WEIGHTS`. Goldilocks QQQ **30%** is intentional AI-trend
@@ -44,27 +66,27 @@ both the 30% QQQ sleeve and the 35% IEF sleeve are inside the cap. VIX above `RE
 (**30**) forces deflation. `vix_gate_level` 20 only zeroes TQQQ/SOXL; v7 holds neither,
 so that gate is idle. The Goldman-style throttle is **off**.
 
-**Production path** (engine, live weights, CSV — the Backtest alternate, not the first number):
+**Production path** (engine, live weights, CSV, and the Backtest default — one series):
 
 | Metric | Result | Target | Status |
 |---|--:|--:|:--:|
-| CAGR | **14.85%** | 16.0% | ❌ |
-| Max Drawdown | **13.90%** | < 14.8% | ✅ |
-| Sharpe | **1.03** | 1.2 | ❌ |
-| Volatility | 12.60% | ~11.8% | — |
-| Sortino | 1.39 | — | — |
-| Calmar | 1.07 | — | — |
-| Total Return | 1,909% | — | — |
+| CAGR | **13.43%** | 16.0% | ❌ |
+| Max Drawdown | **14.13%** | < 14.8% | ✅ |
+| Sharpe | **0.93** | 1.2 | ❌ |
+| Volatility | 12.41% | ~11.8% | — |
+| Sortino | 1.25 | — | — |
+| Calmar | 0.95 | — | — |
+| Total Return | 1,438% | — | — |
 
 Source: `data/backtest_results/20yr_comparison.csv`, row `Optimized Regime Strategy`.
-Same file: SPY 10.97% / Sharpe 0.48 / 55.19% DD; 60/40 8.19% / 0.55 / 34.70% DD.
-Regenerate the production CSV with `python run_backtest.py`. The Backtest tab default
-is not that CSV row; it is the extra-month series packed in `lagged_metrics` at dashboard
-startup (`pack_lagged_metrics`).
+Same file, same sample: SPY 10.95% / Sharpe 0.48 / 55.19% DD; 60/40 8.15% / 0.55 / 34.70% DD.
+Regenerate with `python run_backtest.py`. The Backtest tab default is this row
+(`pack_lagged_metrics`, path `targeted`). The monthly heatmap uses that same path's
+monthly returns. It must not fall back to a different clock's file.
 
 **CDN:** `scripts/run_cdn_backtest.py` has no extra-month run, so the CDN cards stay the
-TSX production book. The US column and the bold US curve on that tab follow Auditor Lagged
-when the US series is loaded. US production remains the dotted curve and the Backtest control.
+TSX production book. The US column and the bold US curve on that tab follow the targeted
+fix when the US series is loaded. The dotted curve is the old month-end look-ahead path.
 
 > **Historical — 8-ETF v5.1 (do not quote as current).** Sleeve was QQQ, SOXX, SPY,
 > SPYI, TLT, GLD, DBMF, URA. Honest lagged headline through 2026-06-26 was
@@ -81,7 +103,9 @@ bear_equity_frac=0.70, dd_trigger=0.07,  # overlay knobs; sleeve is v7
 transaction_cost_bps=5.0, borrow_spread=0.01,
 vix_data=vix, vix_gate_level=20.0,  # TQQQ/SOXL only; idle on v7
 vol_method='realized', use_har_vol=True,
-# publication lag: CPI +1mo, GDP +4mo (classify_regimes apply_lag=True)
+# publication lag: CPI +1mo, GDP +4mo (do not shorten)
+# market timing: month-end VIX and SPY momentum, visible next month-start
+# (mode='targeted'). Do not stamp those on month-start.
 # regime VIX override: REGIME_VIX_DEFENSIVE = 30
 # position cap: MAX_REGIME_WEIGHT (currently 0.35)
 ```
@@ -89,8 +113,9 @@ vol_method='realized', use_har_vol=True,
 ## 2. What changed and WHY (do not revert)
 
 The CAGR and Sharpe figures in this section are the 2026-06 overlay history. The production
-CSV headline is §1 (v7, 14.85% / 13.90% / 1.03). The dashboard default headline is the
-Auditor Lagged row in the same section (12.21% / 14.10% / 0.83).
+CSV headline is §1 (v7 targeted fix, 13.43% / 14.13% / 0.93). The old 14.85% / 13.90% / 1.03
+row is the month-end look-ahead path (14.81% on the 2026-09-25 sample). The Auditor extra
+month (12.17% on this sample; previously quoted 12.21%) is a comparison radio, not the default.
 
 This replaced the old `run_vol_targeted_regime_backtest` (13.18% / 19.58% / 0.75). Two
 root causes were fixed — **do not reintroduce them:**
@@ -146,6 +171,12 @@ monthly rebalance.
     `download_ibkr()`), so new snapshots appear on the live site without a redeploy.
   - Manual refresh of results is still `python run_backtest.py` (~30s) + deploy, or just
     hit `/tasks/refresh`.
+- **Live rebalance:** trade on CPI and GDP **advance release days**, and when VIX or
+  momentum flips under the existing rules (VIX above 30 forces deflation; the daily
+  trend hedge and drawdown breaker still run inside the book). The daily scheduler
+  refresh updates caches and the dashboard. It does not place trades. Do not wait an
+  extra Auditor month after the release. The live weight call is
+  `classify_regimes(..., mode='targeted')`.
 - **Reproduce:** `python run_backtest.py` (full engine, ~30s). Fast parameter
   exploration: `python optimize_strategy.py` and `python extend_rp_mf.py` (vectorized
   harnesses, <2s; same data/regime logic as production). Production-faithful variant
@@ -208,6 +239,8 @@ and cannot reach the local TWS socket, the bridge is a **snapshot file**:
 | Path | Role |
 |---|---|
 | `src/backtester/engine.py` | `run_optimized_regime_backtest` = **production strategy** |
+| `src/backtester/regime_clock.py` | Targeted clock (default), look-ahead / unlagged / auditor / first-release vintage |
+| `scripts/compare_lag_honesty.py` | Side-by-side CAGR table → `data/backtest_results/lag_honesty.csv` |
 | `scripts/ibkr_snapshot.py` | Read-only IBKR snapshot → `data/cache/ibkr_account.json` (Execution tab) |
 | `scripts/ibkr_rebalance.py` | Local paper/live rebalance to current regime weights (`--execute`) |
 | `run_backtest.py` | CLI 20-yr validation; regenerates result CSVs |

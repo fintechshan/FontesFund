@@ -36,7 +36,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from config.regime_rules import REGIME_WEIGHTS, RISK_LIMITS, REGIME_VIX_DEFENSIVE
+from config.regime_rules import REGIME_WEIGHTS, RISK_LIMITS
 
 PRICE_CACHE = ROOT / "data" / "cache" / "price_data.csv"
 MACRO_CACHE = ROOT / "data" / "cache" / "macro_data.pkl"
@@ -49,36 +49,14 @@ REDIRECT = {"QQQ": 0.55, "SOXX": 0.45}
 # ──────────────────────────────────────────────────────────────────────
 def current_regime_and_weights():
     import pickle
+    from src.backtester.regime_clock import MODE_TARGETED, classify_regimes
     price = pd.read_csv(PRICE_CACHE, index_col=0, parse_dates=True).ffill()
     macro = pickle.load(open(MACRO_CACHE, "rb"))
-    vix = macro["vix"]; vix.index = pd.to_datetime(vix.index)
-    cpi = macro["cpi"]; cpi.index = pd.to_datetime(cpi.index)
-    gdp = macro["gdp"]; gdp.index = pd.to_datetime(gdp.index)
-
-    # publication lag (no look-ahead) — same as run_dashboard / run_backtest
-    cpi_yoy = cpi.pct_change(12) * 100
-    cpi_yoy.index = cpi_yoy.index + pd.DateOffset(months=1)
-    gdp = gdp.copy(); gdp.index = gdp.index + pd.DateOffset(months=4)
-    cpi_m = cpi_yoy.resample("MS").last().ffill()
-    gdp_m = gdp.resample("MS").last().ffill()
-    spy_mom = price["SPY"].resample("MS").last().pct_change(12)
-    vix_now = float(vix.dropna().iloc[-1])
-    now = price.index[-1]
-
-    g = gdp_m.asof(now); s = spy_mom.asof(now)
-    c = cpi_m.asof(now); c3 = cpi_m.asof(now - pd.DateOffset(months=3))
-    growth = (g > 1.5) or (s > 0.05)
-    infl = (c > 3.0) and (c > c3)
-    if vix_now > REGIME_VIX_DEFENSIVE:
-        regime = "deflation"
-    elif growth and not infl:
-        regime = "goldilocks"
-    elif growth and infl:
-        regime = "reflation"
-    elif (not growth) and infl:
-        regime = "stagflation"
-    else:
-        regime = "deflation"
+    # Targeted clock: CPI+1 / GDP+4, market data only through the prior month-end.
+    # A latest VIX print above REGIME_VIX_DEFENSIVE still forces deflation today.
+    _history, current, _info = classify_regimes(macro, price, mode=MODE_TARGETED)
+    regime = current.get("regime", "goldilocks")
+    vix_now = float(current.get("vix", 0.0))
 
     raw = dict(REGIME_WEIGHTS[regime])
     # VIX gate: zero TQQQ/SOXL when VIX >= 20, redirect to QQQ/SOXX (production rule)

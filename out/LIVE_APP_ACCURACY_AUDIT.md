@@ -11,10 +11,28 @@ They describe the page **before** the label and limit fixes in this branch. A sh
 checklist of those fixes is at the end of this file. The findings tables are the
 before-state and are left as the audit record.
 
-**Later display change (not a new backtest):** the Backtest tab and the Portfolio CAGR
-card now open on Auditor Lagged (extra month, **12.21% / 14.10% / 0.83**). Production
-**14.85% / 13.90% / 1.03** stays the engine CSV and the labeled Backtest alternate.
-CDN still has no extra-month series; its US column follows that Backtest default.
+**Honesty fix (2026-09-27, this branch — not yet what the live Cloud Run page shows):**
+the trusted path is the **targeted fix**. CPI stays +1 month and GDP stays +4 months.
+The month-start rebalance no longer sees that same month's average VIX or month-end
+SPY close. On a fresh sample **2005-01-04 → 2026-09-25** (mean DFF over the window
+1.87%, not the full history):
+
+| Path | CAGR | MaxDD | Sharpe | Role |
+|---|--:|--:|--:|---|
+| Targeted fix | **13.43%** | **14.13%** | **0.93** | Default, `20yr_comparison.csv`, heatmap |
+| Old production (month-end look-ahead) | 14.81% | 13.90% | 1.03 | Comparison. The published 14.85% was this path through 2026-09-21 |
+| Unlagged | 15.70% | 14.58% | 1.11 | Diagnostic |
+| Auditor extra month | 12.17% | 14.10% | 0.83 | Overly conservative. Not the default |
+| First-release vintage (Philly Fed RTDSM) | 12.65% | 15.23% | 0.87 | Comparison. Lower is expected |
+
+A prior write-up estimated the targeted fix near **13.36% / 0.93 / 14.13%**. The re-run
+is 13.43% CAGR with the same Sharpe and MaxDD. Do not hardcode 13.36%. The monthly
+heatmap uses the selected path's return series. Live trades go out on CPI and GDP
+advance release days and when VIX or momentum flips. The daily refresh does not place
+trades and does not wait an extra Auditor month.
+
+The tables below are the **live site before this fix**. They still describe 14.85% and
+12.21% as captured on 2026-09-27. This branch does not deploy Cloud Run.
 
 ---
 
@@ -209,6 +227,6 @@ Engine math is unchanged. Copy, limits, and the auditor status key changed:
 2. `RISK_LIMITS.max_single_position` is `MAX_REGIME_WEIGHT` (IEF 35% in deflation). Goldilocks QQQ 30% is intentional AI-trend exposure and is not clipped to 25%. The auditor imports `RISK_LIMITS` (the old 25% fallback was a `NameError`).
 3. `REGIME_VIX_DEFENSIVE` and `RISK_LIMITS.vix_spike_threshold` are **30**, the same threshold the classifiers already used. UI copy reads that constant.
 4. CDN period labels use the equity-curve dates. ZQQ.TO is labeled CAD-hedged. The book still holds ZQQ, not ZNQ.
-5. `CLAUDE.md` and `README.md` lead with v7 **14.85% / 13.90% / 1.03**. v5.1 **14.52% / 14.78% / 0.97** is marked historical.
+5. `CLAUDE.md` and `README.md` lead with v7. v5.1 **14.52% / 14.78% / 0.97** is marked historical. The current headline is the targeted fix in the section at the top of this file, not 14.85%.
 6. The tax panel states its CAD CAGRs are the `ab_canadian_tax.py` study, not the USD production backtest.
-7. Backtest tab and Portfolio CAGR card default to Auditor Lagged (**12.21% / 14.10% / 0.83**). Production **14.85%** stays on the Backtest control and in `20yr_comparison.csv`. CDN has no extra-month series; the US column on that tab follows the Backtest default.
+7. Superseded. The Backtest tab and Portfolio CAGR card default to the **targeted fix**, not Auditor Lagged. The extra month stays a labeled radio. `20yr_comparison.csv` is the targeted-fix series. CDN has no extra-month series; the US column follows that default.

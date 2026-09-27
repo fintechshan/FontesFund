@@ -23,13 +23,13 @@ def run_independent_audit(price_data, macro, backtest_results, regime_history, a
             return 0.0
 
     # ───────────────────────────────────────────────────────────────────────
-    # PILLAR 1: PUBLICATION-LAG LOOK-AHEAD, plus an extra-month timing test
+    # PILLAR 1: month-end look-ahead, publication lag, and the extra month
     #
-    # "standard" is production: classify_regimes(apply_lag=True) already shifts
-    # CPI +1 month and GDP +4 months. "lagged" is that regime shifted one more
-    # month (regime.shift(1)). That extra delay is execution/timing sensitivity.
-    # It is not evidence that production used unpublished macro data.
-    # The look-ahead diagnostic is unlagged (apply_lag=False) vs production.
+    # "standard" / "targeted" is the trusted path: CPI+1 and GDP+4, with VIX
+    # and SPY momentum dated at month-end. "lookahead" is the old production
+    # stamp (same publication lag, but same-month market data). "lagged" is
+    # that old stamp shifted one more month — overly conservative.
+    # "unlagged" turns the publication lag off.
     # ───────────────────────────────────────────────────────────────────────
     bias_status = "WARNING"
     bias_desc = (
@@ -46,11 +46,14 @@ def run_independent_audit(price_data, macro, backtest_results, regime_history, a
     lag_cagr = 0.0
     lag_sharpe = 0.0
 
-    if lagged_metrics and 'standard' in lagged_metrics and 'lagged' in lagged_metrics:
+    trusted_block = None
+    if lagged_metrics:
+        trusted_block = lagged_metrics.get('targeted') or lagged_metrics.get('standard')
+    if lagged_metrics and trusted_block and 'lagged' in lagged_metrics:
         try:
-            std_cagr = clean_pct(lagged_metrics['standard'].get('annual_return', '0%'))
+            std_cagr = clean_pct(trusted_block.get('annual_return', '0%'))
             lag_cagr = clean_pct(lagged_metrics['lagged'].get('annual_return', '0%'))
-            std_sharpe = float(lagged_metrics['standard'].get('sharpe', '0'))
+            std_sharpe = float(trusted_block.get('sharpe', '0'))
             lag_sharpe = float(lagged_metrics['lagged'].get('sharpe', '0'))
 
             cagr_diff = std_cagr - lag_cagr
@@ -66,12 +69,12 @@ def run_independent_audit(price_data, macro, backtest_results, regime_history, a
             else:
                 timing_status = "PASS"
                 timing_desc = (
-                    f"Execution / timing sensitivity, not look-ahead in production. "
-                    f"Production already uses CPI+1mo / GDP+4mo. Shifting that regime "
-                    f"one extra month moves CAGR by {-cagr_diff:+.2%} "
-                    f"(production {std_cagr:.2%} → extra month {lag_cagr:.2%}) "
+                    f"The Auditor extra month is overly conservative, not the default. "
+                    f"The targeted fix already uses CPI+1mo / GDP+4mo without month-end "
+                    f"look-ahead. One more month moves CAGR by {-cagr_diff:+.2%} "
+                    f"(targeted {std_cagr:.2%} → extra month {lag_cagr:.2%}) "
                     f"and Sharpe by {-sharpe_diff:+.2f} "
-                    f"(production {std_sharpe:.2f} → extra month {lag_sharpe:.2f})."
+                    f"(targeted {std_sharpe:.2f} → extra month {lag_sharpe:.2f})."
                 )
         except Exception as e:
             timing_status = "WARNING"
@@ -473,21 +476,21 @@ def run_independent_audit(price_data, macro, backtest_results, regime_history, a
             if abs(premium) < 0.005 and std_cagr > 0:
                 bias_status = "WARNING"
                 bias_desc = (
-                    f"Production ({std_cagr:.2%}) and UNLAGGED ({unlag_cagr:.2%}) are "
-                    f"near-identical (Δ {premium:+.2%}). Verify the CPI+1mo/GDP+4mo publication "
-                    f"lag is applied in classify_regimes — a ~0 premium can mean the lag was removed."
+                    f"Targeted fix ({std_cagr:.2%}) and UNLAGGED ({unlag_cagr:.2%}) are "
+                    f"near-identical (Δ {premium:+.2%}). Verify CPI+1 / GDP+4 is still applied "
+                    f"in classify_regimes — a ~0 premium can mean the lag was removed."
                 )
             elif premium >= 0.005:
                 bias_status = "PASS"
                 bias_desc = (
-                    f"Publication lag is applied. It removes a +{premium:.2%} look-ahead premium "
-                    f"(unlagged {unlag_cagr:.2%} → production {std_cagr:.2%}). "
-                    f"Production is the conservative, tradable number."
+                    f"Publication lag is applied on the targeted fix. Unlagged "
+                    f"({unlag_cagr:.2%}) is above targeted ({std_cagr:.2%}) by {premium:.2%}. "
+                    f"The targeted fix is the number the Backtest tab opens on."
                 )
             else:
                 bias_status = "PASS"
                 bias_desc = (
-                    f"Unlagged ({unlag_cagr:.2%}) is below production ({std_cagr:.2%}) by "
+                    f"Unlagged ({unlag_cagr:.2%}) is below the targeted fix ({std_cagr:.2%}) by "
                     f"{-premium:.2%}. Macro timing is not adding a look-ahead premium here."
                 )
         except Exception as e:
@@ -498,11 +501,33 @@ def run_independent_audit(price_data, macro, backtest_results, regime_history, a
     audit['bias_status'] = bias_status
     audit['bias_desc'] = bias_desc
 
+    if lagged_metrics and lagged_metrics.get('lookahead') and trusted_block:
+        try:
+            la_cagr = clean_pct(lagged_metrics['lookahead'].get('annual_return', '0%'))
+            gap = la_cagr - std_cagr
+            la_status = "PASS" if gap > 0.002 else "WARNING"
+            la_desc = (
+                f"Month-end look-ahead check: old production {la_cagr:.2%} versus "
+                f"targeted fix {std_cagr:.2%} (gap {gap:+.2%}). "
+                f"The gap is same-month VIX and SPY closes. CPI+1 / GDP+4 is unchanged."
+            )
+        except Exception as e:
+            la_status = "WARNING"
+            la_desc = f"Error evaluating month-end look-ahead: {e}"
+        errors.append({
+            'category': 'Month-end Look-Ahead',
+            'description': la_desc,
+            'location': 'src/backtester/regime_clock.py: market_signals(same_month=False)',
+            'remedy': "Keep the targeted clock as the default. Do not stamp month-end VIX or SPY momentum on month-start.",
+            'impact': 'HIGH' if la_status == "WARNING" else 'NONE',
+            'status': la_status,
+        })
+
     errors.append({
         'category': 'Look-Ahead Bias Diagnostic',
         'description': bias_desc,
         'location': 'run_dashboard.py: classify_regimes(apply_lag)',
-        'remedy': "Keep CPI+1mo / GDP+4mo in classify_regimes(apply_lag=True). Do not read the extra-month shift as this check.",
+        'remedy': "Keep CPI+1 / GDP+4 and the month-end market rule in classify_regimes(mode='targeted'). Do not shorten the lags.",
         'impact': 'HIGH' if bias_status == "WARNING" else 'NONE',
         'status': bias_status
     })
@@ -510,7 +535,7 @@ def run_independent_audit(price_data, macro, backtest_results, regime_history, a
         'category': 'Execution / Timing Sensitivity',
         'description': timing_desc,
         'location': 'run_dashboard.py: regime.shift(1) after publication lag',
-        'remedy': "Informational. An extra month of regime delay is not a production look-ahead finding.",
+        'remedy': "Informational. The extra month is overly conservative and is not the Backtest default.",
         'impact': 'NONE' if timing_status == "PASS" else 'MEDIUM',
         'status': timing_status
     })

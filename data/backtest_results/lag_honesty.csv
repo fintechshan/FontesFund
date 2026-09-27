@@ -1,0 +1,6 @@
+mode,cagr,max_dd,sharpe,volatility,sortino,calmar,total_return,start,end,vintage_source,vintage_fallback
+targeted,0.1343,0.1413,0.93,0.1241,1.25,0.95,14.3839,2005-01-04,2026-09-25,,False
+lookahead,0.1481,0.139,1.03,0.126,1.38,1.07,19.0115,2005-01-04,2026-09-25,,False
+unlagged,0.157,0.1458,1.11,0.1252,1.47,1.08,22.6607,2005-01-04,2026-09-25,,False
+auditor,0.1217,0.141,0.83,0.124,1.11,0.86,11.0846,2005-01-04,2026-09-25,,False
+vintage,0.1265,0.1523,0.87,0.1235,1.15,0.83,12.25,2005-01-04,2026-09-25,philadelphia_fed_rtdsm,False
