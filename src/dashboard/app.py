@@ -508,34 +508,62 @@ def render_ai_intelligence(data):
                      f"weekly · indicator only, NOT in the backtest · Computed {sent.get('computed','—')}"),
     ], style={**CS, 'padding': '12px', 'marginBottom': '12px', 'borderLeft': f'3px solid {s_color}'})
 
-    # ── Reddit retail attention (Tier 3 — experimental, VADER, display-only) ──
+    # ── Reddit retail attention (experimental stock-pick overlay, not in weights) ──
+    from src.strategist.reddit_sentiment import format_attention_row
     rd = ai.get('reddit', {}) or {}
+    ra = ai.get('retail_attention') or rd.get('retail_attention') or {}
     rd_ov = rd.get('overall', {}) or {}
     rd_color = _scol(rd_ov.get('label', 'Neutral'))
-    rd_rows = [html.Div([
-        html.Span(t['ticker'], style={'color': '#c8c8d4', 'fontSize': '11px', 'width': '60px', 'display': 'inline-block', 'fontWeight': '600'}),
-        html.Span(f"{t['mentions']}×", style={'color': '#9b59b6', 'fontSize': '11px', 'width': '40px', 'display': 'inline-block', 'fontWeight': '700'}),
-        html.Span(f"{t['score']:+.2f} {t['label']}", style={'color': _scol(t['label']), 'fontSize': '10px'}),
-    ], style={'marginBottom': '3px'}) for t in (rd.get('tickers', []) or [])[:8]]
-    hype = rd.get('hype', []) or []
+    ranked = ra.get('ranked_stocks') or rd.get('tickers') or []
+    rd_rows = [html.Div(
+        format_attention_row(t),
+        style={'color': _scol(t.get('label', 'Neutral')), 'fontSize': '12px',
+               'lineHeight': '1.45', 'marginBottom': '3px',
+               'fontFamily': 'ui-monospace, SFMono-Regular, Menlo, monospace'},
+    ) for t in ranked[:8]]
+    hype = ra.get('hype_caution') or rd.get('hype', []) or []
+    subs = rd.get('subs') or ra.get('subs') or []
+    sub_txt = " · ".join(subs[:6]) + (f" +{len(subs) - 6}" if len(subs) > 6 else "")
+    src = rd.get('source') or ra.get('source') or 'reddit'
+    n_posts = rd.get('n_posts', ra.get('n_posts', 0))
+    thin = n_posts and n_posts < 30
     reddit_panel = html.Div([
         html.Div([
             html.Span('👽 Reddit Retail Attention', style={'color': '#e67e22', 'fontWeight': '700', 'fontSize': '13px'}),
-            html.Span(f"  {rd.get('engine','—')} · experimental", style={'color': '#6c757d', 'fontSize': '10px', 'marginLeft': '6px'}),
+            html.Span(f"  {rd.get('engine', ra.get('engine', '—'))} · experimental",
+                      style={'color': '#6c757d', 'fontSize': '10px', 'marginLeft': '6px'}),
         ], style={'marginBottom': '6px'}),
         html.Div([
             html.Span(rd_ov.get('label', '—'), style={'color': rd_color, 'fontSize': '16px', 'fontWeight': '800'}),
-            html.Span(f"  {rd_ov.get('score',0):+.2f}", style={'color': rd_color, 'fontSize': '12px', 'fontWeight': '700'}),
-            html.Span(f"  ({rd.get('n_posts',0)} posts · r/wsb·stocks·semis)", style={'color': '#8888a0', 'fontSize': '10px'}),
+            html.Span(f"  {float(rd_ov.get('score', 0) or 0):+.2f}",
+                      style={'color': rd_color, 'fontSize': '12px', 'fontWeight': '700'}),
+            html.Span(
+                f"  ·  {n_posts} posts"
+                + (f"  ·  {rd.get('n_ticker_posts', rd_ov.get('n', 0))} name a ticker" if rd.get('available') else "")
+                + (f"  ·  r/{sub_txt}" if sub_txt else "")
+                + f"  ·  as of {rd.get('computed', ra.get('as_of', '—'))}",
+                style={'color': '#8888a0', 'fontSize': '10px'}),
         ], style={'marginBottom': '6px'}) if rd.get('available') else
-        html.Div('Reddit feed unavailable (rate-limited). Auto-retries.', style={'color': '#6c757d', 'fontSize': '11px'}),
-        (html.Div([html.Span('🔥 Hype flag (contrarian): ', style={'color': '#e74c3c', 'fontSize': '10px', 'fontWeight': '700'}),
+        html.Div('Reddit feed unavailable (rate-limited). Auto-retries. Last cache is kept when one exists.',
+                 style={'color': '#6c757d', 'fontSize': '11px'}),
+        (html.Div('Thin sample — ranks are a watchlist, not a trade.',
+                  style={'color': '#f5a623', 'fontSize': '10px', 'marginBottom': '4px'})
+         if thin else html.Div()),
+        (html.Div([html.Span('Hype caution (contrarian, not a buy): ',
+                            style={'color': '#e74c3c', 'fontSize': '10px', 'fontWeight': '700'}),
                    html.Span(', '.join(hype), style={'color': '#e74c3c', 'fontSize': '10px'})],
                   style={'marginBottom': '6px'}) if hype else html.Div()),
-        html.Div('Most-mentioned (attention):', style={'color': '#c8c8d4', 'fontSize': '11px', 'fontWeight': '600', 'margin': '4px 0 2px'}) if rd_rows else html.Div(),
+        html.Div('Stock-pick rank (composite = attention × |sentiment| × velocity × confidence):',
+                 style={'color': '#c8c8d4', 'fontSize': '11px', 'fontWeight': '600', 'margin': '4px 0 2px'})
+        if rd_rows else
+        html.Div('No ticker cleared the attention bar (need ≥2 posts, or 1 cashtag/alias hit with |sentiment| ≥ 0.35).',
+                 style={'color': '#8888a0', 'fontSize': '11px'}),
         html.Div(rd_rows),
-        _source_line("Source: Reddit public RSS + VADER (social-tuned) · CONTRARIAN attention signal · "
-                     f"experimental, display-only, NOT in the backtest · Computed {rd.get('computed','—')}"),
+        _source_line(
+            f"Source: {src} + {rd.get('engine', 'VADER')} · experimental stock-pick overlay · "
+            f"does not change ETF regime weights or the backtest · "
+            f"Computed {rd.get('computed', '—')}"
+        ),
     ], style={**CS, 'padding': '12px', 'marginBottom': '12px', 'borderLeft': '3px solid #e67e22'})
 
     return html.Div([report_box, signals_table,
@@ -1090,7 +1118,14 @@ def build_portfolio_tab(data):
     _ov = _ms.get('overall', {}) or {}; _cap = _ms.get('capex', {}) or {}
     _edgar = _ai.get('edgar_capex', {}) or {}; _eg_yoy = _edgar.get('agg_yoy')
     _aisig = _ai.get('signals', {}) or {}
-    _rov = (_ai.get('reddit', {}) or {}).get('overall', {}) or {}
+    _rd = _ai.get('reddit', {}) or {}
+    _rov = _rd.get('overall', {}) or {}
+    _ra = _ai.get('retail_attention') or _rd.get('retail_attention') or {}
+    _ra_ranked = _ra.get('ranked_stocks') or []
+    _ra_txt = ', '.join(
+        f"{r.get('ticker')} {(r.get('action') or '').replace('_', ' ')} {float(r.get('pick_score') or 0):+.2f}"
+        for r in _ra_ranked[:3]
+    ) or '—'
     _growth_ok = (_gdp > 1.5) or (_spymom > 0.05)
     _semi_w = sum(weights.get(t, 0) for t in ['SOXX', 'SMH', 'XSD', 'DRAM', 'SOXL'])
     _aisw_w = sum(weights.get(t, 0) for t in ['QQQ', 'TQQQ', 'QQQI'])
@@ -1340,8 +1375,9 @@ def build_portfolio_tab(data):
                     html.Div('🧠 AI Sentiment & CapEx (FinBERT)', style={'color': '#f5a623', 'fontSize': '14px', 'fontWeight': '700', 'marginBottom': '8px'}),
                     _row('News consensus: ', f"{_ov.get('label','—')} {_ov.get('score',0):+.2f}", _sc(_ov.get('label'))),
                     _row('CapEx pulse: ', f"{_cap.get('score',0):+.2f} · ${_edgar.get('agg_capex_b','—')}B" + (f" YoY {_eg_yoy:+.0%}" if _eg_yoy is not None else ''), '#00d97e'),
-                    _row('Retail (Reddit): ', f"{_rov.get('label','—')} (experimental)", _sc(_rov.get('label'))),
-                    html.Div(f"Engine: {_ms.get('engine','—')} · indicator only, not in weights.", style={'color': '#6c757d', 'fontSize': '10px', 'marginTop': '4px'}),
+                    _row('Retail (Reddit): ', f"{_rov.get('label','—')} {_rov.get('score', 0):+.2f} · {_rd.get('n_posts', 0)} posts", _sc(_rov.get('label'))),
+                    _row('Retail picks: ', _ra_txt, '#e67e22'),
+                    html.Div(f"Engine: {_ms.get('engine','—')} · Reddit picks are an experimental overlay, not in weights.", style={'color': '#6c757d', 'fontSize': '10px', 'marginTop': '4px'}),
                 ], style={**CS, 'padding': '14px'}), md=4),
             ], className='mb-3'),
             html.Div([
