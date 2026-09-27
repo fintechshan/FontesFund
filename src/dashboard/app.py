@@ -160,8 +160,12 @@ def make_allocation_donut(weights):
                       annotations=[dict(text=f'{len(t)}<br>ETFs', x=0.5, y=0.5, font_size=16, font_color='#c8c8d4', showarrow=False)])
     return fig
 
-def make_equity_curves(all_eq, equity_curve, title=None):
-    """Build equity curve chart with ALL benchmarks."""
+def make_equity_curves(all_eq, equity_curve, title=None, main_name=None):
+    """Build equity curve chart with ALL benchmarks.
+
+    ``main_name`` is the selected path. That column is the bold curve.
+    Other strategy names are not drawn unless they are this path.
+    """
     fig = go.Figure()
     strat_colors = {'Optimized Regime Strategy': '#00d97e',
                     'Aggressive Regime Strategy': '#00d97e',
@@ -179,8 +183,8 @@ def make_equity_curves(all_eq, equity_curve, title=None):
     if not all_eq.empty:
         for col in all_eq.columns:
             vals = all_eq[col].dropna() * 100000  # normalize to $100K
-            c = strat_colors.get(col, '#6c757d')
-            is_main = col in main_names
+            is_main = col == main_name or (main_name is None and col in main_names)
+            c = '#00d97e' if col == main_name else strat_colors.get(col, '#6c757d')
             fig.add_trace(go.Scatter(
                 x=vals.index, y=vals.values, name=col,
                 line=dict(color=c, width=2.5 if is_main else 1.2, dash=None if is_main else 'dot'),
@@ -188,8 +192,10 @@ def make_equity_curves(all_eq, equity_curve, title=None):
             ))
     elif len(equity_curve) > 0:
         vals = equity_curve * 100000
-        fig.add_trace(go.Scatter(x=vals.index, y=vals.values, name='Optimized Regime Strategy',
-                                  line=dict(color='#00d97e', width=2.5)))
+        fig.add_trace(go.Scatter(
+            x=vals.index, y=vals.values, name=main_name or 'Selected path',
+            line=dict(color='#00d97e', width=2.5),
+        ))
 
     fig.update_layout(**PL, title=title or 'Equity Curve — All Strategies ($100K Initial)', height=420,
                       yaxis_title='Portfolio Value ($)', hovermode='x unified',
@@ -1169,17 +1175,18 @@ def build_portfolio_tab(data):
                        & {'TQQQ', 'SOXL', 'SSO', 'GGLL', 'TECL', 'SPXL', 'UPRO'})
     _freq_rules = [
         'Monthly sleeve from the targeted clock (CPI+1, GDP+4, prior month-end VIX and momentum). '
-        'A name with no price is dropped and the sleeve is renormalized. It is not held as cash.',
+        'That market lag is not a second CPI/GDP lag. A name with no price is dropped and the sleeve is renormalized.',
         f"Daily 200-MA: yesterday's SPY vs yesterday's average. If below, keep "
         f"{_SP['bear_equity_frac']:.0%} of the sleeve and move {1 - _SP['bear_equity_frac']:.0%} to defense.",
+        'Daily equity cut, mandatory: VIX linear 28→40 and SPY vs its prior 20-session high '
+        '(full equity to −4%, zero at −10%). The tighter scale cuts risk assets; freed weight goes to SHY/AGG/GLD/IEF. '
+        'This is not the monthly VIX>30 deflation label.',
         f"Daily vol target {_SP['target_vol']:.0%} (HAR-RV), scale clipped to "
         f"[{_SP['vol_lo']:.2f}, {_SP['vol_hi']:.2f}] using yesterday's forecast.",
-        f"Daily portfolio drawdown breaker at −{_SP['dd_trigger']:.0%}, "
-        f"floor {_SP['dd_floor']:.0%}, span {_SP['dd_span']:.0%}. "
-        'This scale uses the strategy equity peak, not the monthly VIX>30 label.',
-        'Live orders use those three daily scales. CPI/GDP release days change the sleeve only. '
-        'The data refresh does not send orders. VIX 28→40 and the 20-day SPY-high cut '
-        'are only in the unused aggressive backtest.',
+        f"Daily portfolio drawdown shrink at −{_SP['dd_trigger']:.0%}, "
+        f"floor {_SP['dd_floor']:.0%}, span {_SP['dd_span']:.0%}.",
+        'Live orders use that same daily stack. CPI/GDP days change the sleeve only. '
+        'The data refresh does not send orders. There is no event-only live mode.',
     ]
     _regime_rules = [
         'Growth rising: GDP > 1.5% OR SPY 12m mom > 5%',
@@ -1213,7 +1220,7 @@ def build_portfolio_tab(data):
             dbc.Col(mc('Regime', f'{ri} {regime.upper()}', f'{conf:.0f}% confidence', rc, ''), md=3),
             dbc.Col(mc('Initial Capital', '$100,000', 'Starting value', '#c8c8d4', '💰'), md=3),
             dbc.Col(mc(_bt_title, _cagr, _bt_sub, '#00d97e', '📈'), md=3),
-            dbc.Col(mc('Rebalance Freq', 'Monthly', f'Next: 1st of month', '#3498db', '📅'), md=3),
+            dbc.Col(mc('Rebalance', 'Daily overlay', 'Sleeve monthly · overlay every day', '#3498db', '📅'), md=3),
         ], className='mb-3'),
         _source_line(f"🔄 LIVE snapshot built {_built} · regime/weights from FRED macro (cache {_macro_ts}) + "
                      f"Yahoo Finance prices · backtest CSV {_bt_ts}. Tab rebuilds each container start."),
@@ -1545,8 +1552,29 @@ def pack_lagged_metrics(results=None, standard_res=None, lagged_res=None, unlagg
     return packed
 
 
-def monthly_for_path(data, path):
-    """Monthly returns of the selected path. The heatmap must use this series."""
+def monthly_from_equity(curve):
+    """Month-end compound return of one equity curve.
+
+    The curve is the cumulated daily return, so this matches the engine's
+    monthly series for that same curve. A separately stored monthly file is
+    not consulted.
+    """
+    eq = _as_series(curve).dropna().astype(float).sort_index()
+    if len(eq) == 0:
+        return pd.Series(dtype=float)
+    eq = eq.copy()
+    eq.index = pd.to_datetime(eq.index)
+    prior = (eq.index[0].to_period('M') - 1).to_timestamp(how='end').normalize()
+    padded = pd.concat([pd.Series({prior: 1.0}), eq])
+    padded = padded[~padded.index.duplicated(keep='last')].sort_index()
+    month_end = padded.resample('ME').last().dropna()
+    monthly = month_end.pct_change().dropna()
+    first_month = eq.index[0].to_period('M')
+    return monthly[monthly.index.to_period('M') >= first_month]
+
+
+def curve_for_path(data, path):
+    """Equity curve of the selected path. Never another path's curve."""
     path = path or BACKTEST_PATH_TARGETED
     if path == 'production':
         path = BACKTEST_PATH_TARGETED
@@ -1554,11 +1582,20 @@ def monthly_for_path(data, path):
     keys = _PATH_KEYS.get(path)
     if keys is None:
         return pd.Series(dtype=float)
-    series = _as_series(lm.get(keys[2]))
-    if len(series) == 0 and path == BACKTEST_PATH_TARGETED:
-        # run_backtest.py writes the targeted-fix monthlies to this file.
-        series = _as_series(data.get('monthly_returns'))
-    return series
+    curve = _as_series(lm.get(keys[1]))
+    if len(curve) == 0 and path == BACKTEST_PATH_TARGETED:
+        curve = _as_series(data.get('equity_curve'))
+    return curve
+
+
+def monthly_for_path(data, path):
+    """Monthly returns of the curve plotted for this path.
+
+    Derived from that curve. ``data['monthly_returns']`` and a packed monthly
+    series are ignored, so a production heatmap cannot sit under another path's
+    cards.
+    """
+    return monthly_from_equity(curve_for_path(data, path))
 
 
 def _as_series(obj):
@@ -1708,10 +1745,12 @@ def _chart_frame(all_eq, curve, curve_name):
 
 
 def build_backtest_path_body(data, path):
-    """Cards, curve, heatmap, and comparison for one honesty path.
+    """Cards, curve, and heatmap for one honesty path.
 
-    The heatmap uses ``monthly_for_path``, the same monthly series as the cards.
-    A missing non-default path stays blank. It does not borrow another path's CAGR.
+    The equity curve is ``curve_for_path``. The heatmap is the month-end
+    change of that same curve. Cards are that path's own metrics. A missing
+    non-default path stays blank on all three. It does not borrow the
+    production curve, the production heatmap, or another path's CAGR.
     """
     path = path or BACKTEST_PATH_TARGETED
     if path == 'production':
@@ -1719,22 +1758,21 @@ def build_backtest_path_body(data, path):
     if path not in _PATH_KEYS:
         path = BACKTEST_PATH_TARGETED
     lm = _lagged_bundle(data)
-    metrics_key, curve_key, _monthly_key, series_name = _PATH_KEYS[path]
+    metrics_key, _curve_key, _monthly_key, series_name = _PATH_KEYS[path]
     metrics = lm.get(metrics_key) or {}
     if path == BACKTEST_PATH_TARGETED and not metrics.get('annual_return'):
         metrics = _csv_production_metrics(data)
-    curve = _as_series(lm.get(curve_key))
-    if path == BACKTEST_PATH_TARGETED and len(curve) == 0:
-        curve = _as_series(data.get('equity_curve'))
-    monthly = monthly_for_path(data, path)
+    curve = curve_for_path(data, path)
     caption = _PATH_CAPTION[path]
     if path != BACKTEST_PATH_TARGETED and not (lm.get(metrics_key) or {}).get('annual_return'):
         metrics = {}
+        curve = pd.Series(dtype=float)
         caption += ' This path is not loaded, so these cards stay blank.'
+    monthly = monthly_from_equity(curve)
     chart_title = f'Equity Curve — {series_name} vs benchmarks ($100K)'
     dd_title = f'Drawdown — {series_name}'
 
-    us_start, us_end, us_years = _series_span(curve if len(curve) else _as_series(data.get('equity_curve')))
+    us_start, us_end, us_years = _series_span(curve)
     if us_start:
         us_span = f'{us_start} → {us_end}'
         us_cagr_lbl = f'{us_years:.1f}-yr CAGR'
@@ -1784,7 +1822,7 @@ def build_backtest_path_body(data, path):
         html.Div(f'{caption} Sample {us_span}.',
                  style={'color': '#6c757d', 'fontSize': '11px', 'marginTop': '-8px', 'marginBottom': '12px'}),
         html.Div([dcc.Graph(
-            figure=make_equity_curves(frame, curve, title=chart_title),
+            figure=make_equity_curves(frame, curve, title=chart_title, main_name=series_name),
             config={'displayModeBar': False},
         )], style={**CS, 'marginBottom': '16px'}),
         html.Div([dcc.Graph(figure=make_drawdown(curve, title=dd_title), config={'displayModeBar': False})],
@@ -1793,7 +1831,7 @@ def build_backtest_path_body(data, path):
                  style={**CS, 'marginBottom': '16px'}),
         html.Div([
             html.H6(f'Strategy Comparison — {us_span}', style={'color': '#c8c8d4', 'marginBottom': '10px'}),
-            html.Div('The highlighted row is the path selected above. The heatmap uses that same monthly series.',
+        html.Div('The highlighted row is the path selected above. Cards, the equity curve, and the heatmap are that path’s series.',
                      style={'color': '#6c757d', 'fontSize': '11px', 'marginBottom': '8px'}),
             dash_table.DataTable(
                 columns=[{'name': c, 'id': c} for c in ['Strategy','Annual Return','Volatility','Sharpe',

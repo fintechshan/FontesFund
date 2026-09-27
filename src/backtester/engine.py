@@ -12,6 +12,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from src.backtester.daily_overlay import derisk_frame, equity_scales
+
 logger = logging.getLogger(__name__)
 
 
@@ -408,19 +410,23 @@ class BacktestEngine:
     #   scaled a MULTI-ASSET portfolio by SPY's volatility — wrong proxy #
     #   (it levered bond-heavy defensive books and de-risked exactly the #
     #   assets you want in a crisis).  The trusted path is the targeted   #
-    #   clock plus the daily overlay in this function (200-MA, portfolio  #
-    #   vol target, portfolio drawdown). Do not quote a CAGR from here.   #
+    #   clock plus the daily overlay in this function. Do not quote a     #
+    #   CAGR from here. The overlay is mandatory: 200-MA trend, VIX      #
+    #   28→40 and 20-session SPY-high equity cut, portfolio vol target,  #
+    #   and portfolio drawdown shrink. Live orders use the same stack.   #
     #                                                                     #
     #   Design (all signals lagged 1 day — no look-ahead):               #
     #     1. Monthly regime base weights, renormalised to ETFs that      #
     #        actually have data on the prior day (no phantom cash drag). #
     #     2. 200-day SPY trend filter: when SPY < 200-MA, hold           #
     #        bear_equity_frac of the regime book + the rest in defense.  #
-    #     3. PORTFOLIO-LEVEL vol targeting: scale by the STRATEGY's own  #
-    #        21-day realised vol (not SPY's) toward target_vol.          #
-    #     4. Drawdown circuit breaker: cut exposure once portfolio DD    #
+    #     3. Daily equity cut: min(VIX 28→40, SPY 20-session drawdown).  #
+    #        Risk assets only. Not a second CPI/GDP lag.                 #
+    #     4. PORTFOLIO-LEVEL vol targeting: scale by the STRATEGY's own  #
+    #        lagged vol (not SPY's) toward target_vol.                   #
+    #     5. Drawdown circuit breaker: cut exposure once portfolio DD    #
     #        exceeds dd_trigger.                                          #
-    #     5. Transaction + leverage-financing costs.                     #
+    #     6. Transaction + leverage-financing costs.                     #
     # ================================================================== #
 
     def run_optimized_regime_backtest(
@@ -542,9 +548,6 @@ class BacktestEngine:
         W_base = weight_matrix(regime_weights, use_rp=risk_parity, gate=True)
         W_def = weight_matrix({r: defense_weights for r in regime_weights})
 
-        r_base = (W_base * rf_filled).sum(axis=1)
-        r_def = (W_def * rf_filled).sum(axis=1)
-
         # ── 1b. Managed-futures (CTA) proxy: 12m time-series momentum, L/S,
         #        inverse-vol weighted, sleeve scaled to mf_sleeve_vol. Lagged. ──
         def mf_proxy() -> pd.Series:
@@ -565,23 +568,27 @@ class BacktestEngine:
 
         r_mf = mf_proxy() if mf_alloc > 0 else pd.Series(0.0, index=daily_returns.index)
 
-        # ── 2. Transaction cost from base-weight turnover ──
-        turnover = W_base.diff().abs().sum(axis=1) / 2.0
-        tx = turnover * (transaction_cost_bps / 10_000)
-        base = r_base - tx
-
-        # ── 3. 200-MA trend filter (lagged) ──
-        spy_col = 'SPY' if 'SPY' in self.price_data.columns else None
-        if spy_col:
-            spy = self.price_data[spy_col]
-            trend_ok = (spy.shift(1) >= spy.rolling(200).mean().shift(1))
+        # ── 2-3. Trend blend, then the daily equity cut. Turnover is the
+        #        pre-leverage book (sleeve + trend + equity cut), so the cut
+        #        is not free. The cut uses yesterday's VIX and yesterday's
+        #        20-session SPY high. It does not shift CPI or GDP. ──
+        spy_px = self.price_data['SPY'] if 'SPY' in self.price_data.columns else None
+        if spy_px is not None:
+            trend_ok = (spy_px.shift(1) >= spy_px.rolling(200).mean().shift(1))
             trend_ok = trend_ok.reindex(daily_returns.index).fillna(True).astype(float)
         else:
             trend_ok = pd.Series(1.0, index=daily_returns.index)
 
-        r_trend = (trend_ok * base
-                   + (1 - trend_ok) * (bear_equity_frac * base
-                                       + (1 - bear_equity_frac) * r_def))
+        bear = float(bear_equity_frac)
+        w_mix = (
+            W_base.mul(trend_ok + (1.0 - trend_ok) * bear, axis=0)
+            + W_def.mul((1.0 - trend_ok) * (1.0 - bear), axis=0)
+        )
+        overlay_scales = equity_scales(daily_returns.index, spy_px, vix_lag)
+        w_book = derisk_frame(w_mix, overlay_scales['equity_scale'])
+        turnover = w_book.diff().abs().sum(axis=1) / 2.0
+        tx = turnover * (transaction_cost_bps / 10_000)
+        r_trend = (w_book * rf_filled).sum(axis=1) - tx
 
         # ── 3b. Blend the managed-futures sleeve in BEFORE vol targeting, so the
         #        vol-target levers the (lower-vol, diversified) combination up. ──
@@ -659,12 +666,22 @@ class BacktestEngine:
         # Same object the live rebalance reads. Recording it does not change returns.
         def _nz(row):
             return {t: float(w) for t, w in row.items() if w > 1e-8}
+        last_scale = overlay_scales.iloc[-1] if len(overlay_scales) else None
+
+        def _finite(value):
+            return float(value) if value is not None and np.isfinite(value) else None
+
         result.overlay = {
             "policy": "optimized_daily",
             "as_of": str(pd.Timestamp(port_returns.index[-1]).date()) if len(port_returns) else None,
             "trend_risk_on": bool(float(trend_ok.iloc[-1]) >= 0.5) if len(trend_ok) else True,
             "vol_scale": float(scale.iloc[-1]) if len(scale) else 1.0,
             "dd_scale": float(last_dd_scale),
+            "equity_scale": float(last_scale["equity_scale"]) if last_scale is not None else 1.0,
+            "vix_scale": float(last_scale["vix_scale"]) if last_scale is not None else 1.0,
+            "spy_dd_scale": float(last_scale["spy_dd_scale"]) if last_scale is not None else 1.0,
+            "vix_yesterday": _finite(last_scale["vix_yesterday"]) if last_scale is not None else None,
+            "spy_dd": _finite(last_scale["spy_dd"]) if last_scale is not None else None,
             "bear_equity_frac": float(bear_equity_frac),
             "dd_trigger": float(dd_trigger),
             "dd_floor": float(dd_floor),
@@ -675,6 +692,7 @@ class BacktestEngine:
             "use_har_vol": bool(use_har_vol),
             "base_weights": _nz(W_base.iloc[-1]) if len(W_base) else {},
             "defense_weights": _nz(W_def.iloc[-1]) if len(W_def) else {},
+            "tradable": list(w_book.columns),
         }
         return result
 

@@ -49,10 +49,11 @@ def current_regime_and_weights():
     """Target notionals from the production engine's last day.
 
     The monthly regime sleeve is not the order. ``run_optimized_regime_backtest``
-    then applies the daily 200-MA blend, the portfolio vol scale, and the
-    portfolio drawdown scale. This function runs that same engine and reads
-    ``result.overlay``. Names with no price are dropped and the sleeve is
-    renormalized inside the engine. They are not left as cash.
+    then applies the daily overlay: 200-MA blend, VIX 28→40 and 20-session SPY
+    drawdown equity cut, portfolio vol scale, and portfolio drawdown shrink.
+    This function runs that same engine and reads ``result.overlay``. Names with
+    no price are dropped and the sleeve is renormalized inside the engine. They
+    are not left as cash. There is no event-only order mode.
     """
     import pickle
     from config.regime_rules import STRATEGY_PARAMS
@@ -98,6 +99,9 @@ def current_regime_and_weights():
     print(
         f"\nOverlay as of {overlay.get('as_of')}: "
         f"trend_risk_on={overlay.get('trend_risk_on')} "
+        f"equity_scale={float(overlay.get('equity_scale') or 1):.3f} "
+        f"(vix={float(overlay.get('vix_scale') or 1):.3f}, "
+        f"spy_dd={float(overlay.get('spy_dd_scale') or 1):.3f}) "
         f"vol_scale={overlay.get('vol_scale'):.3f} "
         f"dd_scale={overlay.get('dd_scale'):.3f} "
         f"gross={sum(weights.values()):.3f}"

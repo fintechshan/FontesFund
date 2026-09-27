@@ -79,17 +79,16 @@ python scripts/run_backtest.py
 
 - **Initial Capital**: $100,000
 - **Monthly Contribution**: $10,000 (paused if 3-month return < -5%)
-- **Rebalancing**: Monthly base weights; daily trend/vol/DD overlays
+- **Rebalancing**: Monthly regime sleeve; daily overlay every session (200-MA,
+  VIX 28→40, 20-session SPY drawdown, vol target, portfolio drawdown shrink)
 - **Validated targets**: CAGR ≥ 16%, Max Drawdown < 14.8%, Sharpe ≥ 1.2.
   The latest run’s distance to those targets is `20yr_comparison.csv`, not a number
   frozen here. Dashboard default is the targeted path (B), including the daily overlay.
-- **Live rebalance:** same daily overlay as the backtest (200-MA, vol scale, portfolio
-  drawdown). CPI and GDP advance releases change the monthly sleeve only. The daily
-  data refresh does not place trades. Do not wait an extra Auditor month. The VIX
-  28→40 cut is a different, unused backtest.
-- **Production strategy**: `run_optimized_regime_backtest` — risk-parity sleeve
-  weighting + portfolio-level vol targeting + 200-MA trend hedge + DD breaker.
-  See [`CLAUDE.md`](CLAUDE.md) for the exact config and rationale.
+- **Live rebalance:** same daily overlay as the backtest. CPI and GDP advance
+  releases change the monthly sleeve only. The daily data refresh does not place
+  trades. Do not wait an extra Auditor month. There is no event-only live mode.
+- **Production strategy**: `run_optimized_regime_backtest` — Merrill risk-parity
+  sleeve, then the daily overlay above. See [`CLAUDE.md`](CLAUDE.md).
 - **Vol-estimator note** (`ab_vol.py` A/B): EWMA and HAR-RV do **not** beat the simple
   21-day realised vol on Sharpe (all ≈1.03); however, the OLS-based walk-forward HAR-RV vol overlay (`use_har_vol=True`) runs hotter/better under tuned overlays to clear the Max Drawdown target.
 
@@ -103,9 +102,12 @@ python run_backtest.py          # path B → 20yr_comparison.csv
 python scripts/ab_vintage.py    # A / B / C, common inception, coverage, release lags
 ```
 
-Path B is the dashboard default. The heatmap uses the monthly returns of the radio
-you select. CPI stays +1 month and GDP stays +4 months. VIX and 12-month momentum
-use only the prior month. That market lag is not a second CPI/GDP lag.
+Path B is the dashboard default. The Backtest radio drives the CAGR cards, the
+equity curve, and the monthly heatmap from that one curve. CPI stays +1 month and
+GDP stays +4 months. VIX and 12-month momentum use only the prior month. That
+market lag is not a second CPI/GDP lag. The daily overlay (VIX 28→40, 20-session
+SPY drawdown, portfolio drawdown shrink, plus the 200-MA and vol target) is on
+every honesty path. It is not a separate live calendar.
 
 The full-sample row drops ETFs that have not listed yet and renormalizes. Read
 `coverage_windows.csv` before treating that row as what the live book held.

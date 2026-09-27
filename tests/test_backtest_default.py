@@ -23,7 +23,6 @@ from src.dashboard.app import (
 
 
 def _fixture():
-    idx = pd.to_datetime(['2005-01-04', '2005-01-05', '2005-01-06'])
     cdn_idx = pd.to_datetime(['2012-11-27', '2012-11-28'])
     comparison = pd.DataFrame(
         [
@@ -90,18 +89,20 @@ def _fixture():
         'volatility': '12.52%',
         'win_rate': '54.6%',
     }
-    curve = pd.Series([1.0, 1.01, 1.02], index=idx)
-    targeted_monthly = pd.Series([0.02], index=pd.to_datetime(['2005-01-31']))
-    lookahead_monthly = pd.Series([0.15], index=pd.to_datetime(['2005-01-31']))
+    curve = pd.Series([1.0, 1.02], index=pd.to_datetime(['2005-01-31', '2005-02-28']))
+    lookahead_curve = pd.Series([1.0, 1.15], index=curve.index)
+    auditor_curve = pd.Series([1.0, 1.008], index=curve.index)
+    # Stale production file and a poisoned packed monthly. The heatmap must
+    # follow the selected equity curve, not either of these.
+    production_monthly = pd.Series([0.15], index=pd.to_datetime(['2005-01-31']))
     return {
         'backtest_results': comparison,
         'equity_curve': curve,
         'all_equity_curves': pd.DataFrame({
-            'Optimized Regime Strategy': curve,
+            'Optimized Regime Strategy': pd.Series(9.0, index=curve.index),
             'S&P 500': curve * 0.9,
         }),
-        # Stale file that must not drive the heatmap when a path series exists.
-        'monthly_returns': lookahead_monthly,
+        'monthly_returns': production_monthly,
         'audit': {
             'lagged_metrics': {
                 'targeted': targeted,
@@ -111,14 +112,14 @@ def _fixture():
                 'unlagged': unlagged,
                 'targeted_curve': curve,
                 'standard_curve': curve,
-                'lookahead_curve': curve * 1.05,
-                'lagged_curve': curve * 0.95,
+                'lookahead_curve': lookahead_curve,
+                'lagged_curve': auditor_curve,
                 'unlagged_curve': curve * 1.08,
-                'targeted_monthly': targeted_monthly,
-                'standard_monthly': targeted_monthly,
-                'lookahead_monthly': lookahead_monthly,
-                'lagged_monthly': pd.Series([0.008], index=pd.to_datetime(['2005-01-31'])),
-                'unlagged_monthly': pd.Series([0.03], index=pd.to_datetime(['2005-01-31'])),
+                'targeted_monthly': production_monthly,
+                'standard_monthly': production_monthly,
+                'lookahead_monthly': production_monthly,
+                'lagged_monthly': production_monthly,
+                'unlagged_monthly': production_monthly,
             }
         },
         'timestamps': {},
@@ -203,8 +204,31 @@ def _tables(node, acc=None):
     return acc
 
 
-def _card_after(texts, title):
-    return texts[texts.index(title) + 1]
+def _trace_named(body, name):
+    graphs = []
+
+    def walk(node):
+        if node is None or isinstance(node, (str, dict)):
+            return
+        if isinstance(node, (list, tuple)):
+            for item in node:
+                walk(item)
+            return
+        if node.__class__.__name__ == 'Graph':
+            graphs.append(node)
+        children = getattr(node, 'children', None)
+        if isinstance(children, (list, tuple)):
+            for child in children:
+                walk(child)
+        elif children is not None:
+            walk(children)
+
+    walk(body)
+    for graph in graphs:
+        for trace in getattr(graph.figure, 'data', []):
+            if getattr(trace, 'name', None) == name:
+                return trace
+    return None
 
 
 def _heatmap_text(body):
@@ -242,6 +266,10 @@ def _heatmap_text(body):
     return ' '.join(chunks)
 
 
+def _card_after(texts, title):
+    return texts[texts.index(title) + 1]
+
+
 class BacktestDefaultTests(unittest.TestCase):
     def test_fresh_backtest_tab_shows_targeted_fix(self):
         tab = build_backtest_tab(_fixture())
@@ -272,8 +300,9 @@ class BacktestDefaultTests(unittest.TestCase):
 
     def test_heatmap_matches_selected_path_not_the_stale_file(self):
         data = _fixture()
-        self.assertEqual(float(monthly_for_path(data, BACKTEST_PATH_TARGETED).iloc[0]), 0.02)
-        self.assertEqual(float(monthly_for_path(data, BACKTEST_PATH_LOOKAHEAD).iloc[0]), 0.15)
+        self.assertAlmostEqual(float(monthly_for_path(data, BACKTEST_PATH_TARGETED).iloc[-1]), 0.02)
+        self.assertAlmostEqual(float(monthly_for_path(data, BACKTEST_PATH_LOOKAHEAD).iloc[-1]), 0.15)
+        self.assertAlmostEqual(float(monthly_for_path(data, BACKTEST_PATH_AUDITOR).iloc[-1]), 0.008)
         targeted_body = build_backtest_path_body(data, BACKTEST_PATH_TARGETED)
         targeted_heat = _heatmap_text(targeted_body)
         self.assertIn('2.0', targeted_heat)
@@ -282,6 +311,26 @@ class BacktestDefaultTests(unittest.TestCase):
         old_heat = _heatmap_text(old_body)
         self.assertIn('15.0', old_heat)
         self.assertEqual(_card_after(_texts(old_body), 'Annual Return'), '14.81%')
+
+    def test_radio_switches_cards_curve_and_heatmap_together(self):
+        data = _fixture()
+        targeted = build_backtest_path_body(data, BACKTEST_PATH_TARGETED)
+        auditor = build_backtest_path_body(data, BACKTEST_PATH_AUDITOR)
+        self.assertEqual(_card_after(_texts(targeted), 'Annual Return'), '13.43%')
+        self.assertEqual(_card_after(_texts(auditor), 'Annual Return'), '12.17%')
+        self.assertIn('2.0', _heatmap_text(targeted))
+        self.assertNotIn('15.0', _heatmap_text(targeted))
+        auditor_heat = _heatmap_text(auditor)
+        self.assertIn('0.8', auditor_heat)
+        self.assertNotIn('15.0', auditor_heat)
+        targeted_trace = _trace_named(targeted, TARGETED_SERIES_LABEL)
+        auditor_trace = _trace_named(auditor, AUDITOR_SERIES_LABEL)
+        self.assertIsNotNone(targeted_trace)
+        self.assertIsNotNone(auditor_trace)
+        self.assertAlmostEqual(float(list(targeted_trace.y)[-1]), 102_000.0)
+        self.assertAlmostEqual(float(list(auditor_trace.y)[-1]), 100_800.0)
+        self.assertIsNone(_trace_named(targeted, 'Optimized Regime Strategy'))
+        self.assertIsNone(_trace_named(auditor, 'Optimized Regime Strategy'))
 
     def test_lookahead_radio_is_labeled_and_not_the_default(self):
         body = build_backtest_path_body(_fixture(), BACKTEST_PATH_LOOKAHEAD)

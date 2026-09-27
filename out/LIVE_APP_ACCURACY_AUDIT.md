@@ -14,10 +14,11 @@ before-state and are left as the audit record.
 **Honesty fix (2026-09-27, this branch — not what the live Cloud Run page shows):**
 the default clock is path B (CPI+1, GDP+4, VIX and SPY momentum lagged one month).
 The backtest number for that path includes the daily overlay in
-`run_optimized_regime_backtest` (200-MA, portfolio vol target, portfolio drawdown).
-Live orders read that same overlay. Do not freeze a CAGR from this note; read
-`data/backtest_results/lag_honesty.csv` and `coverage_windows.csv` from
-`python scripts/ab_vintage.py`. AIPO and DBMF are missing for most of the long
+`run_optimized_regime_backtest`: 200-MA, VIX linear 28→40, 20-session SPY
+drawdown, portfolio vol target, and portfolio drawdown shrink. Live orders read
+that same overlay. There is no event-only live mode. Do not freeze a CAGR from
+this note; read `data/backtest_results/lag_honesty.csv` and `coverage_windows.csv`
+from `python scripts/ab_vintage.py`. AIPO and DBMF are missing for most of the long
 window; the engine renormalizes, it does not hold the gap as cash.
 
 The tables below are the **live site before this fix**. They describe the page that

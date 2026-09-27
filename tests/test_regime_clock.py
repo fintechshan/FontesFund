@@ -4,9 +4,16 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
+import numpy as np
 import pandas as pd
 
-from src.backtester.daily_overlay import AGGRESSIVE_ONLY, dd_scale, weights_from_overlay
+from src.backtester.daily_overlay import (
+    AGGRESSIVE_ONLY,
+    dd_scale,
+    spy_drawdown_scale,
+    vix_linear_scale,
+    weights_from_overlay,
+)
 from src.backtester.regime_clock import (
     CPI_RELEASE_LAG_M,
     GDP_RELEASE_LAG_M,
@@ -260,13 +267,69 @@ class OverlayAndLagTests(unittest.TestCase):
         self.assertAlmostEqual(weights["IEF"], 0.18)
         self.assertAlmostEqual(sum(weights.values()), 0.60)
 
-    def test_aggressive_vix_band_is_not_the_production_policy(self):
-        from config.regime_rules import STRATEGY_PARAMS
-        self.assertNotIn(28, STRATEGY_PARAMS.values())
-        self.assertNotIn(40, STRATEGY_PARAMS.values())
+    def test_headline_equity_cut_matches_live_weights(self):
+        self.assertEqual(vix_linear_scale(28), 1.0)
+        self.assertAlmostEqual(vix_linear_scale(34), 0.5)
+        self.assertEqual(vix_linear_scale(40), 0.0)
+        self.assertEqual(vix_linear_scale(55), 0.0)
+        self.assertEqual(spy_drawdown_scale(-0.03), 1.0)
+        self.assertAlmostEqual(spy_drawdown_scale(-0.07), 0.5)
+        self.assertEqual(spy_drawdown_scale(-0.10), 0.0)
         self.assertEqual(AGGRESSIVE_ONLY["vix_full_exposure"], 28.0)
-        self.assertEqual(AGGRESSIVE_ONLY["vix_zero_equity"], 40.0)
         self.assertEqual(AGGRESSIVE_ONLY["spy_dd_window"], 20)
+        overlay = {
+            "policy": "optimized_daily",
+            "trend_risk_on": True,
+            "vol_scale": 1.0,
+            "dd_scale": 0.50,
+            "equity_scale": 0.50,
+            "base_weights": {"SPY": 0.60, "IEF": 0.40},
+            "defense_weights": {},
+            "tradable": ["SPY", "IEF", "SHY", "AGG", "GLD"],
+        }
+        weights = weights_from_overlay(overlay)
+        # Equity cut first (SPY 0.60 → 0.30, freed 0.30 into the safe basket),
+        # then the portfolio drawdown scale of 0.50.
+        self.assertAlmostEqual(weights["SPY"], 0.15)
+        self.assertAlmostEqual(weights["IEF"], 0.2225)
+        self.assertAlmostEqual(sum(weights.values()), 0.50)
+
+    def test_engine_overlay_matches_the_live_equity_cut(self):
+        from src.backtester.engine import BacktestEngine
+
+        idx = pd.bdate_range("2020-01-02", periods=40)
+        price = pd.DataFrame({
+            "SPY": np.linspace(100.0, 70.0, len(idx)),
+            "IEF": np.linspace(100.0, 101.0, len(idx)),
+            "SHY": 100.0,
+            "AGG": 100.0,
+            "GLD": 100.0,
+        }, index=idx)
+        vix = pd.Series(35.0, index=idx)
+        regime = pd.DataFrame({"regime": ["goldilocks"] * len(idx)}, index=idx)
+        engine = BacktestEngine(price, risk_free_rate=0.0)
+        result = engine.run_optimized_regime_backtest(
+            regime,
+            {"goldilocks": {"SPY": 0.6, "IEF": 0.4}},
+            vix_data=vix,
+            use_har_vol=False,
+            risk_parity=False,
+            target_vol=0.50,
+            vol_lo=1.0,
+            vol_hi=1.0,
+        )
+        overlay = result.overlay
+        self.assertEqual(overlay["policy"], "optimized_daily")
+        self.assertAlmostEqual(overlay["vix_scale"], vix_linear_scale(35.0))
+        self.assertAlmostEqual(
+            overlay["equity_scale"],
+            min(overlay["vix_scale"], overlay["spy_dd_scale"]),
+        )
+        self.assertLess(overlay["spy_dd_scale"], 1.0)
+        live = weights_from_overlay(overlay)
+        expected_spy = 0.6 * overlay["equity_scale"] * overlay["vol_scale"] * overlay["dd_scale"]
+        self.assertAlmostEqual(live.get("SPY", 0.0), expected_spy, places=6)
+        self.assertGreater(sum(live.values()), 0.0)
 
     def test_publication_lag_percentiles(self):
         releases = pd.DataFrame([
