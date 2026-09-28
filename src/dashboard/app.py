@@ -1659,6 +1659,19 @@ def _as_series(obj):
     return pd.Series(dtype=float)
 
 
+def _first_series(*candidates):
+    """First non-empty Series among candidates.
+
+    ``a or b`` raises ValueError when ``a`` is a Series. Curve fallbacks
+    (targeted, then standard) must go through this instead of truthiness.
+    """
+    for obj in candidates:
+        series = _as_series(obj)
+        if len(series) > 0:
+            return series
+    return pd.Series(dtype=float)
+
+
 def _metrics_from_csv_row(row):
     if row is None:
         return {}
@@ -2709,6 +2722,13 @@ def build_auditor_tab(data):
             bias_desc = e['description']
             break
 
+    # Series have no boolean value. `targeted_curve or standard_curve` crashes
+    # create_app before the container listens on PORT.
+    auditor_targeted_curve = _first_series(
+        lagged_metrics.get('targeted_curve'),
+        lagged_metrics.get('standard_curve'),
+    )
+
     return html.Div([
         # Audit update time
         make_timestamp_strip(data, 'audit'),
@@ -2860,7 +2880,7 @@ def build_auditor_tab(data):
                 ], md=6),
                 dbc.Col([
                     dcc.Graph(figure=make_auditor_curves(
-                        lagged_metrics.get('targeted_curve') or lagged_metrics.get('standard_curve'),
+                        auditor_targeted_curve,
                         lagged_metrics.get('lagged_curve'),
                         lagged_metrics.get('lookahead_curve'),
                     ), config={'displayModeBar': False})
@@ -2978,11 +2998,11 @@ def build_cdn_portfolio_tab(data):
     us_col = us_cmp['label']
     _lm = _lagged_bundle(data)
     lag_eq = _as_series(_lm.get('lookahead_curve'))
-    prod_eq = _as_series(_lm.get('targeted_curve'))
-    if len(prod_eq) == 0:
-        prod_eq = _as_series(_lm.get('standard_curve'))
-    if len(prod_eq) == 0:
-        prod_eq = _as_series(us_eq)
+    prod_eq = _first_series(
+        _lm.get('targeted_curve'),
+        _lm.get('standard_curve'),
+        us_eq,
+    )
     us_primary = prod_eq if us_cmp.get('uses_targeted_fix') and len(prod_eq) else prod_eq
     cdn_start, cdn_end, cdn_years = _series_span(cdn_eq)
     us_curve_start, us_curve_end, _us_curve_years = _series_span(us_primary if len(us_primary) else us_eq)
