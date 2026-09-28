@@ -103,6 +103,12 @@ class BandAndDedupeTests(unittest.TestCase):
         self.assertIn('28-30', body)
         self.assertNotIn('| 标的 |', body)
         self.assertIn('目标权重不变', body)
+        self.assertIn('需要调仓：否', body)
+        self.assertIn('防御姿态：应收紧', body)
+        self.assertIn('月中再平衡：不建议', body)
+        self.assertIn('观察为主', body)
+        self.assertIn('scripts/ibkr_rebalance.py', body)
+        self.assertNotIn('减持 QQQ', body)
 
     def test_unchanged_regime_and_band_silent(self):
         prev = _state('reflation', '0-20', '正常', 14.0)
@@ -145,11 +151,59 @@ class MessageTests(unittest.TestCase):
             body,
         )
         self.assertLess(body.index('| IEF |'), body.index('| AIPO |'))
+        self.assertLess(body.index('### 组合变化'), body.index('US 目标权重'))
+        self.assertLess(body.index('US 目标权重'), body.index('### 建议操作'))
+        self.assertLess(body.index('### 建议操作'), body.index('### 判定依据'))
+        self.assertIn('**需要调仓：是**', body)
+        self.assertIn(nr.posture_line('US', REGIME_WEIGHTS['goldilocks'], REGIME_WEIGHTS['deflation']), body)
+        self.assertIn(nr.posture_line('CDN', CDN_REGIME_WEIGHTS['goldilocks'], CDN_REGIME_WEIGHTS['deflation']), body)
+        self.assertIn('QQQ+SOXX+SPY+AIPO', body)
+        self.assertIn('IEF+GLD+DBMF', body)
+        self.assertIn(
+            '- ' + nr.trade_line('QQQ', qqq_old, qqq_new),
+            body,
+        )
+        self.assertIn(
+            '- ' + nr.trade_line('ZQQ.TO', zqq_old, zqq_new),
+            body,
+        )
+        self.assertLess(body.index('减持 QQQ'), body.index('增持 IEF'))
+        self.assertIn('scripts/ibkr_rebalance.py', body)
+        self.assertIn('dry-run', body)
+        self.assertIn('不是已成交', body)
+        self.assertIn('Regime Monitor', body)
+        prev_hot = _state('goldilocks', '0-20', '正常', 18.0)
+        cur_hot = _state('deflation', '20-28', '偏高', 22.4, price_asof='2026-09-25')
+        _action_hot, reasons_hot = nr.classify_change(prev_hot, cur_hot, force=False)
+        self.assertIn('vix', reasons_hot)
+        _title_hot, body_hot = nr.build_message(prev_hot, cur_hot, reasons_hot)
+        self.assertIn('同日 VIX 升档：日频 overlay 另应收紧。目标权重仍按新象限调整。', body_hot)
         raw = json.dumps({'title': title, 'body': body}, ensure_ascii=False).encode('utf-8')
         self.assertIn('调仓'.encode('utf-8'), raw)
         restored = json.loads(raw.decode('utf-8'))
         self.assertEqual(restored['title'], title)
         self.assertIn('→', restored['title'])
+
+    def test_epsilon_and_vix_ease(self):
+        self.assertFalse(nr.needs_rebalance({'QQQ': 0.30}, {'QQQ': 0.305}))
+        self.assertTrue(nr.needs_rebalance({'QQQ': 0.30}, {'QQQ': 0.29}))
+        self.assertEqual(nr.vix_direction('30-40', '20-28'), 'ease')
+        self.assertEqual(nr.vix_direction('0-20', '28-30'), 'tighten')
+        prev = _state('goldilocks', '30-40', '大幅降敞口 / 象限转 deflation', 32.0)
+        cur = _state('goldilocks', '0-20', '正常', 16.0)
+        _action, reasons = nr.classify_change(prev, cur, force=False)
+        _title, body = nr.build_message(prev, cur, reasons)
+        self.assertIn('防御姿态：可放松', body)
+        self.assertIn('需要调仓：否', body)
+        self.assertIn('观察为主，不改目标权重', body)
+        self.assertNotIn('减持 ', body)
+
+    def test_force_is_not_a_rebalance(self):
+        cur = _state('goldilocks', '0-20', '正常', 15.0)
+        _action, reasons = nr.classify_change(None, cur, force=True)
+        _title, body = nr.build_message(None, cur, reasons)
+        self.assertIn('需要调仓：否', body)
+        self.assertNotIn('减持 QQQ', body)
 
     def test_source_file_is_utf8_and_imports_clock(self):
         text = (ROOT / 'scripts' / 'notify_regime.py').read_text(encoding='utf-8')

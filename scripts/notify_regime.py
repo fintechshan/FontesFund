@@ -14,6 +14,10 @@ notify_regime.py — 象限 / VIX 跨档提醒（GitHub Issue → 邮件）。
 同一档内的 VIX 波动、以及象限未变，都静默退出。首次运行只写
 data/notify_state.json 基线，不开 Issue；--force 用于测试发信。
 
+象限变了时，Issue 先写组合变化：旧→新、需要调仓（任一标的 |差额|≥1%）、
+美加风险姿态、权重表、减持/增持清单、怎么执行。只跨 VIX 档时写需要调仓：否，
+并说明防御应收紧或可放松；不改目标权重。
+
 targeted 与仪表盘、ibkr_rebalance 相同：CPI +1 个月，GDP +4 个月，
 VIX 月均和 12 个月动量再 shift(1)。不 import run_dashboard（那会跑启动逻辑）。
 """
@@ -45,6 +49,19 @@ VIX_BANDS = (
     (30.0, 40.0, '30-40', '大幅降敞口 / 象限转 deflation'),
     (40.0, None, '40+', '接近清仓股票'),
 )
+
+# 任一标的 |新-旧| 达到这一档才算「需要调仓」，并写入建议清单。
+REBALANCE_EPS = 0.01
+
+# 风险姿态一行。未列入的标的不会被静默丢掉：建议清单仍按全部差额生成。
+US_EQUITY = ('QQQ', 'SOXX', 'SPY', 'AIPO')
+US_DEFENSIVE = ('IEF', 'GLD', 'DBMF')
+CDN_EQUITY = ('ZQQ.TO', 'VFV.TO', 'ZEB.TO', 'XGD.TO')
+CDN_DEFENSIVE = ('XBB.TO', 'CGL-C.TO')
+POSTURE_BASKETS = {
+    'US': (US_EQUITY, US_DEFENSIVE),
+    'CDN': (CDN_EQUITY, CDN_DEFENSIVE),
+}
 
 FRED_SERIES = (
     ('vix', 'VIXCLS'),
@@ -280,6 +297,80 @@ def book_weights(regime: str) -> tuple[dict, list]:
     return out, missing
 
 
+def material_deltas(old_w: dict, new_w: dict, eps: float = REBALANCE_EPS) -> list:
+    """Sleeves whose weight moved by at least eps. Cuts first, then adds."""
+    rows = []
+    for ticker in set(old_w) | set(new_w):
+        old = float(old_w.get(ticker, 0.0))
+        new = float(new_w.get(ticker, 0.0))
+        delta = new - old
+        if abs(delta) + 1e-12 >= eps:
+            rows.append((ticker, old, new, delta))
+    rows.sort(key=lambda row: (row[3] >= 0, abs(row[3]) * -1, row[0]))
+    return rows
+
+
+def needs_rebalance(old_w: dict, new_w: dict, eps: float = REBALANCE_EPS) -> bool:
+    return bool(material_deltas(old_w, new_w, eps))
+
+
+def _bucket_sum(weights: dict, names) -> float:
+    return sum(float(weights.get(name, 0.0)) for name in names)
+
+
+def posture_line(book: str, old_w: dict, new_w: dict) -> str:
+    equity_names, defensive_names = POSTURE_BASKETS[book]
+    old_eq, new_eq = _bucket_sum(old_w, equity_names), _bucket_sum(new_w, equity_names)
+    old_def, new_def = _bucket_sum(old_w, defensive_names), _bucket_sum(new_w, defensive_names)
+    eq_label = '+'.join(equity_names)
+    def_label = '+'.join(defensive_names)
+    return (
+        f'**{book} 风险姿态：** 股票仓 {format_pct(old_eq)} → {format_pct(new_eq)}'
+        f'（{format_pct(new_eq - old_eq, signed=True)}）；'
+        f'防御仓 {format_pct(old_def)} → {format_pct(new_def)}'
+        f'（{format_pct(new_def - old_def, signed=True)}）。'
+        f'股票仓 = {eq_label}；防御仓 = {def_label}。'
+    )
+
+
+def trade_line(ticker: str, old: float, new: float) -> str:
+    delta = new - old
+    verb = '增持' if delta > 0 else '减持'
+    return f'{verb} {ticker} {format_pct(old)} → {format_pct(new)}（{format_pct(delta, signed=True)}）'
+
+
+def vix_direction(prev_band, cur_band) -> str:
+    ranks = {key: i for i, (_lo, _hi, key, _name) in enumerate(VIX_BANDS)}
+    old = ranks.get(prev_band)
+    new = ranks.get(cur_band)
+    if old is None or new is None or old == new:
+        return 'same'
+    return 'tighten' if new > old else 'ease'
+
+
+def _ops_regime() -> list[str]:
+    return [
+        '',
+        '### 怎么执行',
+        '- 上面是目标权重差额，不是已成交。这封邮件不会下单。',
+        '- 本机 TWS 或 Gateway 开着时，先跑 `python scripts/ibkr_rebalance.py`（默认 dry-run，只打印计划）。',
+        '- 核对纸账户计划后，再加 `--execute` 才会发单。脚本拒绝向非纸账户 `--execute`。',
+        '- 对照仪表盘 **Regime Monitor**（当前象限）和 **Portfolio**（目标权重）。',
+    ]
+
+
+def _ops_vix_only() -> list[str]:
+    return [
+        '',
+        '### 怎么执行',
+        '- **月中再平衡：不建议。** 观察为主，不改四象限目标权重。',
+        '- 日频股票敞口由引擎按 VIX 与回撤缩放。这一档只说明 overlay 应收紧还是可放松。',
+        '- 若要核对账户是否偏离当前象限目标，本机跑 `python scripts/ibkr_rebalance.py`（默认 dry-run）。不要为了这一档加上 `--execute`。',
+        '- 对照仪表盘 **Regime Monitor** 和 **Portfolio**。',
+        '- 打印出来的是目标，不是已成交。',
+    ]
+
+
 def weight_table(old_regime, new_regime: str) -> str:
     """US + CDN target weights. With a previous regime, the last column is the delta."""
     lines = []
@@ -316,6 +407,55 @@ def weight_table(old_regime, new_regime: str) -> str:
     return '\n'.join(lines)
 
 
+def _rebalance_flag(old_regime, new_regime: str) -> tuple[str, dict]:
+    new_w, _missing = book_weights(new_regime)
+    old_w, _old_missing = book_weights(old_regime) if old_regime else ({}, [])
+    flags = {}
+    any_move = False
+    for book in ('US', 'CDN'):
+        moved = needs_rebalance(old_w.get(book, {}), new_w.get(book, {}))
+        flags[book] = moved
+        any_move = any_move or moved
+    return ('是' if any_move else '否'), flags
+
+
+def _suggestion_block(old_regime, new_regime: str) -> list[str]:
+    new_w, missing = book_weights(new_regime)
+    old_w, _old_missing = book_weights(old_regime) if old_regime else ({}, [])
+    lines = ['', '### 建议操作（目标差额，尚未下单）']
+    for book in ('US', 'CDN'):
+        lines.append(f'**{book}**')
+        if book in missing:
+            lines.append('- 配置模块未能导入，没有清单。')
+            continue
+        rows = material_deltas(old_w.get(book, {}), new_w.get(book, {}))
+        if not rows:
+            lines.append('- 没有达到 1% 的权重变化。')
+            continue
+        for ticker, old, new, _delta in rows:
+            lines.append(f'- {trade_line(ticker, old, new)}')
+    lines.extend(_ops_regime())
+    return lines
+
+
+def _vix_only_block(prev, cur: dict) -> list[str]:
+    direction = vix_direction((prev or {}).get('vix_band'), cur.get('vix_band'))
+    if direction == 'tighten':
+        posture = '**防御姿态：应收紧**（VIX 档位升高，日频 overlay 降低股票敞口）'
+    elif direction == 'ease':
+        posture = '**防御姿态：可放松**（VIX 档位回落，日频 overlay 可以恢复股票敞口）'
+    else:
+        posture = '**防御姿态：与上一档相同**'
+    return [
+        '### 组合变化',
+        f"象限未变：**{cur['regime']}**。目标权重不变。",
+        '**需要调仓：否**',
+        posture,
+        '**月中再平衡：不建议（观察为主，不改目标权重）**',
+        *_ops_vix_only(),
+    ]
+
+
 def _fmt_snapshot(cur: dict) -> list[str]:
     cpi = cur.get('cpi_yoy')
     gdp = cur.get('gdp')
@@ -331,11 +471,9 @@ def _fmt_snapshot(cur: dict) -> list[str]:
         '',
         '象限与仪表盘相同，用 targeted 时钟：CPI 滞后 1 个月，GDP 滞后 4 个月，'
         'VIX 月均和 12 个月动量再滞后 1 个月。最新 VIX 高于 30 时，当日标签改为 deflation。'
-        '下面的 VIX 档位用最新收盘；同一档内的波动不单独发信。',
+        'VIX 档位用最新收盘；同一档内的波动不单独发信。',
         '',
-        '### 执行提醒',
-        '- 上表是四象限目标权重。日频股票敞口由引擎按 VIX 与回撤计算；本提醒标出跨档。',
-        '- 这是信号提醒，供人工调仓参考，不构成投资建议，也不会自动下单。',
+        '本邮件是信号提醒，不是成交回执，也不构成投资建议。',
     ]
 
 
@@ -348,16 +486,42 @@ def build_message(prev, cur: dict, reasons: dict) -> tuple[str, str]:
     else:
         title = f"[测试] 象限 {cur['regime']} / VIX {cur['vix']}（{cur['price_asof']}）"
 
-    body = ['### 触发原因', '\n'.join(f'- {text}' for text in reasons.values()), '']
     if 'regime' in reasons:
-        body.append(f"当前象限：**{cur['regime']}**（原 {old_regime or '无记录'}）")
+        flag, _books = _rebalance_flag(old_regime, cur['regime'])
+        new_w, _missing = book_weights(cur['regime'])
+        old_w, _old_missing = book_weights(old_regime) if old_regime else ({}, [])
+        body = [
+            '### 组合变化',
+            f"象限：**{old_regime or '无记录'} → {cur['regime']}**",
+            f'**需要调仓：{flag}**（任一标的权重变化达到 1% 为「是」）',
+        ]
+        if 'vix' in reasons:
+            direction = vix_direction((prev or {}).get('vix_band'), cur.get('vix_band'))
+            if direction == 'tighten':
+                body.append('同日 VIX 升档：日频 overlay 另应收紧。目标权重仍按新象限调整。')
+            elif direction == 'ease':
+                body.append('同日 VIX 降档：日频 overlay 可放松。目标权重仍按新象限调整。')
+        for book in ('US', 'CDN'):
+            if book in new_w:
+                body.append(posture_line(book, old_w.get(book, {}), new_w.get(book, {})))
         body.append(weight_table(old_regime, cur['regime']))
+        body.extend(_suggestion_block(old_regime, cur['regime']))
+    elif 'vix' in reasons:
+        body = _vix_only_block(prev, cur)
     elif 'init' in reasons or 'forced' in reasons:
-        body.append(f"当前象限：**{cur['regime']}**")
-        body.append('下面是当前目标权重，供对照。这不是一笔已发生的调仓差额。')
-        body.append(weight_table(None, cur['regime']))
+        body = [
+            '### 组合变化',
+            f"当前象限：**{cur['regime']}**",
+            '**需要调仓：否**（试发或首次基线，没有上一档可比）',
+            '下面是当前目标权重，供对照。这不是一笔已发生的调仓差额。',
+            weight_table(None, cur['regime']),
+        ]
     else:
-        body.append(f"象限未变：**{cur['regime']}**。目标权重不变。")
+        body = [
+            '### 组合变化',
+            f"象限未变：**{cur['regime']}**。目标权重不变。",
+            '**需要调仓：否**',
+        ]
     body.extend(_fmt_snapshot(cur))
     return title, '\n'.join(body)
 
