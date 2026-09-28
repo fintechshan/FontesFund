@@ -89,6 +89,8 @@ python scripts/notify_regime.py --refresh          # first local baseline, no Is
 python -m unittest tests.test_notify_regime
 ```
 
+`.github/workflows/test-notify.yml` runs that file on pull requests that touch the notifier. It does not use `FRED_API_KEY`. The scheduled workflow is the one that needs the secret.
+
 ## Files
 
 | Path | Role |

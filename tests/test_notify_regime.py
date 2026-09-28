@@ -308,6 +308,13 @@ class WorkflowContractTests(unittest.TestCase):
         )
         self.assertNotIn('run_backtest.py', run_steps)
 
+    def test_unit_ci_does_not_need_fred(self):
+        text = (ROOT / '.github' / 'workflows' / 'test-notify.yml').read_text(encoding='utf-8')
+        body = '\n'.join(line for line in text.splitlines() if not line.strip().startswith('#'))
+        self.assertIn('tests.test_notify_regime', body)
+        self.assertNotIn('FRED_API_KEY', body)
+        self.assertNotIn('secrets.', body)
+
 
 if __name__ == '__main__':
     unittest.main()
