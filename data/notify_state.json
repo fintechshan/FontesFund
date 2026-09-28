@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "clock": "targeted",
+  "regime": "goldilocks",
+  "vix_band": "0-20",
+  "vix_band_name": "正常",
+  "vix": 14.2,
+  "cpi_yoy": 3.71,
+  "gdp": 1.5,
+  "spy_momentum": 0.1794,
+  "price_asof": "2026-09-25",
+  "checked_at": "2026-09-28 04:50 UTC"
+}
