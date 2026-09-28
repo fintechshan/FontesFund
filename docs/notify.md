@@ -1,6 +1,8 @@
 # 象限 / VIX 跨档提醒
 
-Weekday notifier. It opens a GitHub Issue (label `rebalance`) only when the Merrill regime changes or the latest VIX print crosses a band. GitHub notification settings deliver the email. An unchanged regime and the same VIX band end the run with no Issue.
+Weekday notifier. It opens a GitHub Issue (label `rebalance`) only when the Merrill regime changes or the latest VIX print crosses a band. GitHub notification settings deliver the email. An unchanged regime and the same VIX band end the run with no Issue. There is no SMTP send.
+
+If a run should have opened that Issue and it did not, the job fails and an audit Issue (title prefix `[审计]`, label `notify-audit`) is opened so the miss is not silent. See [Audit](#audit).
 
 This path is separate from Cloud Run and from `run_backtest.py`. It does not change `REGIME_WEIGHTS`, `CDN_REGIME_WEIGHTS`, or the CPI+1 / GDP+4 lag.
 
@@ -145,7 +147,56 @@ VIX-only (regime stays `goldilocks`, band `0-20` → `28-30`):
 
 5. **Force test**  
    Actions → 象限切换提醒 → Run workflow → set **force** → Run.  
-   That opens one test Issue even when the regime and band are unchanged. Use it to confirm mail delivery, then close the Issue.
+   That opens one test Issue even when the regime and band are unchanged. Use it to confirm mail delivery, then close the Issue. Closing is fine. Deleting it makes the next audit treat the send as missing.
+
+## Audit
+
+The mail channel is the `rebalance` Issue itself (assignee + label → GitHub notification). The audit answers: when this run should have opened that Issue, does a matching Issue exist?
+
+A run should notify when the regime changes, the latest VIX print crosses a band, or the workflow is started with **force**. Same run:
+
+1. Opens the Issue and requires `number` and `html_url` in the API response.
+2. Stores them on `data/notify_state.json` as `last_delivery`, and writes a gitignored run log at `data/notify_audit.json`.
+3. Exits non-zero **without** advancing the regime baseline if create fails, the response has no number or URL, or Actions is missing `--github-issue`.
+
+Advancing the baseline after a missed create would make the next day silent. Leaving the previous baseline in place means the next run tries the same alert again.
+
+The following step runs `python scripts/notify_regime.py --audit` when the notify step succeeded or failed (not when it was skipped, for example because install failed):
+
+| Situation | Audit |
+|---|---|
+| This run should have notified, and a matching `rebalance` Issue exists | Pass. |
+| This run should have notified, and no matching Issue exists | Fail. Open one `[审计]` Issue if that fingerprint does not already have an open `notify-audit` Issue. |
+| This run stayed silent, and `last_delivery` records an earlier send | Re-check that Issue. Deleted (HTTP 404) → miss. Closed, retitled, or unlabeled still counts as sent. |
+| Baseline only, or silent with no `last_delivery` | Quiet. No API call, no audit Issue. |
+| Notify step died before a should-fire decision (missing `FRED_API_KEY`, stale prices, short history) | Not a missed alert. The notify step is already red. Audit stays quiet and does not open `[审计]`. |
+
+A stored issue number matches at any age when that Issue still exists and is not a pull request. Closing it, editing the title, or removing the label does not count as a miss. Searching by title (no number, or the number returns 404) only accepts an Issue with the `rebalance` label and the same title, created within **7 days** of `checked_at`, so an older test Issue cannot cover a new miss. Deleting the Issue is a miss.
+
+If this run recorded `delivery=created` and the Issue still cannot be found, `confirmed_miss` stays true even when an audit Issue for that fingerprint is already open, so the new baseline is not pushed. A create that failed earlier does not push a baseline anyway; once its `[审计]` Issue is open, later audits do not open a second one.
+
+The audit Issue is Chinese-titled, for example `[审计] 未发出象限切换提醒（2026-09-25）`. The body names the expected `rebalance` title and states that mail is a GitHub notification, not SMTP. The workflow sets `confirmed_miss=true` and does **not** push a new baseline, so a failed create is not frozen as “already sent”.
+
+An open `notify-audit` Issue with the same fingerprint suppresses a second audit Issue. The log says so and that audit step exits 0 (the notify step is still red when create itself failed). Close the audit Issue and the next run opens another one if the `rebalance` Issue is still missing.
+
+### Run the audit
+
+Locally, against this checkout’s state and the latest `data/notify_audit.json` if you just ran the notifier:
+
+```bash
+export GITHUB_REPOSITORY=fintechshan/FontesFund
+export GITHUB_TOKEN=...   # Issues read/write. Not required when there is nothing to verify.
+
+python scripts/notify_regime.py --audit
+```
+
+In Actions the step is **审计提醒 Issue 是否已创建** in `.github/workflows/notify.yml`. Unit tests cover the decision with a fake Issue lookup and do not call GitHub:
+
+```bash
+python -m unittest tests.test_notify_regime
+```
+
+A local change without `--github-issue` only prints. It does not advance `notify_state.json`, so a later run can still open the Issue. `--dry-run` is not a should-fire event and does not rewrite `data/notify_audit.json`.
 
 ## Data refresh
 
@@ -173,6 +224,8 @@ If branch protection rejects `github-actions[bot]`:
 
 Until the state file lands on the branch, the next run still sees the old baseline and can open a second Issue for the same change.
 
+The save step does not run when the audit step sets `confirmed_miss=true`. A should-fire that did not leave a matching Issue is not recorded as the new baseline.
+
 ## Local preview
 
 ```bash
@@ -181,9 +234,10 @@ export FRED_API_KEY=...          # or put it in .env
 
 python scripts/notify_regime.py --refresh --dry-run
 python scripts/notify_regime.py --refresh          # first local baseline, no Issue
+python scripts/notify_regime.py --audit            # quiet when nothing should have been sent
 ```
 
-`--dry-run` prints the Issue and does not write state. Omit `--github-issue` locally unless `GITHUB_TOKEN` and `GITHUB_REPOSITORY` are set. Unit tests do not call FRED:
+`--dry-run` prints the Issue and does not write state. Omit `--github-issue` locally unless `GITHUB_TOKEN` and `GITHUB_REPOSITORY` are set. A real change without `--github-issue` prints the Issue and does **not** advance the baseline. Unit tests do not call FRED:
 
 ```bash
 python -m unittest tests.test_notify_regime
@@ -195,6 +249,7 @@ python -m unittest tests.test_notify_regime
 
 | Path | Role |
 |---|---|
-| `.github/workflows/notify.yml` | Weekday cron and manual force |
-| `scripts/notify_regime.py` | Classify, dedupe, open Issue |
-| `data/notify_state.json` | Created on the first run; keep it tracked |
+| `.github/workflows/notify.yml` | Weekday cron, manual force, then `--audit` |
+| `scripts/notify_regime.py` | Classify, dedupe, open Issue, audit a miss |
+| `data/notify_state.json` | Baseline plus `last_delivery` after a successful Issue. Keep it tracked |
+| `data/notify_audit.json` | Gitignored run log for the audit step in the same job |
