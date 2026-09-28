@@ -71,6 +71,49 @@ PL = dict(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
           margin=dict(l=50, r=20, t=40, b=40),
           xaxis=dict(gridcolor='#2d2d44'), yaxis=dict(gridcolor='#2d2d44'))
 
+
+def _multi_series_chrome(title=None, *, height, bottom=136, top=None, left=68):
+    """Place the title and a long horizontal legend in separate bands.
+
+    A legend at y>1 shares the top margin with the title. Multi-series names
+    wrap and cover it (equity curve, CDN vs US, auditor overlay, regime
+    timeline). The title stays at the top of the figure; the legend is
+    anchored to the bottom, in ``bottom`` pixels reserved for wrapped rows
+    plus the x-axis tick labels. ``title.automargin`` grows the top margin
+    when a long title wraps, so the second line cannot fall into the plot.
+    """
+    has_title = bool(title)
+    if top is None:
+        top = 72 if has_title else 28
+    title_dict = dict(
+        text=title or '',
+        font=dict(family='Inter, sans-serif', color='#e6e6f0', size=15),
+        xref='container',
+        x=0,
+        xanchor='left',
+        yref='container',
+        y=1,
+        yanchor='top',
+        pad=dict(t=8, b=6, l=2, r=12),
+        automargin=True,
+    )
+    return dict(
+        height=height,
+        margin=dict(l=left, r=24, t=top, b=bottom),
+        title=title_dict,
+        legend=dict(
+            orientation='h',
+            xref='container',
+            x=0,
+            xanchor='left',
+            yref='container',
+            y=0.012,
+            yanchor='bottom',
+            font=dict(family='Inter, sans-serif', color='#c8c8d4', size=11),
+            bgcolor='rgba(0,0,0,0)',
+        ),
+    )
+
 def hex_rgba(c, a=0.1):
     h = c.lstrip('#')
     return f'rgba({int(h[0:2],16)},{int(h[2:4],16)},{int(h[4:6],16)},{a})'
@@ -143,10 +186,15 @@ def make_regime_timeline(rh):
             fig.add_trace(go.Bar(x=df.loc[m,'date'], y=df.loc[m,'y'], name=regime.title(),
                                   marker_color=REGIME_COLORS[regime],
                                   hovertemplate='%{x|%b %Y}: '+regime.title()+'<extra></extra>'))
-    ly = {**PL, 'title': 'Regime Timeline (2005 — Present)', 'barmode': 'stack',
-          'showlegend': True, 'height': 200, 'legend': dict(orientation='h', y=1.15, x=0.5, xanchor='center')}
-    ly['yaxis'] = dict(visible=False)
+    ly = {
+        **PL,
+        **_multi_series_chrome('Regime Timeline (2005 — Present)', height=270, bottom=84, top=56),
+        'barmode': 'stack',
+        'showlegend': True,
+    }
+    ly['yaxis'] = dict(visible=False, gridcolor='#2d2d44')
     fig.update_layout(**ly)
+    fig.update_xaxes(automargin=True)
     return fig
 
 def make_allocation_donut(weights):
@@ -197,9 +245,18 @@ def make_equity_curves(all_eq, equity_curve, title=None, main_name=None):
             line=dict(color='#00d97e', width=2.5),
         ))
 
-    fig.update_layout(**PL, title=title or 'Equity Curve — All Strategies ($100K Initial)', height=420,
-                      yaxis_title='Portfolio Value ($)', hovermode='x unified',
-                      legend=dict(orientation='h', y=1.12, x=0.5, xanchor='center'))
+    fig.update_layout(**{
+        **PL,
+        **_multi_series_chrome(
+            title or 'Equity Curve — All Strategies ($100K Initial)',
+            height=520,
+            bottom=136,
+        ),
+        'yaxis_title': 'Portfolio Value ($)',
+        'hovermode': 'x unified',
+    })
+    fig.update_xaxes(automargin=True)
+    fig.update_yaxes(automargin=True)
     return fig
 
 def make_drawdown(equity_curve, title='Daily drawdown'):
@@ -2369,9 +2426,18 @@ def make_auditor_curves(std_curve, lagged_curve, lookahead_curve=None):
         vals = lagged_curve * 100000
         fig.add_trace(go.Scatter(x=vals.index, y=vals.values, name='Auditor extra month',
                                   line=dict(color='#b55fe6', width=1.6, dash='dash')))
-    fig.update_layout(**PL, title='Targeted fix vs month-end look-ahead vs extra month ($100K)', height=380,
-                      yaxis_title='Portfolio Value ($)', hovermode='x unified',
-                      legend=dict(orientation='h', y=1.12, x=0.5, xanchor='center'))
+    fig.update_layout(**{
+        **PL,
+        **_multi_series_chrome(
+            'Targeted fix vs month-end look-ahead vs extra month ($100K)',
+            height=460,
+            bottom=96,
+        ),
+        'yaxis_title': 'Portfolio Value ($)',
+        'hovermode': 'x unified',
+    })
+    fig.update_xaxes(automargin=True)
+    fig.update_yaxes(automargin=True)
     return fig
 
 def make_correlation_heatmap(price_data, curr_weights):
@@ -3006,15 +3072,16 @@ def build_cdn_portfolio_tab(data):
                 hovertemplate='%{x|%b %Y}: $%{y:,.0f} USD (CDN start)<extra>US head-to-head</extra>',
             ))
 
+    # The growth heading and the bold-line note live in the card above this
+    # figure. An in-plot title shares the top band with the wrapping legend.
     overlay_fig.update_layout(
         paper_bgcolor='#1a1a2e', plot_bgcolor='#1a1a2e',
-        margin=dict(l=60, r=20, t=40, b=30), height=380,
-        legend=dict(font=dict(color='#c8c8d4', size=11), bgcolor='rgba(0,0,0,0)', orientation='h', y=1.15, x=0.5, xanchor='center'),
-        xaxis=dict(gridcolor='#2d2d44', color='#8888a0'),
-        yaxis=dict(gridcolor='#2d2d44', color='#8888a0', title='Portfolio Value ($)', tickprefix='$', tickformat=',.0f'),
-        font=dict(color='#c8c8d4'), hovermode='x unified',
-        title=dict(text='CDN vs US ($100K). Bold US line is the targeted fix.',
-                   font=dict(size=13, color='#c8c8d4')),
+        **_multi_series_chrome(None, height=500, bottom=156, top=28, left=72),
+        xaxis=dict(gridcolor='#2d2d44', color='#8888a0', automargin=True),
+        yaxis=dict(gridcolor='#2d2d44', color='#8888a0', title='Portfolio Value ($)',
+                   tickprefix='$', tickformat=',.0f', automargin=True),
+        font=dict(color='#c8c8d4', family='Inter, sans-serif'),
+        hovermode='x unified',
     )
 
     # ── Monthly return heatmap ─────────────────────────────────────────
@@ -3246,7 +3313,9 @@ def build_cdn_portfolio_tab(data):
         # Row 2: Equity curve overlay (CDN vs US)
         html.Div([
             html.H6('CDN vs US Portfolio Growth ($100,000). US default matches the Backtest tab.',
-                    style={'color': '#c8c8d4', 'marginBottom': '8px'}),
+                    style={'color': '#c8c8d4', 'marginBottom': '4px'}),
+            html.Div('Bold US line is the targeted fix.',
+                     style={'color': '#8888a0', 'fontSize': '12px', 'marginBottom': '8px'}),
             dcc.Graph(figure=overlay_fig, config={'displayModeBar': False}),
         ], style={**CS, 'marginBottom': '16px'}),
 
