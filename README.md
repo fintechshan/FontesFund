@@ -75,6 +75,9 @@ python -m src.dashboard.app
 python scripts/run_backtest.py
 ```
 
+### 5. Regime / VIX alerts (optional)
+Weekday GitHub Action. It emails you (via a `rebalance` Issue) only when the Merrill regime changes or VIX crosses a band. Setup, the `FRED_API_KEY` secret, the first silent baseline, and the manual force test are in [`docs/notify.md`](docs/notify.md).
+
 ## Portfolio Configuration
 
 - **Initial Capital**: $100,000

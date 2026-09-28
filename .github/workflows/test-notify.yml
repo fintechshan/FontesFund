@@ -1,0 +1,50 @@
+# Smoke tests for scripts/notify_regime.py. No FRED key and no GitHub token.
+# The scheduled notifier itself still needs the FRED_API_KEY secret (see notify.yml).
+
+name: Notify unit tests
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/notify_regime.py'
+      - 'tests/test_notify_regime.py'
+      - 'run_dashboard.py'
+      - 'src/backtester/regime_clock.py'
+      - 'config/regime_rules.py'
+      - 'config/cdn_regime_rules.py'
+      - '.github/workflows/notify.yml'
+      - '.github/workflows/test-notify.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/notify_regime.py'
+      - 'tests/test_notify_regime.py'
+      - 'run_dashboard.py'
+      - 'src/backtester/regime_clock.py'
+      - 'config/regime_rules.py'
+      - 'config/cdn_regime_rules.py'
+      - '.github/workflows/notify.yml'
+      - '.github/workflows/test-notify.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install test dependencies
+        run: pip install --disable-pip-version-check -q 'pandas>=2.1,<3' 'numpy>=1.24'
+
+      - name: Unit smoke (mocked state, no FRED)
+        env:
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: utf-8
+        run: python -m unittest tests.test_notify_regime -v

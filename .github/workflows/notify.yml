@@ -1,0 +1,100 @@
+# 象限 / VIX 跨档提醒。只在象限变了或 VIX 跨档时开 Issue（GitHub 通知发邮件）。
+# 没变化就静默退出。首次运行只提交 data/notify_state.json 基线，不开 Issue。
+#
+# 独立于 Cloud Run / 回测发布。缓存 data/cache/* 与 *.pkl 被 gitignore，
+# 所以这里用 FRED + SPY 轻量刷新，不跑 run_backtest.py（完整引擎大约数十秒，
+# 还要下载整组 ETF）。轻量刷新通常一两分钟内结束（含 pip）。
+#
+# 必需：仓库 Secret FRED_API_KEY。
+# 推送状态：permissions.contents: write + GITHUB_TOKEN，提交信息带 [skip ci]。
+# 若分支保护拒绝 github-actions[bot]，设置 Secret NOTIFY_PUSH_TOKEN
+# （fine-grained PAT，本仓库 Contents 读写）。见 docs/notify.md。
+
+name: 象限切换提醒
+
+on:
+  schedule:
+    # 23:00 UTC 工作日。美东夏令 19:00 / 冬令 18:00，都在美股收盘之后。
+    - cron: '0 23 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: '忽略去重，强制发一封（测试用）'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: notify-regime
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      LANG: C.UTF-8
+      PYTHONUTF8: '1'
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: 安装轻量依赖
+        run: pip install --disable-pip-version-check -q 'pandas>=2.1,<3' 'numpy>=1.24' 'yfinance>=0.2.18' 'fredapi>=0.5'
+
+      - name: 检查象限与 VIX 档位
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          NOTIFY_FORCE: ${{ github.event.inputs.force }}
+        run: |
+          set -euo pipefail
+          if [ -z "${FRED_API_KEY}" ]; then
+            echo "::error::缺少仓库 Secret FRED_API_KEY。启用步骤见 docs/notify.md"
+            exit 1
+          fi
+          args=(--refresh --github-issue)
+          if [ "${NOTIFY_FORCE}" = "true" ]; then
+            args+=(--force)
+          fi
+          python scripts/notify_regime.py "${args[@]}"
+
+      - name: 保存状态（用于去重）
+        env:
+          NOTIFY_PUSH_TOKEN: ${{ secrets.NOTIFY_PUSH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ ! -f data/notify_state.json ]; then
+            echo "::error::notify_regime.py 结束后没有 data/notify_state.json"
+            exit 1
+          fi
+          # checkout 在 schedule 上有时是 detached HEAD。钉到事件分支再提交。
+          git checkout -B "${GITHUB_REF_NAME}"
+          git add -- data/notify_state.json
+          if git diff --cached --quiet -- data/notify_state.json; then
+            echo "状态未变，无需提交"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898+github-actions[bot]@users.noreply.github.com"
+          git commit -m "象限状态更新 $(date -u +%F) [skip ci]"
+          if git push origin "HEAD:${GITHUB_REF_NAME}"; then
+            exit 0
+          fi
+          echo "::warning::GITHUB_TOKEN 推送被拒绝。分支保护常会拦住 github-actions[bot]。见 docs/notify.md"
+          if [ -z "${NOTIFY_PUSH_TOKEN}" ]; then
+            echo "::error::状态没有推上去，下次运行可能重复发信。允许 Actions 写入该分支，或设置 Secret NOTIFY_PUSH_TOKEN（Contents 读写的 PAT）。"
+            exit 1
+          fi
+          git push "https://x-access-token:${NOTIFY_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_REF_NAME}"
