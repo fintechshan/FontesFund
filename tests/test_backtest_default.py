@@ -13,6 +13,8 @@ from src.dashboard.app import (
     BACKTEST_PATH_UNLAGGED,
     LOOKAHEAD_SERIES_LABEL,
     TARGETED_SERIES_LABEL,
+    _first_series,
+    build_auditor_tab,
     build_backtest_path_body,
     build_backtest_tab,
     build_cdn_portfolio_tab,
@@ -379,6 +381,60 @@ class BacktestDefaultTests(unittest.TestCase):
         cagr = next(row for row in us_table.data if row['Metric'] == 'CAGR')
         self.assertEqual(cagr['US targeted fix (no month-end look-ahead)'], '7.01%')
         self.assertEqual(cagr['CDN Portfolio (CAD)'], '4.44%')
+
+
+class AuditorCurveSelectionTests(unittest.TestCase):
+    """Cloud Run died in create_app because `Series or Series` has no truth value."""
+
+    def test_first_series_does_not_use_truthiness(self):
+        idx = pd.to_datetime(['2005-01-31', '2005-02-28'])
+        targeted = pd.Series([1.0, 1.02], index=idx)
+        standard = pd.Series([1.0, 1.50], index=idx)
+        empty = pd.Series(dtype=float)
+        with self.assertRaises(ValueError):
+            bool(targeted)
+        chosen = _first_series(targeted, standard)
+        self.assertTrue(chosen.equals(targeted))
+        fallback = _first_series(empty, standard)
+        self.assertTrue(fallback.equals(standard))
+        from_none = _first_series(None, standard)
+        self.assertTrue(from_none.equals(standard))
+        self.assertEqual(len(_first_series(None, empty)), 0)
+        self.assertTrue(_first_series({}, standard).equals(standard))
+
+    def test_auditor_tab_builds_when_curve_keys_are_series(self):
+        data = _fixture()
+        curves = data['audit']['lagged_metrics']
+        with self.assertRaises(ValueError):
+            curves['targeted_curve'] or curves['standard_curve']
+        tab = build_auditor_tab(data)
+        targeted = _trace_named(tab, 'Targeted fix')
+        self.assertIsNotNone(targeted)
+        self.assertAlmostEqual(float(list(targeted.y)[-1]), 102_000.0)
+        self.assertIsNotNone(_trace_named(tab, 'Month-end look-ahead'))
+        self.assertIsNotNone(_trace_named(tab, 'Auditor extra month'))
+
+    def test_auditor_tab_falls_back_to_standard_curve(self):
+        data = _fixture()
+        idx = pd.to_datetime(['2005-01-31', '2005-02-28'])
+        standard = pd.Series([1.0, 1.50], index=idx)
+        curves = data['audit']['lagged_metrics']
+        curves['targeted_curve'] = pd.Series(dtype=float)
+        curves['standard_curve'] = standard
+        tab = build_auditor_tab(data)
+        targeted = _trace_named(tab, 'Targeted fix')
+        self.assertIsNotNone(targeted)
+        self.assertAlmostEqual(float(list(targeted.y)[-1]), 150_000.0)
+
+    def test_auditor_tab_uses_targeted_when_both_curves_differ(self):
+        data = _fixture()
+        idx = pd.to_datetime(['2005-01-31', '2005-02-28'])
+        curves = data['audit']['lagged_metrics']
+        curves['targeted_curve'] = pd.Series([1.0, 1.11], index=idx)
+        curves['standard_curve'] = pd.Series([1.0, 1.50], index=idx)
+        tab = build_auditor_tab(data)
+        targeted = _trace_named(tab, 'Targeted fix')
+        self.assertAlmostEqual(float(list(targeted.y)[-1]), 111_000.0)
 
 
 if __name__ == '__main__':
