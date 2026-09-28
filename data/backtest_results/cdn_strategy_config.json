@@ -1,6 +1,6 @@
 {
   "name": "Portfolio B (High-Growth 14.6%)",
-  "as_of": "2026-09-20",
+  "as_of": "2026-09-27",
   "tickers": [
     "ZQQ.TO",
     "VFV.TO",
@@ -44,12 +44,12 @@
     }
   },
   "metrics": {
-    "CAGR": "14.62%",
-    "MaxDD": "15.53%",
-    "Sharpe": "1.16",
-    "Volatility": "10.90%",
-    "Calmar": "0.94",
-    "WinRate": "56.4%",
-    "TotalReturn": "552.90%"
+    "CAGR": "12.03%",
+    "MaxDD": "15.22%",
+    "Sharpe": "0.96",
+    "Volatility": "10.46%",
+    "Calmar": "0.79",
+    "WinRate": "53.3%",
+    "TotalReturn": "429.33%"
   }
 }

@@ -47,7 +47,6 @@ from config.settings import FRED_API_KEY
 from config.regime_rules import (
     REGIME_WEIGHTS, PERFORMANCE_TARGETS,
     MOMENTUM_CONFIG, VOL_TARGET_CONFIG,
-    REGIME_VIX_DEFENSIVE,
 )
 
 logger.info("=" * 70)
@@ -274,119 +273,28 @@ if os.getenv('FORCE_REFRESH'):
         logger.error("Aborting so the automated refresh does NOT publish degraded results.")
         sys.exit(2)
 
-# Compute regime classification using rules-based approach
-# (More robust than HMM for 20-year backtest)
-logger.info("Computing regime classification...")
+# ── Regime clock (targeted fix is the saved production path) ─────────────
+# CPI stays +1 month and GDP stays +4 months. VIX monthly mean and SPY
+# 12-month momentum take lag_vix_and_momentum_one_month (shift(1) on those
+# two series only). The old unshifted month-start path is MODE_LOOKAHEAD
+# and is not what this script writes to 20yr_comparison.csv. Auditor mode
+# shifts the finished regime column and is not this path.
+# Unemployment is still not a regime input (Gemini, 2026-06-22).
+logger.info("Computing targeted regime classification (no month-end look-ahead)...")
+from src.backtester.regime_clock import classify_regimes, MODE_TARGETED
 
-# monthly_dates always derived from price_data (never depends on FRED)
-monthly_dates = price_data.resample('MS').first().index
-
-# ── PUBLICATION LAG (no look-ahead) ──────────────────────────────────────
-# FRED dates macro series at the PERIOD START, but the figures are not released
-# until weeks/months later (CPI ~1mo after month start; GDP advance ~1mo after
-# quarter end = ~4mo after the quarter-start observation date). Shifting the
-# index forward by the release lag prevents the backtest from "knowing" macro
-# data before it was actually published. (Audit: Gemini, 2026-06-22 — removing
-# this look-ahead changes 15.85%/1.21 to ~14.05%/1.06; honest numbers stand.)
-CPI_RELEASE_LAG_M = 1   # CPI for month M is published ~mid-M+1
-GDP_RELEASE_LAG_M = 4   # GDP advance estimate ~1mo after quarter end
-
-# CPI YoY inflation rate — guard against empty FRED data
-if len(cpi) > 12:
-    cpi_yoy = cpi.pct_change(12) * 100
-    cpi_yoy.index = pd.to_datetime(cpi_yoy.index) + pd.DateOffset(months=CPI_RELEASE_LAG_M)
-    cpi_monthly = cpi_yoy.resample('MS').last().ffill()
-else:
-    logger.warning("CPI data unavailable — using fallback constant 2.5%")
-    cpi_monthly = pd.Series(dtype=float)
-
-# GDP growth (quarterly, forward-fill to monthly) — lagged to the release date
-if len(gdp) > 0:
-    gdp.index = pd.to_datetime(gdp.index) + pd.DateOffset(months=GDP_RELEASE_LAG_M)
-    gdp_monthly = gdp.resample('MS').last().ffill()
-else:
-    logger.warning("GDP data unavailable — growth signal will use SPY momentum only")
-    gdp_monthly = pd.Series(dtype=float)
-
-# S&P 500 momentum (12-month) — always available from price_data
-spy_prices = price_data['SPY'] if 'SPY' in price_data.columns else None
-if spy_prices is not None:
-    spy_monthly = spy_prices.resample('MS').last()
-    spy_mom_12m = spy_monthly.pct_change(12)  # 12-month return
-else:
-    spy_mom_12m = pd.Series(dtype=float)
-
-# VIX monthly average
-if len(vix) > 0:
-    vix.index = pd.to_datetime(vix.index)
-    vix_monthly = vix.resample('MS').mean()
-else:
+if len(vix) == 0 and 'SPY' in price_data.columns:
     logger.warning("VIX data unavailable — VIX override will use SPY-based proxy")
-    # Proxy VIX from SPY 21-day realised vol × 16 (annualisation ≈ VIX)
-    spy_rv = price_data['SPY'].pct_change().rolling(21).std() * 16 * 100
-    vix_monthly = spy_rv.resample('MS').mean()
-    vix = spy_rv  # use as fallback throughout
+    vix = price_data['SPY'].pct_change().rolling(21).std() * 16 * 100
 
-# Yield curve (10Y - 2Y)
-if len(t10y) > 0 and len(t2y) > 0:
-    t10y.index = pd.to_datetime(t10y.index)
-    t2y.index  = pd.to_datetime(t2y.index)
-    yield_curve = (t10y - t2y).resample('MS').last()
-else:
-    yield_curve = pd.Series(dtype=float)
-
-# ─────────────────────────────────────────────────────────
-# REGIME CLASSIFICATION RULES
-# ─────────────────────────────────────────────────────────
-# Goldilocks: Rising growth + Falling/Low inflation
-# Reflation:  Rising growth + Rising inflation
-# Stagflation: Falling growth + Rising inflation
-# Deflation:  Falling growth + Falling inflation
-
-def classify_regime(date):
-    """Rules-based regime classification for a given monthly date."""
-    # Growth signal: lagged GDP > 1.5% OR SPY 12m momentum > 5%.
-    # NOTE: unemployment (UNRATE) is deliberately NOT used here. Both a
-    # "falling-unemployment = growth" rule (worsens MaxDD 15.5%->17.2%, it's a
-    # lagging indicator that stays risk-on into downturns) and a Sahm-rule
-    # "rising-unemployment = defensive" rule (cuts CAGR ~1.5pp, no DD benefit)
-    # were tested and degrade results — the daily 200-MA/vol-target/DD-breaker
-    # controls already react faster than a monthly labour signal. UNRATE is
-    # still fetched for the dashboard's macro display. (Audit: Gemini, 2026-06-22.)
-    gdp_val = gdp_monthly.asof(date) if len(gdp_monthly) > 0 else 2.0
-    spy_val = spy_mom_12m.asof(date) if len(spy_mom_12m) > 0 else 0.05
-
-    growth_rising = (gdp_val > 1.5) or (spy_val > 0.05)
-    
-    # Inflation signal: CPI YoY > 3% AND rising
-    cpi_val = cpi_monthly.asof(date) if len(cpi_monthly) > 0 else 2.0
-    cpi_3m_ago = cpi_monthly.asof(date - pd.DateOffset(months=3)) if len(cpi_monthly) > 0 else 2.0
-    
-    inflation_rising = (cpi_val > 3.0) and (cpi_val > cpi_3m_ago)
-    
-    # VIX override: force deflation above REGIME_VIX_DEFENSIVE (same constant as the UI).
-    vix_val = vix_monthly.asof(date) if len(vix_monthly) > 0 else 15.0
-    if vix_val > REGIME_VIX_DEFENSIVE:
-        return 'deflation'  # Crisis mode
-    
-    if growth_rising and not inflation_rising:
-        return 'goldilocks'
-    elif growth_rising and inflation_rising:
-        return 'reflation'
-    elif not growth_rising and inflation_rising:
-        return 'stagflation'
-    else:
-        return 'deflation'
-
-
-# Build full regime history
-regime_records = []
-for date in monthly_dates:
-    if date >= pd.Timestamp('2005-06-01'):  # Need 6m warmup
-        regime = classify_regime(date)
-        regime_records.append({'date': date, 'regime': regime})
-regime_history = pd.DataFrame(regime_records)
-logger.info(f"Regime history: {len(regime_history)} months")
+macro_for_clock = {
+    'vix': vix, 'gdp': gdp, 'cpi': cpi, 'unemp': unemp,
+    't10y': t10y, 't2y': t2y, 'ff_rate': ff_rate,
+}
+regime_history, _current_regime, _clock_info = classify_regimes(
+    macro_for_clock, price_data, mode=MODE_TARGETED,
+)
+logger.info(f"Regime history: {len(regime_history)} months (mode={_clock_info.get('mode')})")
 
 # Print regime distribution
 regime_counts = regime_history['regime'].value_counts()
@@ -416,10 +324,14 @@ for regime_name, weights in REGIME_WEIGHTS.items():
 # ─────────────────────────────────────────────────────────
 from src.backtester.engine import BacktestEngine
 
-# Use actual average risk-free rate over the backtest period
-# Fall back to 2% if FRED DFF data was unavailable
+# Use actual average risk-free rate over the backtest window only.
+# DFF is in percentage points. A full-history mean (1950s–1980s) is not the
+# financing rate of this sample.
 if len(ff_rate) > 0:
-    avg_rf = ff_rate.mean() / 100  # FRED DFF is in percentage points
+    _ff = ff_rate.copy()
+    _ff.index = pd.to_datetime(_ff.index)
+    _ff = _ff.loc[str(price_data.index.min().date()):]
+    avg_rf = float(_ff.mean() / 100.0) if len(_ff) else 0.02
 else:
     avg_rf = 0.02  # conservative fallback: 2% risk-free rate
 logger.info(f"Average Fed Funds Rate (period): {avg_rf:.2%}")
@@ -578,4 +490,18 @@ if vol_result.monthly_returns is not None:
     vol_result.monthly_returns.to_csv(results_dir / "aggressive_monthly_returns.csv")
 
 logger.info(f"\nResults saved to {results_dir}")
+
+from src.backtester.consistency import verify_series
+_consistency = verify_series(
+    vol_result.annual_return,
+    vol_result.total_return,
+    vol_result.max_drawdown,
+    vol_result.equity_curve,
+    vol_result.monthly_returns,
+)
+print("\n" + _consistency.text())
+if not _consistency.ok:
+    logger.error("Consistency check failed. This run is not publishable.")
+    sys.exit(3)
+
 logger.info("Backtest complete!")

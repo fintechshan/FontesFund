@@ -206,6 +206,8 @@ STRATEGY_PARAMS: dict = {
     "vol_hi": 1.50,
     "bear_equity_frac": 0.70,   # 70% regime book + 30% defense when SPY < 200-MA
     "dd_trigger": 0.07,         # daily drawdown circuit breaker
+    "dd_floor": 0.10,           # minimum exposure once the breaker is on
+    "dd_span": 0.10,            # further drawdown over which exposure falls to the floor
     "transaction_cost_bps": 5.0,
     "borrow_spread": 0.01,
     "vix_gate_level": 20.0,     # zero TQQQ/SOXL when yesterday's VIX >= this

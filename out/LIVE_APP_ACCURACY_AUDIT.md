@@ -11,10 +11,18 @@ They describe the page **before** the label and limit fixes in this branch. A sh
 checklist of those fixes is at the end of this file. The findings tables are the
 before-state and are left as the audit record.
 
-**Later display change (not a new backtest):** the Backtest tab and the Portfolio CAGR
-card now open on Auditor Lagged (extra month, **12.21% / 14.10% / 0.83**). Production
-**14.85% / 13.90% / 1.03** stays the engine CSV and the labeled Backtest alternate.
-CDN still has no extra-month series; its US column follows that Backtest default.
+**Honesty fix (2026-09-27, this branch — not what the live Cloud Run page shows):**
+the default clock is path B (CPI+1, GDP+4, VIX and SPY momentum lagged one month).
+The backtest number for that path includes the daily overlay in
+`run_optimized_regime_backtest`: 200-MA, portfolio vol target, and portfolio
+drawdown shrink. The VIX 28→40 cut is not on this path. Live orders read
+that same overlay. Do not freeze a CAGR from
+this note; read `data/backtest_results/lag_honesty.csv` and `coverage_windows.csv`
+from `python scripts/ab_vintage.py`. AIPO and DBMF are missing for most of the long
+window; the engine renormalizes, it does not hold the gap as cash.
+
+The tables below are the **live site before this fix**. They describe the page that
+was captured on 2026-09-27. This branch does not deploy Cloud Run.
 
 ---
 
@@ -209,6 +217,6 @@ Engine math is unchanged. Copy, limits, and the auditor status key changed:
 2. `RISK_LIMITS.max_single_position` is `MAX_REGIME_WEIGHT` (IEF 35% in deflation). Goldilocks QQQ 30% is intentional AI-trend exposure and is not clipped to 25%. The auditor imports `RISK_LIMITS` (the old 25% fallback was a `NameError`).
 3. `REGIME_VIX_DEFENSIVE` and `RISK_LIMITS.vix_spike_threshold` are **30**, the same threshold the classifiers already used. UI copy reads that constant.
 4. CDN period labels use the equity-curve dates. ZQQ.TO is labeled CAD-hedged. The book still holds ZQQ, not ZNQ.
-5. `CLAUDE.md` and `README.md` lead with v7 **14.85% / 13.90% / 1.03**. v5.1 **14.52% / 14.78% / 0.97** is marked historical.
+5. `CLAUDE.md` and `README.md` lead with v7. v5.1 **14.52% / 14.78% / 0.97** is marked historical. The current headline is the targeted fix in the section at the top of this file, not 14.85%.
 6. The tax panel states its CAD CAGRs are the `ab_canadian_tax.py` study, not the USD production backtest.
-7. Backtest tab and Portfolio CAGR card default to Auditor Lagged (**12.21% / 14.10% / 0.83**). Production **14.85%** stays on the Backtest control and in `20yr_comparison.csv`. CDN has no extra-month series; the US column on that tab follows the Backtest default.
+7. Superseded. The Backtest tab and Portfolio CAGR card default to the **targeted fix**, not Auditor Lagged. The extra month stays a labeled radio. `20yr_comparison.csv` is the targeted-fix series. CDN has no extra-month series; the US column follows that default.

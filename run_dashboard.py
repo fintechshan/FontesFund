@@ -55,109 +55,79 @@ def load_backtest_results():
     return pd.DataFrame()
 
 # ── Regime classification ─────────────────────────────────────────────────
-def classify_regimes(macro, price_data, apply_lag=True):
-    """Classify economic regime for each month.
-    apply_lag=True applies the CPI+1mo / GDP+4mo publication lag (production, no
-    look-ahead). apply_lag=False = UNLAGGED (look-ahead) — used only to measure the
-    look-ahead premium for the auditor's lagged-vs-unlagged check."""
-    from config.regime_rules import REGIME_VIX_DEFENSIVE
-    vix = macro.get('vix', pd.Series(dtype=float))
-    gdp = macro.get('gdp', pd.Series(dtype=float))
-    cpi = macro.get('cpi', pd.Series(dtype=float))
+# Source of truth: src/backtester/regime_clock.py. Default mode is the targeted
+# fix (CPI+1 / GDP+4, then shift(1) on VIX mean and momentum only).
+from src.backtester.regime_clock import (  # noqa: E402
+    MODE_AUDITOR,
+    MODE_LOOKAHEAD,
+    MODE_TARGETED,
+    MODE_UNLAGGED,
+    MODE_VINTAGE,
+    classify_regimes,
+    load_realtime_vintage,
+)
 
-    # Compute derived series.
-    # PUBLICATION LAG (no look-ahead): FRED dates CPI/GDP at the period start but
-    # publishes them weeks/months later. Shift the index forward by the release
-    # lag (CPI +1mo, GDP +4mo) so the live regime uses only data that was actually
-    # available — must match run_backtest.py. (Audit: Gemini, 2026-06-22.)
-    cpi_yoy = (cpi / cpi.shift(12) - 1) * 100 if len(cpi) > 12 else pd.Series(dtype=float)
-    if len(cpi_yoy) > 0:
-        cpi_yoy.index = pd.to_datetime(cpi_yoy.index)
-        if apply_lag:
-            cpi_yoy.index = cpi_yoy.index + pd.DateOffset(months=1)
-    if len(gdp) > 0:
-        gdp = gdp.copy()
-        gdp.index = pd.to_datetime(gdp.index)
-        if apply_lag:
-            gdp.index = gdp.index + pd.DateOffset(months=4)
-    gdp_monthly = gdp.resample('MS').ffill() if len(gdp) > 0 else pd.Series(dtype=float)
-    vix_monthly = vix.resample('MS').mean() if len(vix) > 0 else pd.Series(dtype=float)
-    cpi_monthly = cpi_yoy.resample('MS').last().ffill() if len(cpi_yoy) > 0 else pd.Series(dtype=float)
+def sample_risk_free(ff_rate, price_data):
+    """Mean fed funds over the price sample, as a decimal.
 
-    spy_prices = price_data.get('SPY', pd.Series(dtype=float)) if not price_data.empty else pd.Series(dtype=float)
-    spy_mom_12m = (spy_prices / spy_prices.shift(252) - 1) if len(spy_prices) > 252 else pd.Series(dtype=float)
-    spy_mom_monthly = spy_mom_12m.resample('MS').last().ffill() if len(spy_mom_12m) > 0 else pd.Series(dtype=float)
+    DFF is stored in percent. A full-history mean (back to the 1950s) is not
+    the financing rate of this backtest.
+    """
+    if ff_rate is None or len(ff_rate) == 0:
+        return 0.0185
+    ff = ff_rate.copy()
+    ff.index = pd.to_datetime(ff.index)
+    if price_data is not None and not price_data.empty:
+        ff = ff.loc[str(price_data.index.min().date()):]
+    if len(ff) == 0:
+        return 0.0185
+    return float(ff.mean() / 100.0)
 
-    # Monthly dates
-    if len(vix) > 0:
-        monthly_dates = pd.date_range(start='2005-06-01', end=vix.index.max(), freq='MS')
-    elif not price_data.empty:
-        monthly_dates = pd.date_range(start='2005-06-01', end=price_data.index.max(), freq='MS')
-    else:
-        return pd.DataFrame(columns=['date', 'regime']), {}, {}
 
-    records = []
-    for date in monthly_dates:
-        gdp_val = gdp_monthly.asof(date) if len(gdp_monthly) > 0 else 2.0
-        spy_val = spy_mom_monthly.asof(date) if len(spy_mom_monthly) > 0 else 0.05
-        growth_rising = (gdp_val > 1.5) or (spy_val > 0.05)
+def run_honesty_paths(price_data, macro, weights):
+    """Targeted fix plus the comparison clocks. Vintage is skipped if unavailable."""
+    from src.backtester.engine import BacktestEngine
+    from config.regime_rules import STRATEGY_PARAMS
 
-        cpi_val = cpi_monthly.asof(date) if len(cpi_monthly) > 0 else 2.0
-        cpi_3m_ago = cpi_monthly.asof(date - pd.DateOffset(months=3)) if len(cpi_monthly) > 0 else 2.0
-        inflation_rising = (cpi_val > 3.0) and (cpi_val > cpi_3m_ago)
+    # Cache / committed release table first. A missing clock returns None
+    # and the vintage radio is omitted. Set USE_REALTIME_VINTAGE=1 to rebuild.
+    refresh_vintage = os.getenv("USE_REALTIME_VINTAGE", "").strip().lower() in {"1", "true", "yes"}
+    vintage = load_realtime_vintage(refresh=refresh_vintage)
 
-        vix_val = vix_monthly.asof(date) if len(vix_monthly) > 0 else 15.0
-        if vix_val > REGIME_VIX_DEFENSIVE:
-            regime = 'deflation'
-        elif growth_rising and not inflation_rising:
-            regime = 'goldilocks'
-        elif growth_rising and inflation_rising:
-            regime = 'reflation'
-        elif not growth_rising and inflation_rising:
-            regime = 'stagflation'
-        else:
-            regime = 'deflation'
+    modes = [MODE_TARGETED, MODE_LOOKAHEAD, MODE_UNLAGGED, MODE_AUDITOR]
+    histories = {}
+    for mode in modes:
+        hist, _, _info = classify_regimes(macro, price_data, mode=mode)
+        histories[mode] = hist
+    if vintage is not None:
+        hist, _, info = classify_regimes(
+            macro, price_data, mode=MODE_VINTAGE, vintage=vintage,
+        )
+        if not info.get("vintage_fallback"):
+            histories[MODE_VINTAGE] = hist
 
-        records.append({'date': date, 'regime': regime})
-
-    regime_history = pd.DataFrame(records)
-
-    # Current snapshot values
-    current = {
-        'regime': records[-1]['regime'] if records else 'goldilocks',
-        'vix': float(vix.iloc[-1]) if len(vix) > 0 else 0.0,
-        'yield_curve': float((macro['t10y'].iloc[-1] - macro['t2y'].iloc[-1])) if len(macro.get('t10y', [])) > 0 and len(macro.get('t2y', [])) > 0 else 0.0,
-        'cpi_yoy': float(cpi_yoy.iloc[-1]) if len(cpi_yoy) > 0 else 0.0,
-        'gdp': float(gdp.iloc[-1]) if len(gdp) > 0 else 0.0,
-        'spy_momentum': float(spy_mom_12m.iloc[-1]) if len(spy_mom_12m) > 0 else 0.0,
+    ff_rate = macro.get("ff_rate", pd.Series(dtype=float))
+    engine = BacktestEngine(
+        price_data, initial_capital=100000, risk_free_rate=sample_risk_free(ff_rate, price_data),
+    )
+    vix_series = macro.get("vix")
+    results = {}
+    names = {
+        MODE_TARGETED: "Targeted fix",
+        MODE_LOOKAHEAD: "Month-end look-ahead",
+        MODE_UNLAGGED: "Unlagged",
+        MODE_AUDITOR: "Auditor extra month",
+        MODE_VINTAGE: "First-release vintage",
     }
-
-    # Compute confidence (how clearly signals align)
-    confidence = 50.0
-    r = current['regime']
-    if r == 'goldilocks':
-        if current['gdp'] > 2.0: confidence += 15
-        if current['spy_momentum'] > 0.10: confidence += 15
-        if current['vix'] < 18: confidence += 10
-        if current['cpi_yoy'] < 3.0: confidence += 10
-    elif r == 'reflation':
-        if current['gdp'] > 2.0: confidence += 15
-        if current['cpi_yoy'] > 3.5: confidence += 15
-        if current['spy_momentum'] > 0: confidence += 10
-    elif r == 'stagflation':
-        if current['gdp'] < 1.0: confidence += 15
-        if current['cpi_yoy'] > 4.0: confidence += 15
-        if current['vix'] > 25: confidence += 10
-    elif r == 'deflation':
-        if current['gdp'] < 1.0: confidence += 15
-        if current['vix'] > 25: confidence += 15
-        if current['yield_curve'] < 0: confidence += 10
-
-    current['confidence'] = min(100, confidence)
-
-    return regime_history, current, {'cpi_yoy': cpi_yoy, 'cpi_monthly': cpi_monthly,
-                                      'gdp_monthly': gdp_monthly, 'vix_monthly': vix_monthly,
-                                      'spy_mom_monthly': spy_mom_monthly}
+    for mode, hist in histories.items():
+        results[mode] = engine.run_optimized_regime_backtest(
+            regime_history=hist,
+            regime_weights=weights,
+            name=names[mode],
+            vix_data=vix_series,
+            **STRATEGY_PARAMS,
+        )
+    return results, histories[MODE_TARGETED]
 
 
 # ── Build DASHBOARD_DATA ──────────────────────────────────────────────────
@@ -176,9 +146,8 @@ except Exception as _e:
 price_data = load_price_data()
 macro = load_macro_data()
 backtest_results = load_backtest_results()
-regime_history, current, derived = classify_regimes(macro, price_data)
-# Unlagged regime (look-ahead) — only for the auditor's lagged-vs-unlagged check
-regime_history_unlagged, _, _ = classify_regimes(macro, price_data, apply_lag=False)
+# Live allocation uses the targeted clock (CPI+1 / GDP+4, no month-end look-ahead).
+regime_history, current, derived = classify_regimes(macro, price_data, mode=MODE_TARGETED)
 
 # Get weights for current regime
 try:
@@ -294,63 +263,22 @@ if mr_path.exists():
     except Exception:
         pass
 
-# ── Production, extra-month timing, and unlagged look-ahead runs ──────────
-logger.info("Running publication-lag production, extra-month timing, and unlagged look-ahead...")
+# ── Targeted fix (default) plus comparison clocks ────────────────────────
+logger.info("Running targeted fix and comparison clocks...")
 lagged_metrics = {}
 try:
-    from src.backtester.engine import BacktestEngine
-    
-    # Risk-free rate
-    ff_rate = macro.get('ff_rate', pd.Series(dtype=float))
-    avg_rf = ff_rate.mean() / 100 if not ff_rate.empty else 0.0185
-    
-    # Initialize engine
-    engine = BacktestEngine(price_data, initial_capital=100000, risk_free_rate=avg_rf)
-    
-    # Optimized Regime Strategy — the single production strategy
-    # (risk-parity + portfolio-level vol targeting; see CLAUDE.md / RECOMMENDATION.md).
-    # Replaces the old run_vol_targeted_* (SPY-vol-proxy bug). Current honest
-    # headline is the v7 sleeve with CPI+1mo / GDP+4mo (see CLAUDE.md and
-    # 20yr_comparison.csv). This comment is not displayed — the UI reads the CSVs.
-    vix_series = macro.get('vix')
-    from config.regime_rules import STRATEGY_PARAMS  # single source of truth
-    standard_res = engine.run_optimized_regime_backtest(
-        regime_history=regime_history,
-        regime_weights=REGIME_WEIGHTS,
-        name="Optimized Regime Strategy",
-        vix_data=vix_series,
-        **STRATEGY_PARAMS,
-    )
-
-    # Extra month of regime delay (execution / timing sensitivity).
-    # regime_history already has the CPI+1mo / GDP+4mo publication lag.
-    lagged_rh = regime_history.copy()
-    lagged_rh['regime'] = lagged_rh['regime'].shift(1).bfill()
-    lagged_res = engine.run_optimized_regime_backtest(
-        regime_history=lagged_rh,
-        regime_weights=REGIME_WEIGHTS,
-        name="Optimized Regime Strategy (Lagged)",
-        vix_data=vix_series,
-        **STRATEGY_PARAMS,
-    )
-
-    # UNLAGGED backtest — the look-ahead diagnostic (apply_lag=False).
-    # Production = standard_res (CPI+1mo / GDP+4mo). If unlagged ≈ production, the
-    # publication lag may be missing. If unlagged is higher, the lag is removing a
-    # look-ahead premium. The extra-month series above is not this test.
-    unlagged_res = engine.run_optimized_regime_backtest(
-        regime_history=regime_history_unlagged,
-        regime_weights=REGIME_WEIGHTS,
-        name="Optimized Regime Strategy (Unlagged)",
-        vix_data=vix_series,
-        **STRATEGY_PARAMS,
-    )
-
+    from config.regime_rules import REGIME_WEIGHTS as _RW
+    _results, _ = run_honesty_paths(price_data, macro, _RW)
     from src.dashboard.app import pack_lagged_metrics
-    lagged_metrics = pack_lagged_metrics(standard_res, lagged_res, unlagged_res)
-    logger.info("Publication-lag, timing, and unlagged runs completed.")
+    lagged_metrics = pack_lagged_metrics(results=_results)
+    _tgt = _results.get(MODE_TARGETED)
+    if _tgt is not None and getattr(_tgt, "equity_curve", None) is not None:
+        equity_curve = _tgt.equity_curve
+    if _tgt is not None and getattr(_tgt, "monthly_returns", None) is not None:
+        monthly_returns = _tgt.monthly_returns
+    logger.info("Honesty-path runs completed.")
 except Exception as e:
-    logger.error(f"Error running lagged backtest simulation: {e}")
+    logger.error(f"Error running honesty-path backtests: {e}")
     lagged_metrics = {}
 
 # ── Run Independent Audit ─────────────────────────────────────────────────
@@ -599,7 +527,9 @@ def start_background_updater(app_data):
                     new_backtest = load_backtest_results()
                     
                     if not new_price.empty and new_macro:
-                        new_rh, new_curr, new_derived = classify_regimes(new_macro, new_price)
+                        new_rh, new_curr, new_derived = classify_regimes(
+                            new_macro, new_price, mode=MODE_TARGETED,
+                        )
                         
                         # Get weights
                         from config.regime_rules import REGIME_WEIGHTS
@@ -685,32 +615,14 @@ def start_background_updater(app_data):
                                 equity_curve = all_equity_curves[col_name]
                                 break
                             
-                        # Lagged
-                        from src.backtester.engine import BacktestEngine
-                        ff_rate = new_macro.get('ff_rate', pd.Series(dtype=float))
-                        avg_rf = ff_rate.mean() / 100 if not ff_rate.empty else 0.0185
-                        engine = BacktestEngine(new_price, initial_capital=100000, risk_free_rate=avg_rf)
-                        vix_series_new = new_macro.get('vix')
-                        from config.regime_rules import STRATEGY_PARAMS  # single source
-                        standard_res = engine.run_optimized_regime_backtest(
-                            new_rh, REGIME_WEIGHTS, name="Optimized Regime Strategy",
-                            vix_data=vix_series_new, **STRATEGY_PARAMS,
-                        )
-                        lagged_rh = new_rh.copy()
-                        lagged_rh['regime'] = lagged_rh['regime'].shift(1).bfill()
-                        lagged_res = engine.run_optimized_regime_backtest(
-                            lagged_rh, REGIME_WEIGHTS, name="Optimized Regime Strategy (Lagged)",
-                            vix_data=vix_series_new, **STRATEGY_PARAMS,
-                        )
-                        # Unlagged (look-ahead) — keeps the auditor's lagged-vs-unlagged
-                        # check alive after an in-app refresh (not just on cold start).
-                        new_rh_unlag, _, _ = classify_regimes(new_macro, new_price, apply_lag=False)
-                        unlagged_res = engine.run_optimized_regime_backtest(
-                            new_rh_unlag, REGIME_WEIGHTS, name="Optimized Regime Strategy (Unlagged)",
-                            vix_data=vix_series_new, **STRATEGY_PARAMS,
-                        )
                         from src.dashboard.app import pack_lagged_metrics
-                        lagged_metrics = pack_lagged_metrics(standard_res, lagged_res, unlagged_res)
+                        _results, _ = run_honesty_paths(new_price, new_macro, REGIME_WEIGHTS)
+                        lagged_metrics = pack_lagged_metrics(results=_results)
+                        _tgt = _results.get(MODE_TARGETED)
+                        if _tgt is not None and getattr(_tgt, "equity_curve", None) is not None:
+                            equity_curve = _tgt.equity_curve
+                        if _tgt is not None and getattr(_tgt, "monthly_returns", None) is not None:
+                            monthly_returns = _tgt.monthly_returns
 
                         # Auditor
                         from src.dashboard.auditor import run_independent_audit
@@ -867,6 +779,8 @@ if __name__ == '__main__':
             # Regression tripwire: one day of new data moves the 21-yr CAGR by basis
             # points; a data problem moves it by whole points (11.82% vs 14.60% on
             # 2026-07-12, when an in-container FRED failure produced garbage regimes).
+            # run_backtest.py also exits 3 when the equity curve, the monthly
+            # heatmap, and the reported CAGR/total/daily max DD are not one series.
             new = _headline()
             if prev and new and (abs(new[0] - prev[0]) > 1.0 or (new[1] - prev[1]) > 1.0):
                 logger.error(f"/tasks/refresh: headline jump {prev} -> {new}; data problem "

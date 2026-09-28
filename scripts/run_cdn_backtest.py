@@ -3,11 +3,17 @@ scripts/run_cdn_backtest.py
 ===========================
 Canadian ETF Regime Strategy (6-ETF Portfolio B) Backtest Engine.
 
-Reproduces and validates:
-  - Canadian Portfolio B (High-Growth 14.6%)
-  - CAGR: 14.62%  |  Max Drawdown: 15.53%  |  Sharpe: 1.16  |  Vol: 10.90%
-  - Period: published curve starts when every sleeve exists (about 2012-11), not 20 years
-  - ZQQ.TO is CAD-hedged Nasdaq-100; VFV.TO is unhedged. The book does not hold ZNQ.TO.
+Canadian Portfolio B (6 ETFs). The published numbers live in
+``data/backtest_results/cdn_comparison.csv`` after this script runs. Do not
+copy a CAGR into this file.
+
+The curve starts when every sleeve exists (about 2012-11), not 20 years.
+ZQQ.TO is CAD-hedged Nasdaq-100; VFV.TO is unhedged. The book does not hold ZNQ.TO.
+
+Regime clock matches the US targeted fix: CPI +1 month and GDP +4 months,
+applied once. VIX monthly mean and 12-month momentum then take
+``lag_vix_and_momentum_one_month`` (``shift(1)`` on those two series only).
+Momentum is VFV.TO, not SPY. Auditor's extra regime shift is not used here.
 
 Outputs:
   data/backtest_results/cdn_equity_curve.csv
@@ -31,6 +37,11 @@ import pandas as pd
 import yfinance as yf
 
 from src.backtester.engine import BacktestEngine
+from src.backtester.regime_clock import (
+    _classify_one,
+    market_signals,
+    publication_lagged_macro,
+)
 from config.regime_rules import STRATEGY_PARAMS, REGIME_VIX_DEFENSIVE
 from config.cdn_regime_rules import CDN_REGIME_WEIGHTS, CDN_UNIVERSE, CDN_VERSION
 
@@ -61,56 +72,39 @@ def load_data():
 
 
 def classify_regimes(macro, price_data, momentum_ticker='VFV.TO'):
-    """
-    Classify historical macro regimes using macro signals:
-    - VIX: CBOE Volatility Index (>30 -> Deflation)
-    - GDP: Real GDP quarterly YoY (4-month reporting lag)
-    - CPI: Consumer Price Index YoY (1-month publication lag)
-    - Momentum: Core equity momentum (VFV.TO 12M return)
+    """Canadian regimes on the US targeted clock.
+
+    CPI +1 and GDP +4 are applied once in ``publication_lagged_macro``.
+    VIX monthly mean and 12-month momentum then go through
+    ``lag_vix_and_momentum_one_month`` (``shift(1)`` on those two series only),
+    via ``market_signals(..., same_month=False)``. Momentum is
+    ``momentum_ticker`` (VFV.TO). CPI and GDP are not shifted a second time.
     """
     vix = macro.get('vix', pd.Series(dtype=float))
-    gdp = macro.get('gdp', pd.Series(dtype=float)).copy()
+    gdp = macro.get('gdp', pd.Series(dtype=float))
     cpi = macro.get('cpi', pd.Series(dtype=float))
+    _cpi_yoy, _gdp, cpi_mo, gdp_mo = publication_lagged_macro(cpi, gdp, apply_lag=True)
 
-    cpi_yoy = (cpi / cpi.shift(12) - 1) * 100 if len(cpi) > 12 else pd.Series(dtype=float)
-    cpi_yoy.index = pd.to_datetime(cpi_yoy.index) + pd.DateOffset(months=1)
-    gdp.index = pd.to_datetime(gdp.index) + pd.DateOffset(months=4)
+    if isinstance(price_data, pd.DataFrame) and momentum_ticker in price_data.columns:
+        mom_px = price_data[momentum_ticker]
+    else:
+        mom_px = pd.Series(dtype=float)
+    vix_mo, mom_mo = market_signals(vix, mom_px, same_month=False)
 
-    gdp_mo = gdp.resample('MS').ffill()
-    vix_mo = vix.resample('MS').mean()
-    cpi_mo = cpi_yoy.resample('MS').last().ffill()
-
-    eq_p = price_data.get(momentum_ticker, pd.Series(dtype=float))
-    eq_m = (eq_p / eq_p.shift(252) - 1) if len(eq_p) > 252 else pd.Series(dtype=float)
-    eq_mo = eq_m.resample('MS').last().ffill() if len(eq_m) > 0 else pd.Series(dtype=float)
-
-    start_date = price_data[CDN_UNIVERSE].dropna().index[0].strftime('%Y-%m-%d')
-    dates = pd.date_range(start=start_date, end=vix.index.max(), freq='MS')
+    ready = price_data[CDN_UNIVERSE].dropna()
+    if len(ready) == 0:
+        return pd.DataFrame(columns=['date', 'regime'])
+    end = price_data.index.max()
+    dates = pd.date_range(start=ready.index[0], end=end, freq='MS')
 
     records = []
     for date in dates:
-        gdp_v = gdp_mo.asof(date) if len(gdp_mo) > 0 else 2.0
-        eq_v = eq_mo.asof(date) if len(eq_mo) > 0 else 0.05
-        growth = (gdp_v > 1.5) or (eq_v > 0.05)
-
-        cpi_v = cpi_mo.asof(date) if len(cpi_mo) > 0 else 2.0
-        cpi3m = cpi_mo.asof(date - pd.DateOffset(months=3)) if len(cpi_mo) > 0 else 2.0
-        infl = (cpi_v > 3.0) and (cpi_v > cpi3m)
-
-        vix_v = vix_mo.asof(date) if len(vix_mo) > 0 else 15.0
-
-        if vix_v > REGIME_VIX_DEFENSIVE:
-            regime = 'deflation'
-        elif growth and not infl:
-            regime = 'goldilocks'
-        elif growth and infl:
-            regime = 'reflation'
-        elif not growth and infl:
-            regime = 'stagflation'
-        else:
-            regime = 'deflation'
-        records.append({'date': date, 'regime': regime})
-
+        records.append({
+            'date': date,
+            'regime': _classify_one(
+                date, gdp_mo, mom_mo, cpi_mo, vix_mo, REGIME_VIX_DEFENSIVE,
+            ),
+        })
     return pd.DataFrame(records)
 
 

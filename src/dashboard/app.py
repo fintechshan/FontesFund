@@ -160,8 +160,12 @@ def make_allocation_donut(weights):
                       annotations=[dict(text=f'{len(t)}<br>ETFs', x=0.5, y=0.5, font_size=16, font_color='#c8c8d4', showarrow=False)])
     return fig
 
-def make_equity_curves(all_eq, equity_curve, title=None):
-    """Build equity curve chart with ALL benchmarks."""
+def make_equity_curves(all_eq, equity_curve, title=None, main_name=None):
+    """Build equity curve chart with ALL benchmarks.
+
+    ``main_name`` is the selected path. That column is the bold curve.
+    Other strategy names are not drawn unless they are this path.
+    """
     fig = go.Figure()
     strat_colors = {'Optimized Regime Strategy': '#00d97e',
                     'Aggressive Regime Strategy': '#00d97e',
@@ -179,8 +183,8 @@ def make_equity_curves(all_eq, equity_curve, title=None):
     if not all_eq.empty:
         for col in all_eq.columns:
             vals = all_eq[col].dropna() * 100000  # normalize to $100K
-            c = strat_colors.get(col, '#6c757d')
-            is_main = col in main_names
+            is_main = col == main_name or (main_name is None and col in main_names)
+            c = '#00d97e' if col == main_name else strat_colors.get(col, '#6c757d')
             fig.add_trace(go.Scatter(
                 x=vals.index, y=vals.values, name=col,
                 line=dict(color=c, width=2.5 if is_main else 1.2, dash=None if is_main else 'dot'),
@@ -188,15 +192,17 @@ def make_equity_curves(all_eq, equity_curve, title=None):
             ))
     elif len(equity_curve) > 0:
         vals = equity_curve * 100000
-        fig.add_trace(go.Scatter(x=vals.index, y=vals.values, name='Optimized Regime Strategy',
-                                  line=dict(color='#00d97e', width=2.5)))
+        fig.add_trace(go.Scatter(
+            x=vals.index, y=vals.values, name=main_name or 'Selected path',
+            line=dict(color='#00d97e', width=2.5),
+        ))
 
     fig.update_layout(**PL, title=title or 'Equity Curve — All Strategies ($100K Initial)', height=420,
                       yaxis_title='Portfolio Value ($)', hovermode='x unified',
                       legend=dict(orientation='h', y=1.12, x=0.5, xanchor='center'))
     return fig
 
-def make_drawdown(equity_curve, title='Drawdown Analysis'):
+def make_drawdown(equity_curve, title='Daily drawdown'):
     fig = go.Figure()
     if len(equity_curve) > 0:
         rm = equity_curve.cummax()
@@ -1168,9 +1174,17 @@ def build_portfolio_tab(data):
     _lev_book = sorted({t for w in (all_rw or {}).values() for t in w}
                        & {'TQQQ', 'SOXL', 'SSO', 'GGLL', 'TECL', 'SPXL', 'UPRO'})
     _freq_rules = [
-        'Monthly rebalance (base weights, 1st trading day)',
-        f"Daily drawdown circuit breaker at −{_SP['dd_trigger']:.0%}",
-        f"Daily 200-MA trend hedge → {1 - _SP['bear_equity_frac']:.0%} to defense when SPY < 200-MA",
+        'Monthly sleeve from the targeted clock (CPI+1, GDP+4, prior month-end VIX and momentum). '
+        'That market lag is not a second CPI/GDP lag. A name with no price is dropped and the sleeve is renormalized.',
+        f"Daily 200-MA: yesterday's SPY vs yesterday's average. If below, keep "
+        f"{_SP['bear_equity_frac']:.0%} of the sleeve and move {1 - _SP['bear_equity_frac']:.0%} to defense.",
+        f"Daily vol target {_SP['target_vol']:.0%} (HAR-RV), scale clipped to "
+        f"[{_SP['vol_lo']:.2f}, {_SP['vol_hi']:.2f}] using yesterday's forecast.",
+        f"Daily portfolio drawdown shrink at −{_SP['dd_trigger']:.0%}, "
+        f"floor {_SP['dd_floor']:.0%}, span {_SP['dd_span']:.0%}.",
+        'Live orders use that same daily stack. CPI/GDP days change the sleeve only. '
+        'The data refresh does not send orders. There is no event-only live mode. '
+        'The VIX 28→40 and 20-session SPY-high cut is not this stack.',
     ]
     _regime_rules = [
         'Growth rising: GDP > 1.5% OR SPY 12m mom > 5%',
@@ -1194,7 +1208,7 @@ def build_portfolio_tab(data):
         return html.Ul([html.Li(r, style={'color': '#c8c8d4', 'fontSize': '12px'}) for r in items],
                        style={'listStyleType': 'none', 'padding': '0'})
 
-    # Headline is Auditor Lagged when that run is loaded. Never hardcode a CAGR.
+    # Headline is the targeted fix when that run is loaded. Never hardcode a CAGR.
     _bt_title, _cagr, _bt_sub = portfolio_backtest_headline(data)
 
     return html.Div([
@@ -1204,7 +1218,7 @@ def build_portfolio_tab(data):
             dbc.Col(mc('Regime', f'{ri} {regime.upper()}', f'{conf:.0f}% confidence', rc, ''), md=3),
             dbc.Col(mc('Initial Capital', '$100,000', 'Starting value', '#c8c8d4', '💰'), md=3),
             dbc.Col(mc(_bt_title, _cagr, _bt_sub, '#00d97e', '📈'), md=3),
-            dbc.Col(mc('Rebalance Freq', 'Monthly', f'Next: 1st of month', '#3498db', '📅'), md=3),
+            dbc.Col(mc('Rebalance', 'Daily overlay', 'Sleeve monthly · overlay every day', '#3498db', '📅'), md=3),
         ], className='mb-3'),
         _source_line(f"🔄 LIVE snapshot built {_built} · regime/weights from FRED macro (cache {_macro_ts}) + "
                      f"Yahoo Finance prices · backtest CSV {_bt_ts}. Tab rebuilds each container start."),
@@ -1408,13 +1422,64 @@ def build_portfolio_tab(data):
     ])
 
 # ═══════════════════════════════════════════════════════════════════════════
-# TAB 3: BACKTEST — default is Auditor Lagged (extra-month timing)
-# Production (CPI+1mo / GDP+4mo) stays on an explicit control.
+# TAB 3: BACKTEST — default is the targeted fix
+# (CPI+1 / GDP+4, no month-end look-ahead). The other radios are comparisons.
 # ═══════════════════════════════════════════════════════════════════════════
+BACKTEST_PATH_TARGETED = 'targeted'
+BACKTEST_PATH_LOOKAHEAD = 'lookahead'
+BACKTEST_PATH_UNLAGGED = 'unlagged'
 BACKTEST_PATH_AUDITOR = 'auditor_lagged'
-BACKTEST_PATH_PRODUCTION = 'production'
-AUDITOR_SERIES_LABEL = 'Auditor Lagged (extra month)'
-PRODUCTION_SERIES_LABEL = 'Production (CPI+1mo / GDP+4mo)'
+BACKTEST_PATH_VINTAGE = 'vintage'
+# Production is the targeted fix. Older call sites that say "production" mean this.
+BACKTEST_PATH_PRODUCTION = BACKTEST_PATH_TARGETED
+TARGETED_SERIES_LABEL = 'Targeted fix (CPI+1 / GDP+4, no month-end look-ahead)'
+LOOKAHEAD_SERIES_LABEL = 'Old production (month-end look-ahead)'
+UNLAGGED_SERIES_LABEL = 'Unlagged diagnostic (publication lag off)'
+AUDITOR_SERIES_LABEL = 'Auditor extra month (overly conservative)'
+VINTAGE_SERIES_LABEL = 'First-release vintage (real-time CPI/GDP)'
+PRODUCTION_SERIES_LABEL = TARGETED_SERIES_LABEL
+_PATH_ORDER = (
+    BACKTEST_PATH_TARGETED,
+    BACKTEST_PATH_LOOKAHEAD,
+    BACKTEST_PATH_UNLAGGED,
+    BACKTEST_PATH_AUDITOR,
+    BACKTEST_PATH_VINTAGE,
+)
+_PATH_KEYS = {
+    BACKTEST_PATH_TARGETED: ('targeted', 'targeted_curve', 'targeted_monthly', TARGETED_SERIES_LABEL),
+    BACKTEST_PATH_LOOKAHEAD: ('lookahead', 'lookahead_curve', 'lookahead_monthly', LOOKAHEAD_SERIES_LABEL),
+    BACKTEST_PATH_UNLAGGED: ('unlagged', 'unlagged_curve', 'unlagged_monthly', UNLAGGED_SERIES_LABEL),
+    BACKTEST_PATH_AUDITOR: ('lagged', 'lagged_curve', 'lagged_monthly', AUDITOR_SERIES_LABEL),
+    BACKTEST_PATH_VINTAGE: ('vintage', 'vintage_curve', 'vintage_monthly', VINTAGE_SERIES_LABEL),
+}
+_PATH_CAPTION = {
+    BACKTEST_PATH_TARGETED: (
+        'Showing the targeted fix, the default. CPI stays +1 month and GDP stays +4 months. '
+        'VIX and SPY momentum use only the prior month-end, so the rebalance cannot see the rest of the month. '
+        'This is the trusted anchor for the cards, the equity curve, and the heatmap.'
+    ),
+    BACKTEST_PATH_LOOKAHEAD: (
+        'Showing the old production path. CPI is still +1 month and GDP is still +4 months, '
+        'but the month-start regime was built with that same month’s closing prices and average VIX. '
+        'That month-end look-ahead is why this CAGR sits above the targeted fix. It is not the default.'
+    ),
+    BACKTEST_PATH_UNLAGGED: (
+        'Showing the unlagged diagnostic. Publication lag is off, and same-month market data is included. '
+        'This is a look-ahead case, not a tradable path.'
+    ),
+    BACKTEST_PATH_AUDITOR: (
+        'Showing the Auditor extra month. The old month-stamped regime is shifted one more month. '
+        'That extra wait is overly conservative. It is not the publication lag, and it is not the default.'
+    ),
+    BACKTEST_PATH_VINTAGE: (
+        'Showing first-release CPI and GDP, dated when each print was first published '
+        '(fredapi/ALFRED when FRED_API_KEY is set; otherwise Philadelphia Fed RTDSM '
+        'monthly vintages of PCPI and real GDP). Market data follows the targeted rule: '
+        'no month-end look-ahead, and no extra CPI+1 / GDP+4 on top of the release date. '
+        'The fixed-offset targeted radio stays the default. '
+        'A lower vintage CAGR is an honest revision-and-timing result, not a tuning target.'
+    ),
+}
 _PROD_CSV_NAMES = (
     'Optimized Regime Strategy',
     'Vol-Targeted Regime Strategy',
@@ -1439,8 +1504,15 @@ def format_backtest_display(res):
     }
 
 
-def pack_lagged_metrics(standard_res, lagged_res, unlagged_res):
-    """Bundle the three startup runs the Auditor and Backtest tabs read."""
+def pack_lagged_metrics(results=None, standard_res=None, lagged_res=None, unlagged_res=None):
+    """Bundle every honesty path the Auditor and Backtest tabs read.
+
+    ``results`` maps regime-clock mode names (``targeted``, ``lookahead``,
+    ``unlagged``, ``auditor``, ``vintage``) to BacktestResult objects.
+    The three positional arguments remain so an older caller still packs
+    the look-ahead, extra-month, and unlagged runs.
+    ``standard`` is an alias of the targeted fix — the trusted anchor.
+    """
     def _curve(res):
         c = getattr(res, 'equity_curve', None)
         return c if isinstance(c, pd.Series) else pd.Series(dtype=float)
@@ -1449,15 +1521,79 @@ def pack_lagged_metrics(standard_res, lagged_res, unlagged_res):
         m = getattr(res, 'monthly_returns', None)
         return m if isinstance(m, pd.Series) else pd.Series(dtype=float)
 
-    return {
-        'standard': format_backtest_display(standard_res),
-        'lagged': format_backtest_display(lagged_res),
-        'unlagged': format_backtest_display(unlagged_res),
-        'standard_curve': _curve(standard_res),
-        'lagged_curve': _curve(lagged_res),
-        'standard_monthly': _monthly(standard_res),
-        'lagged_monthly': _monthly(lagged_res),
+    if results is None:
+        results = {}
+    results = dict(results)
+    results.setdefault('lookahead', standard_res)
+    results.setdefault('auditor', lagged_res)
+    results.setdefault('unlagged', unlagged_res)
+
+    packed = {}
+    key_for = {
+        'targeted': 'targeted',
+        'lookahead': 'lookahead',
+        'unlagged': 'unlagged',
+        'auditor': 'lagged',
+        'vintage': 'vintage',
     }
+    for mode, key in key_for.items():
+        res = results.get(mode)
+        if res is None:
+            continue
+        packed[key] = format_backtest_display(res)
+        packed[f'{key}_curve'] = _curve(res)
+        packed[f'{key}_monthly'] = _monthly(res)
+    if 'targeted' in packed:
+        packed['standard'] = packed['targeted']
+        packed['standard_curve'] = packed.get('targeted_curve', pd.Series(dtype=float))
+        packed['standard_monthly'] = packed.get('targeted_monthly', pd.Series(dtype=float))
+    return packed
+
+
+def monthly_from_equity(curve):
+    """Month-end compound return of one equity curve.
+
+    The curve is the cumulated daily return, so this matches the engine's
+    monthly series for that same curve. A separately stored monthly file is
+    not consulted.
+    """
+    eq = _as_series(curve).dropna().astype(float).sort_index()
+    if len(eq) == 0:
+        return pd.Series(dtype=float)
+    eq = eq.copy()
+    eq.index = pd.to_datetime(eq.index)
+    prior = (eq.index[0].to_period('M') - 1).to_timestamp(how='end').normalize()
+    padded = pd.concat([pd.Series({prior: 1.0}), eq])
+    padded = padded[~padded.index.duplicated(keep='last')].sort_index()
+    month_end = padded.resample('ME').last().dropna()
+    monthly = month_end.pct_change().dropna()
+    first_month = eq.index[0].to_period('M')
+    return monthly[monthly.index.to_period('M') >= first_month]
+
+
+def curve_for_path(data, path):
+    """Equity curve of the selected path. Never another path's curve."""
+    path = path or BACKTEST_PATH_TARGETED
+    if path == 'production':
+        path = BACKTEST_PATH_TARGETED
+    lm = _lagged_bundle(data)
+    keys = _PATH_KEYS.get(path)
+    if keys is None:
+        return pd.Series(dtype=float)
+    curve = _as_series(lm.get(keys[1]))
+    if len(curve) == 0 and path == BACKTEST_PATH_TARGETED:
+        curve = _as_series(data.get('equity_curve'))
+    return curve
+
+
+def monthly_for_path(data, path):
+    """Monthly returns of the curve plotted for this path.
+
+    Derived from that curve. ``data['monthly_returns']`` and a packed monthly
+    series are ignored, so a production heatmap cannot sit under another path's
+    cards.
+    """
+    return monthly_from_equity(curve_for_path(data, path))
 
 
 def _as_series(obj):
@@ -1501,52 +1637,71 @@ def _lagged_bundle(data):
     return lm if isinstance(lm, dict) else {}
 
 
-def portfolio_backtest_headline(data):
-    """Portfolio card: Auditor Lagged first. Production CAGR stays in the subtitle."""
+def _path_metrics(data, path):
+    path = path or BACKTEST_PATH_TARGETED
+    if path == 'production':
+        path = BACKTEST_PATH_TARGETED
     lm = _lagged_bundle(data)
-    lag = lm.get('lagged') or {}
-    std = lm.get('standard') or {}
-    if lag.get('annual_return'):
-        prod = std.get('annual_return') or _csv_production_metrics(data).get('annual_return') or 'on the Backtest tab'
-        subtitle = (
-            f"Sharpe {lag.get('sharpe', '—')} | DD {lag.get('max_dd', '—')} · "
-            f"Auditor Lagged (extra-month timing). "
-            f"Production CPI+1mo / GDP+4mo is {prod} on the Backtest tab."
+    keys = _PATH_KEYS.get(path)
+    if keys is None:
+        return {}
+    metrics = lm.get(keys[0]) or {}
+    if not metrics.get('annual_return') and path == BACKTEST_PATH_TARGETED:
+        metrics = _csv_production_metrics(data)
+    return metrics or {}
+
+
+def portfolio_backtest_headline(data):
+    """Portfolio card: targeted fix first. The old look-ahead CAGR stays in the subtitle."""
+    lm = _lagged_bundle(data)
+    tgt = _path_metrics(data, BACKTEST_PATH_TARGETED)
+    old = (lm.get('lookahead') or {})
+    if tgt.get('annual_return'):
+        old_cagr = old.get('annual_return')
+        extra = (
+            f" Old month-end look-ahead was {old_cagr} (not the default)."
+            if old_cagr else ""
         )
-        return 'Auditor Lagged CAGR', str(lag.get('annual_return')), subtitle
+        subtitle = (
+            f"Sharpe {tgt.get('sharpe', '—')} | DD {tgt.get('max_dd', '—')} · "
+            f"Targeted fix: CPI+1mo / GDP+4mo, no month-end look-ahead."
+            f"{extra}"
+        )
+        return 'Targeted-fix CAGR', str(tgt.get('annual_return')), subtitle
     csv = _csv_production_metrics(data)
     cagr = str(csv.get('annual_return', '—'))
     sharpe = str(csv.get('sharpe', '—'))
     dd = str(csv.get('max_dd', '—'))
     subtitle = (
-        f"Sharpe {sharpe} | DD {dd} · Production CPI+1mo / GDP+4mo. "
-        f"Auditor Lagged is not loaded."
+        f"Sharpe {sharpe} | DD {dd} · Targeted fix CSV. "
+        f"In-memory honesty paths are not loaded."
     )
     return 'Backtest CAGR', cagr, subtitle
 
 
 def us_backtest_comparison(data):
-    """US column on the CDN tab. Matches the Backtest default when the extra-month run exists.
+    """US column on the CDN tab. Matches the Backtest default (targeted fix).
 
     CDN itself has no extra-month series. Callers should say so.
     """
     lm = _lagged_bundle(data)
-    lag = lm.get('lagged') or {}
-    if lag.get('annual_return'):
+    tgt = lm.get('targeted') or {}
+    if tgt.get('annual_return'):
         return {
-            'label': 'US Auditor Lagged (extra month)',
-            'cagr': lag.get('annual_return', '—'),
-            'max_dd': lag.get('max_dd', '—'),
-            'sharpe': lag.get('sharpe', '—'),
-            'volatility': lag.get('volatility', '—'),
-            'calmar': lag.get('calmar', '—'),
-            'win_rate': lag.get('win_rate', '—'),
-            'total_return': lag.get('total_return', '—'),
-            'uses_auditor_lag': True,
+            'label': 'US targeted fix (no month-end look-ahead)',
+            'cagr': tgt.get('annual_return', '—'),
+            'max_dd': tgt.get('max_dd', '—'),
+            'sharpe': tgt.get('sharpe', '—'),
+            'volatility': tgt.get('volatility', '—'),
+            'calmar': tgt.get('calmar', '—'),
+            'win_rate': tgt.get('win_rate', '—'),
+            'total_return': tgt.get('total_return', '—'),
+            'uses_auditor_lag': False,
+            'uses_targeted_fix': True,
         }
     csv = _csv_production_metrics(data)
     return {
-        'label': 'US production (CPI+1mo / GDP+4mo)',
+        'label': 'US targeted fix (CPI+1 / GDP+4)',
         'cagr': csv.get('annual_return', '—'),
         'max_dd': csv.get('max_dd', '—'),
         'sharpe': csv.get('sharpe', '—'),
@@ -1555,6 +1710,7 @@ def us_backtest_comparison(data):
         'win_rate': csv.get('win_rate', '—'),
         'total_return': csv.get('total_return', '—'),
         'uses_auditor_lag': False,
+        'uses_targeted_fix': bool(csv.get('annual_return')),
     }
 
 
@@ -1566,7 +1722,7 @@ def _table_row(name, metrics):
         'Volatility': metrics.get('volatility', '—'),
         'Sharpe': metrics.get('sharpe', '—'),
         'Sortino': metrics.get('sortino', '—'),
-        'Max DD': metrics.get('max_dd', '—'),
+        'Max DD (daily)': metrics.get('max_dd', '—'),
         'Calmar': metrics.get('calmar', '—'),
         'Win Rate': metrics.get('win_rate', '—'),
         'Total Return': metrics.get('total_return', '—'),
@@ -1576,7 +1732,8 @@ def _table_row(name, metrics):
 def _chart_frame(all_eq, curve, curve_name):
     frame = all_eq.copy() if isinstance(all_eq, pd.DataFrame) else pd.DataFrame()
     drop = [c for c in frame.columns if c in _PROD_CSV_NAMES or c in (
-        AUDITOR_SERIES_LABEL, PRODUCTION_SERIES_LABEL)]
+        AUDITOR_SERIES_LABEL, PRODUCTION_SERIES_LABEL, LOOKAHEAD_SERIES_LABEL,
+        UNLAGGED_SERIES_LABEL, VINTAGE_SERIES_LABEL, TARGETED_SERIES_LABEL)]
     if len(drop):
         frame = frame.drop(columns=drop, errors='ignore')
     series = _as_series(curve)
@@ -1586,56 +1743,40 @@ def _chart_frame(all_eq, curve, curve_name):
 
 
 def build_backtest_path_body(data, path):
-    """Cards, curves, and comparison for one Backtest path.
+    """Cards, curve, and heatmap for one honesty path.
 
-    ``auditor_lagged`` is the fresh-load default. It does not fall back to the
-    production CAGR when the extra-month run is missing. Those cards stay blank
-    so the production number cannot appear as the unlabeled default.
+    The equity curve is ``curve_for_path``. The heatmap is the month-end
+    change of that same curve. Cards are that path's own metrics. A missing
+    non-default path stays blank on all three. It does not borrow the
+    production curve, the production heatmap, or another path's CAGR.
     """
+    path = path or BACKTEST_PATH_TARGETED
+    if path == 'production':
+        path = BACKTEST_PATH_TARGETED
+    if path not in _PATH_KEYS:
+        path = BACKTEST_PATH_TARGETED
     lm = _lagged_bundle(data)
-    lag = lm.get('lagged') or {}
-    std = lm.get('standard') or {}
-    if not std.get('annual_return'):
-        std = _csv_production_metrics(data)
-    show_auditor = path != BACKTEST_PATH_PRODUCTION
-    if show_auditor:
-        metrics = lag if lag.get('annual_return') else {}
-        curve = _as_series(lm.get('lagged_curve'))
-        monthly = _as_series(lm.get('lagged_monthly'))
-        series_name = AUDITOR_SERIES_LABEL
-        caption = (
-            'Showing Auditor Lagged: the production regime (CPI already +1 month, GDP already +4 months) '
-            'shifted one extra month. That extra month is an execution / timing sensitivity — '
-            'the publication-aware path shown first.'
-        )
-        chart_title = 'Equity Curve — Auditor Lagged vs benchmarks ($100K)'
-        dd_title = 'Drawdown — Auditor Lagged (extra month)'
-    else:
-        metrics = std if std.get('annual_return') else {}
-        curve = _as_series(lm.get('standard_curve'))
-        if len(curve) == 0:
-            curve = _as_series(data.get('equity_curve'))
-        monthly = _as_series(lm.get('standard_monthly'))
-        if len(monthly) == 0:
-            monthly = _as_series(data.get('monthly_returns'))
-        series_name = PRODUCTION_SERIES_LABEL
-        caption = (
-            'Showing production: CPI +1 month and GDP +4 months. This is the path live allocation uses. '
-            'Auditor Lagged (one extra month of regime delay) is the default on a fresh load.'
-        )
-        chart_title = 'Equity Curve — Production vs benchmarks ($100K)'
-        dd_title = 'Drawdown — Production (CPI+1mo / GDP+4mo)'
+    metrics_key, _curve_key, _monthly_key, series_name = _PATH_KEYS[path]
+    metrics = lm.get(metrics_key) or {}
+    if path == BACKTEST_PATH_TARGETED and not metrics.get('annual_return'):
+        metrics = _csv_production_metrics(data)
+    curve = curve_for_path(data, path)
+    caption = _PATH_CAPTION[path]
+    if path != BACKTEST_PATH_TARGETED and not (lm.get(metrics_key) or {}).get('annual_return'):
+        metrics = {}
+        curve = pd.Series(dtype=float)
+        caption += ' This path is not loaded, so these cards stay blank.'
+    monthly = monthly_from_equity(curve)
+    chart_title = f'Equity Curve — {series_name} vs benchmarks ($100K)'
+    dd_title = f'Daily drawdown — {series_name}'
 
-    if show_auditor and not lag.get('annual_return'):
-        caption += ' Auditor Lagged metrics are not loaded yet, so these cards stay blank.'
-
-    us_start, us_end, us_years = _series_span(curve if len(curve) else _as_series(data.get('equity_curve')))
+    us_start, us_end, us_years = _series_span(curve)
     if us_start:
         us_span = f'{us_start} → {us_end}'
-        us_cagr_lbl = f'{us_years:.1f}-yr CAGR'
+        us_cagr_lbl = '252-day year count'
     else:
         us_span = 'equity-curve sample'
-        us_cagr_lbl = 'Sample CAGR'
+        us_cagr_lbl = '252-day year count'
 
     ann_ret = metrics.get('annual_return', '—')
     sharpe = metrics.get('sharpe', '—')
@@ -1646,25 +1787,32 @@ def build_backtest_path_body(data, path):
 
     bt = data.get('backtest_results', pd.DataFrame())
     all_eq = data.get('all_equity_curves', pd.DataFrame())
-    auditor_row = _table_row(AUDITOR_SERIES_LABEL, lag if lag.get('annual_return') else {})
-    prod_row = _table_row(PRODUCTION_SERIES_LABEL, std if std.get('annual_return') else {})
+    path_rows = []
+    for other in _PATH_ORDER:
+        o_metrics, _c, _m, o_label = _PATH_KEYS[other]
+        block = lm.get(o_metrics) or {}
+        if other == BACKTEST_PATH_TARGETED and not block.get('annual_return'):
+            block = _csv_production_metrics(data)
+        if other != path and not block.get('annual_return'):
+            continue
+        if other == BACKTEST_PATH_VINTAGE and not block.get('annual_return'):
+            continue
+        path_rows.append((other, _table_row(o_label, block if block.get('annual_return') else {})))
+    path_rows.sort(key=lambda item: 0 if item[0] == path else 1)
     bench_rows = []
     if isinstance(bt, pd.DataFrame) and not bt.empty:
         for strat in bt.index:
             if strat in _PROD_CSV_NAMES:
                 continue
             bench_rows.append(_table_row(strat, _metrics_from_csv_row(bt.loc[strat])))
-    if show_auditor:
-        table_data = [auditor_row, prod_row] + bench_rows
-    else:
-        table_data = [prod_row, auditor_row] + bench_rows
+    table_data = [row for _k, row in path_rows] + bench_rows
 
     frame = _chart_frame(all_eq, curve, series_name)
     return html.Div([
         dbc.Row([
             dbc.Col(mc('Annual Return', str(ann_ret), us_cagr_lbl, '#00d97e', '📈'), md=2),
             dbc.Col(mc('Sharpe Ratio', str(sharpe), 'Risk-adjusted', '#00d97e', '⚡'), md=2),
-            dbc.Col(mc('Max Drawdown', str(max_dd), 'Worst loss', '#00d97e', '🛡️'), md=2),
+            dbc.Col(mc('Max Drawdown', str(max_dd), 'Daily peak-to-trough', '#00d97e', '🛡️'), md=2),
             dbc.Col(mc('Sortino', str(sortino), 'Downside risk', '#3498db', '📊'), md=2),
             dbc.Col(mc('Calmar', str(calmar), 'Return/DD', '#3498db', '🎯'), md=2),
             dbc.Col(mc('Total Return', str(total_ret), us_span, '#f5a623', '💰'), md=2),
@@ -1672,20 +1820,26 @@ def build_backtest_path_body(data, path):
         html.Div(f'{caption} Sample {us_span}.',
                  style={'color': '#6c757d', 'fontSize': '11px', 'marginTop': '-8px', 'marginBottom': '12px'}),
         html.Div([dcc.Graph(
-            figure=make_equity_curves(frame, curve, title=chart_title),
+            figure=make_equity_curves(frame, curve, title=chart_title, main_name=series_name),
             config={'displayModeBar': False},
         )], style={**CS, 'marginBottom': '16px'}),
         html.Div([dcc.Graph(figure=make_drawdown(curve, title=dd_title), config={'displayModeBar': False})],
                  style={**CS, 'marginBottom': '16px'}),
         html.Div([dcc.Graph(figure=make_monthly_heatmap(monthly), config={'displayModeBar': False})],
-                 style={**CS, 'marginBottom': '16px'}),
+                 style={**CS, 'marginBottom': '4px'}),
+        html.Div(
+            'Monthly returns of the equity curve above. A calendar-year CAGR of that same total return '
+            'can differ by a few basis points from the 252-day CAGR on the cards. '
+            'Max drawdown on this page is the daily peak-to-trough. A month-end snapshot is shallower and is not shown.',
+            style={'color': '#6c757d', 'fontSize': '11px', 'marginBottom': '16px'},
+        ),
         html.Div([
             html.H6(f'Strategy Comparison — {us_span}', style={'color': '#c8c8d4', 'marginBottom': '10px'}),
-            html.Div('The highlighted row is the path selected above. Production stays in this table either way.',
+        html.Div('The highlighted row is the path selected above. Cards, the equity curve, and the heatmap are that path’s series.',
                      style={'color': '#6c757d', 'fontSize': '11px', 'marginBottom': '8px'}),
             dash_table.DataTable(
                 columns=[{'name': c, 'id': c} for c in ['Strategy','Annual Return','Volatility','Sharpe',
-                          'Sortino','Max DD','Calmar','Win Rate','Total Return']],
+                          'Sortino','Max DD (daily)','Calmar','Win Rate','Total Return']],
                 data=table_data, sort_action='native',
                 style_header={'backgroundColor': '#16213e', 'color': '#c8c8d4', 'fontWeight': '600',
                               'border': '1px solid #2d2d44', 'fontFamily': 'Inter'},
@@ -1703,14 +1857,25 @@ def build_backtest_path_body(data, path):
 
 def build_backtest_tab(data):
     lm = _lagged_bundle(data)
-    lag_ann = (lm.get('lagged') or {}).get('annual_return')
-    std_ann = (lm.get('standard') or {}).get('annual_return') or _csv_production_metrics(data).get('annual_return')
-    lag_lbl = 'Auditor Lagged — extra month (timing sensitivity)'
-    prod_lbl = 'Production — CPI +1mo / GDP +4mo'
-    if lag_ann:
-        lag_lbl += f' · CAGR {lag_ann}'
-    if std_ann:
-        prod_lbl += f' · CAGR {std_ann}'
+    short = {
+        BACKTEST_PATH_TARGETED: 'Targeted fix — CPI+1 / GDP+4, no month-end look-ahead',
+        BACKTEST_PATH_LOOKAHEAD: 'Old production — month-end look-ahead',
+        BACKTEST_PATH_UNLAGGED: 'Unlagged diagnostic — publication lag off',
+        BACKTEST_PATH_AUDITOR: 'Auditor extra month — overly conservative',
+        BACKTEST_PATH_VINTAGE: 'First-release vintage — ALFRED',
+    }
+    options = []
+    for path in _PATH_ORDER:
+        key = _PATH_KEYS[path][0]
+        ann = (lm.get(key) or {}).get('annual_return')
+        if path == BACKTEST_PATH_TARGETED and not ann:
+            ann = _csv_production_metrics(data).get('annual_return')
+        if path == BACKTEST_PATH_VINTAGE and not ann:
+            continue
+        label = short[path]
+        if ann:
+            label += f' · CAGR {ann}'
+        options.append({'label': label, 'value': path})
     return html.Div([
         make_timestamp_strip(data, 'backtest'),
         html.Div([
@@ -1718,25 +1883,23 @@ def build_backtest_tab(data):
                                             'fontWeight': '700', 'marginBottom': '8px'}),
             dcc.RadioItems(
                 id='backtest-path-select',
-                options=[
-                    {'label': lag_lbl, 'value': BACKTEST_PATH_AUDITOR},
-                    {'label': prod_lbl, 'value': BACKTEST_PATH_PRODUCTION},
-                ],
-                value=BACKTEST_PATH_AUDITOR,
+                options=options,
+                value=BACKTEST_PATH_TARGETED,
                 inline=True,
                 labelStyle={'display': 'inline-block', 'marginRight': '22px', 'color': '#c8c8d4',
                             'fontSize': '13px'},
                 inputStyle={'marginRight': '6px'},
             ),
             html.Div(
-                'Auditor Lagged is the default. It is the production regime (CPI +1 month, GDP +4 months) '
-                'shifted one extra month. That extra month is an execution / timing sensitivity: '
-                'the publication-aware path shown first. Production is the path live allocation uses; '
-                'select it here to see that CAGR. The look-ahead case (publication lag off) stays on the Auditor tab.',
+                'Default is the targeted fix: CPI +1 month and GDP +4 months, and no month-end look-ahead. '
+                'Live allocation uses this clock. The old production number still includes same-month VIX and '
+                'SPY closes. Unlagged turns the publication lag off. The Auditor extra month waits too long. '
+                'First-release vintage, when loaded, uses ALFRED prints instead of revised data with a fixed offset. '
+                'The monthly heatmap follows the selected path.',
                 style={'color': '#8888a0', 'fontSize': '12px', 'lineHeight': '1.45', 'marginTop': '10px'},
             ),
-        ], style={**CS, 'marginBottom': '16px', 'border': '1px solid #b55fe6'}),
-        html.Div(id='backtest-path-body', children=build_backtest_path_body(data, BACKTEST_PATH_AUDITOR)),
+        ], style={**CS, 'marginBottom': '16px', 'border': '1px solid #00d97e'}),
+        html.Div(id='backtest-path-body', children=build_backtest_path_body(data, BACKTEST_PATH_TARGETED)),
     ])
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2192,17 +2355,21 @@ def build_execution_tab(data):
 # ═══════════════════════════════════════════════════════════════════════════
 # TAB 5: GEMINI INDEPENDENT AUDITOR
 # ═══════════════════════════════════════════════════════════════════════════
-def make_auditor_curves(std_curve, lagged_curve):
+def make_auditor_curves(std_curve, lagged_curve, lookahead_curve=None):
     fig = go.Figure()
-    if std_curve is not None and not std_curve.empty:
+    if std_curve is not None and not getattr(std_curve, 'empty', True):
         vals = std_curve * 100000
-        fig.add_trace(go.Scatter(x=vals.index, y=vals.values, name='Production (CPI+1mo / GDP+4mo)',
+        fig.add_trace(go.Scatter(x=vals.index, y=vals.values, name='Targeted fix',
                                   line=dict(color='#00d97e', width=2)))
-    if lagged_curve is not None and not lagged_curve.empty:
+    if lookahead_curve is not None and not getattr(lookahead_curve, 'empty', True):
+        vals = lookahead_curve * 100000
+        fig.add_trace(go.Scatter(x=vals.index, y=vals.values, name='Month-end look-ahead',
+                                  line=dict(color='#f5a623', width=1.6, dash='dot')))
+    if lagged_curve is not None and not getattr(lagged_curve, 'empty', True):
         vals = lagged_curve * 100000
-        fig.add_trace(go.Scatter(x=vals.index, y=vals.values, name='Extra month (timing sensitivity)',
-                                  line=dict(color='#b55fe6', width=2, dash='dash')))
-    fig.update_layout(**PL, title='Production vs one extra month of regime delay ($100K)', height=380,
+        fig.add_trace(go.Scatter(x=vals.index, y=vals.values, name='Auditor extra month',
+                                  line=dict(color='#b55fe6', width=1.6, dash='dash')))
+    fig.update_layout(**PL, title='Targeted fix vs month-end look-ahead vs extra month ($100K)', height=380,
                       yaxis_title='Portfolio Value ($)', hovermode='x unified',
                       legend=dict(orientation='h', y=1.12, x=0.5, xanchor='center'))
     return fig
@@ -2446,12 +2613,12 @@ def build_auditor_tab(data):
     std_tot = std_m.get('total_return', '—')
     lag_tot = lag_m.get('total_return', '—')
     
-    prod_col = 'Production (CPI+1/GDP+4)'
+    prod_col = 'Targeted fix'
     extra_col = 'Extra month'
     comparison_table = [
         {'Metric': 'Annual Return', prod_col: std_ann, extra_col: lag_ann, 'Difference': get_diff_str(std_ann, lag_ann, True)},
         {'Metric': 'Sharpe Ratio', prod_col: std_sharpe, extra_col: lag_sharpe, 'Difference': get_diff_str(std_sharpe, lag_sharpe, False)},
-        {'Metric': 'Max Drawdown', prod_col: std_dd, extra_col: lag_dd, 'Difference': get_diff_str(std_dd, lag_dd, True)},
+        {'Metric': 'Max Drawdown (daily)', prod_col: std_dd, extra_col: lag_dd, 'Difference': get_diff_str(std_dd, lag_dd, True)},
         {'Metric': 'Total Return', prod_col: std_tot, extra_col: lag_tot, 'Difference': get_diff_str(std_tot, lag_tot, True)},
     ]
 
@@ -2599,18 +2766,17 @@ def build_auditor_tab(data):
         # Panel 4: Look-Ahead Bias
         html.Div([
             html.H5('⌛ 4. Publication Lag and Execution Timing', style={'color': '#b55fe6', 'marginBottom': '6px', 'fontWeight': '700'}),
-            html.Div('Look-ahead is unlagged macro versus production (CPI+1mo / GDP+4mo). '
-                     'The table and chart are a different test: production versus one extra month of regime delay (execution / timing sensitivity).',
+            html.Div('The trusted path is the targeted fix: CPI+1 / GDP+4, with VIX and SPY momentum known only at month-end. '
+                     'Month-end look-ahead is the old production stamp. The extra month waits even longer and is overly conservative. '
+                     'Unlagged (publication lag off) is the look-ahead diagnostic in the row below.',
                      style={'color': '#8888a0', 'fontSize': '12px', 'marginBottom': '16px'}),
             dbc.Row([
                 dbc.Col([
-                    html.P('Production already waits for CPI and GDP release dates. The extra-month series shifts that lagged regime one more month. '
-                           'A lower CAGR on the extra-month series is timing sensitivity. It is not evidence that production used unpublished data. '
-                           'The look-ahead premium is the unlagged run versus production, in the Look-Ahead Bias Diagnostic row. '
-                           'The Backtest tab and the Portfolio CAGR card open on this extra-month series. '
-                           'Production (CPI+1mo / GDP+4mo) stays on the Backtest control.',
+                    html.P('The Backtest tab and the Portfolio CAGR card open on the targeted fix. '
+                           'CPI stays +1 month and GDP stays +4 months. Those offsets are not shortened. '
+                           'The old production path still used same-month closes. The Auditor extra month is a further delay, not the default.',
                            style={'color': '#c8c8d4', 'fontSize': '12px', 'lineHeight': '1.5'}),
-                    html.H6('Production vs extra-month timing', style={'color': '#c8c8d4', 'marginTop': '16px', 'marginBottom': '10px'}),
+                    html.H6('Targeted fix vs extra month', style={'color': '#c8c8d4', 'marginTop': '16px', 'marginBottom': '10px'}),
                     dash_table.DataTable(
                         columns=[{'name': c, 'id': c} for c in ['Metric', prod_col, extra_col, 'Difference']],
                         data=comparison_table,
@@ -2623,11 +2789,15 @@ def build_auditor_tab(data):
                             {'if': {'filter_query': '{Difference} contains "+"' }, 'color': '#00d97e'}
                         ]
                     ),
-                    html.Div('Difference is extra-month minus production. It is a timing sensitivity, not a look-ahead score.',
+                    html.Div('Difference is the extra month minus the targeted fix. The extra month is overly conservative.',
                              style={'color': '#6c757d', 'fontSize': '11px', 'marginTop': '8px', 'fontStyle': 'italic'})
                 ], md=6),
                 dbc.Col([
-                    dcc.Graph(figure=make_auditor_curves(lagged_metrics.get('standard_curve'), lagged_metrics.get('lagged_curve')), config={'displayModeBar': False})
+                    dcc.Graph(figure=make_auditor_curves(
+                        lagged_metrics.get('targeted_curve') or lagged_metrics.get('standard_curve'),
+                        lagged_metrics.get('lagged_curve'),
+                        lagged_metrics.get('lookahead_curve'),
+                    ), config={'displayModeBar': False})
                 ], md=6)
             ])
         ], style={**CS, 'marginBottom': '16px', 'border': '1px solid #b55fe6'}),
@@ -2729,7 +2899,7 @@ def build_cdn_portfolio_tab(data):
     us_mr         = data.get('monthly_returns', pd.Series(dtype=float))
     metrics       = cdn_meta.get('metrics', {})
     from config.regime_rules import REGIME_VIX_DEFENSIVE as _CDN_VIX
-    # US column follows the Backtest default (Auditor Lagged) when that run exists.
+    # US column follows the Backtest default (targeted fix).
     # CDN has no parallel extra-month series — its own cards stay the TSX production book.
     us_cmp = us_backtest_comparison(data)
     us_cagr = str(us_cmp['cagr'])
@@ -2741,11 +2911,13 @@ def build_cdn_portfolio_tab(data):
     us_total = str(us_cmp['total_return'])
     us_col = us_cmp['label']
     _lm = _lagged_bundle(data)
-    lag_eq = _as_series(_lm.get('lagged_curve'))
-    prod_eq = _as_series(_lm.get('standard_curve'))
+    lag_eq = _as_series(_lm.get('lookahead_curve'))
+    prod_eq = _as_series(_lm.get('targeted_curve'))
+    if len(prod_eq) == 0:
+        prod_eq = _as_series(_lm.get('standard_curve'))
     if len(prod_eq) == 0:
         prod_eq = _as_series(us_eq)
-    us_primary = lag_eq if us_cmp['uses_auditor_lag'] and len(lag_eq) else prod_eq
+    us_primary = prod_eq if us_cmp.get('uses_targeted_fix') and len(prod_eq) else prod_eq
     cdn_start, cdn_end, cdn_years = _series_span(cdn_eq)
     us_curve_start, us_curve_end, _us_curve_years = _series_span(us_primary if len(us_primary) else us_eq)
     if cdn_start:
@@ -2795,25 +2967,23 @@ def build_cdn_portfolio_tab(data):
         donut_fig = go.Figure()
 
     # ── Equity curve overlay: CDN vs US ───────────────────────────────
-    # CDN stays its own production book (no extra-month series). The bold US
-    # line matches the Backtest default when Auditor Lagged is loaded.
+    # CDN stays its own production book. The bold US line is the targeted fix.
     overlay_fig = go.Figure()
-    if us_cmp['uses_auditor_lag'] and len(lag_eq):
-        us_dollars = lag_eq * 100000
-        overlay_fig.add_trace(go.Scatter(
-            x=us_dollars.index, y=us_dollars.values,
-            name='US Auditor Lagged (extra month — Backtest default)',
-            line=dict(color='#b55fe6', width=2.5),
-            hovertemplate='%{x|%b %Y}: $%{y:,.0f} USD<extra>US Auditor Lagged</extra>',
-        ))
     if len(prod_eq):
         prod_dollars = prod_eq * 100000
         overlay_fig.add_trace(go.Scatter(
             x=prod_dollars.index, y=prod_dollars.values,
-            name='US production (CPI+1mo / GDP+4mo)',
-            line=dict(color='#00d97e', width=1.4 if us_cmp['uses_auditor_lag'] else 2.5,
-                      dash='dot' if us_cmp['uses_auditor_lag'] else None),
-            hovertemplate='%{x|%b %Y}: $%{y:,.0f} USD<extra>US production</extra>',
+            name='US targeted fix (CPI+1 / GDP+4, no month-end look-ahead)',
+            line=dict(color='#00d97e', width=2.5),
+            hovertemplate='%{x|%b %Y}: $%{y:,.0f} USD<extra>US targeted fix</extra>',
+        ))
+    if len(lag_eq):
+        old_dollars = lag_eq * 100000
+        overlay_fig.add_trace(go.Scatter(
+            x=old_dollars.index, y=old_dollars.values,
+            name='US old production (month-end look-ahead)',
+            line=dict(color='#b55fe6', width=1.4, dash='dot'),
+            hovertemplate='%{x|%b %Y}: $%{y:,.0f} USD<extra>US month-end look-ahead</extra>',
         ))
     if not cdn_eq.empty:
         cdn_dollars = cdn_eq * 100000
@@ -2828,9 +2998,7 @@ def build_cdn_portfolio_tab(data):
         us_aligned = us_primary[us_primary.index >= start]
         if not us_aligned.empty:
             us_h2h = (us_aligned / us_aligned.iloc[0]) * 100000
-            h2h_name = ('US Auditor Lagged (re-indexed to $100K at CDN start)'
-                        if us_cmp['uses_auditor_lag'] and len(lag_eq)
-                        else 'US production (re-indexed to $100K at CDN start)')
+            h2h_name = 'US targeted fix (re-indexed to $100K at CDN start)'
             overlay_fig.add_trace(go.Scatter(
                 x=us_h2h.index, y=us_h2h.values,
                 name=h2h_name,
@@ -2845,7 +3013,7 @@ def build_cdn_portfolio_tab(data):
         xaxis=dict(gridcolor='#2d2d44', color='#8888a0'),
         yaxis=dict(gridcolor='#2d2d44', color='#8888a0', title='Portfolio Value ($)', tickprefix='$', tickformat=',.0f'),
         font=dict(color='#c8c8d4'), hovermode='x unified',
-        title=dict(text='CDN vs US ($100K). Bold US line is Auditor Lagged when that run is loaded.',
+        title=dict(text='CDN vs US ($100K). Bold US line is the targeted fix.',
                    font=dict(size=13, color='#c8c8d4')),
     )
 
@@ -2921,8 +3089,8 @@ def build_cdn_portfolio_tab(data):
                      f'Sharpe {metrics.get("Sharpe","—")} | Vol {metrics.get("Volatility","—")}',
                      style={'color': '#6c757d', 'fontSize': '11px', 'marginBottom': '4px'}),
             html.Div('CDN cards are the TSX production backtest. There is no CDN extra-month timing series. '
-                     'The US comparison follows the Backtest tab default (Auditor Lagged) when that US run is loaded. '
-                     'US production (CPI+1mo / GDP+4mo) stays on the Backtest control and as the dotted curve below.',
+                     'The US comparison follows the Backtest tab default (targeted fix). '
+                     'The old month-end look-ahead path is the dotted US curve when that run is loaded.',
                      style={'color': '#b55fe6', 'fontSize': '11px', 'marginBottom': '10px'}),
         ], style=CS),
 
@@ -3048,7 +3216,7 @@ def build_cdn_portfolio_tab(data):
         # Metric cards
         dbc.Row([
             dbc.Col(mc('CAGR (CDN)',  metrics.get('CAGR', '—'),  cdn_card, '#00d97e', '📈'), md=2),
-            dbc.Col(mc('Max DD',      metrics.get('MaxDD','—'),   'Worst peak-to-trough', '#e74c3c', '📉'), md=2),
+            dbc.Col(mc('Max DD',      metrics.get('MaxDD','—'),   'Daily peak-to-trough', '#e74c3c', '📉'), md=2),
             dbc.Col(mc('Sharpe',      metrics.get('Sharpe','—'),  'Risk-adjusted return', '#3498db', '⚡'), md=2),
             dbc.Col(mc('Volatility',  metrics.get('Volatility','—'), 'Annual std dev', '#9b59b6', '〰️'), md=2),
             dbc.Col(mc('Win Rate',    metrics.get('WinRate','—'), 'Share of up days (daily)', '#f5a623', '🎯'), md=2),
@@ -3095,12 +3263,8 @@ def build_cdn_portfolio_tab(data):
             html.H6('Side-by-Side Comparison: CDN (CAD) vs US (USD)',
                     style={'color': '#c8c8d4', 'marginBottom': '4px'}),
             html.Div(
-                (f'US column is Auditor Lagged ({us_span_lbl}): production regime plus one extra month '
-                 f'(execution / timing sensitivity). CDN has no parallel extra-month run, so the CDN column '
-                 f'stays the TSX production book over {cdn_span}'
-                 if us_cmp['uses_auditor_lag'] else
-                 f'US Auditor Lagged is not loaded, so the US column is production ({us_span_lbl}, CPI+1mo / GDP+4mo). '
-                 f'CDN has no extra-month series. CDN sample {cdn_span}')
+                (f'US column is the targeted fix ({us_span_lbl}): CPI+1 / GDP+4 with no month-end look-ahead. '
+                 f'CDN has no parallel timing series, so the CDN column stays the TSX production book over {cdn_span}')
                 + (f' ({cdn_years:.1f} years)' if cdn_years else '')
                 + '. ZQQ.TO is CAD-hedged Nasdaq-100; VFV.TO is unhedged S&P 500 (USD/CAD moves VFV, not ZQQ).',
                 style={'color': '#8888a0', 'fontSize': '11px', 'marginBottom': '10px'}),
@@ -3108,7 +3272,7 @@ def build_cdn_portfolio_tab(data):
                 columns=[{'name': c, 'id': c} for c in ['Metric', 'CDN Portfolio (CAD)', us_col]],
                 data=[
                     {'Metric': 'CAGR',        'CDN Portfolio (CAD)': metrics.get('CAGR','—'),       us_col: us_cagr},
-                    {'Metric': 'Max Drawdown', 'CDN Portfolio (CAD)': metrics.get('MaxDD','—'),      us_col: us_maxdd},
+                    {'Metric': 'Max Drawdown (daily)', 'CDN Portfolio (CAD)': metrics.get('MaxDD','—'),      us_col: us_maxdd},
                     {'Metric': 'Sharpe Ratio', 'CDN Portfolio (CAD)': metrics.get('Sharpe','—'),     us_col: us_sharpe},
                     {'Metric': 'Volatility',   'CDN Portfolio (CAD)': metrics.get('Volatility','—'), us_col: us_vol},
                     {'Metric': 'Calmar Ratio', 'CDN Portfolio (CAD)': metrics.get('Calmar','—'),     us_col: us_calmar},
@@ -3123,7 +3287,7 @@ def build_cdn_portfolio_tab(data):
                 style_data_conditional=[
                     {'if': {'row_index': 'odd'}, 'backgroundColor': '#16213e'},
                     {'if': {'filter_query': '{Metric} = "CAGR"'}, 'fontWeight': '700'},
-                    {'if': {'filter_query': '{Metric} = "Max Drawdown"'}, 'fontWeight': '700'},
+                    {'if': {'filter_query': '{Metric} = "Max Drawdown (daily)"'}, 'fontWeight': '700'},
                 ],
             ),
         ], style={**CS, 'marginBottom': '16px'}),
@@ -3252,6 +3416,6 @@ def create_app(data):
     )
     def switch_backtest_path(path):
         # Display only. Weights, regime classification, and the Reddit overlay are untouched.
-        return build_backtest_path_body(data, path or BACKTEST_PATH_AUDITOR)
+        return build_backtest_path_body(data, path or BACKTEST_PATH_TARGETED)
 
     return app

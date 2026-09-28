@@ -36,63 +36,76 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from config.regime_rules import REGIME_WEIGHTS, RISK_LIMITS, REGIME_VIX_DEFENSIVE
+from config.regime_rules import REGIME_WEIGHTS, RISK_LIMITS
 
 PRICE_CACHE = ROOT / "data" / "cache" / "price_data.csv"
 MACRO_CACHE = ROOT / "data" / "cache" / "macro_data.pkl"
-LEVERAGED = {"TQQQ", "SOXL"}
-REDIRECT = {"QQQ": 0.55, "SOXX": 0.45}
 
 
 # ──────────────────────────────────────────────────────────────────────
 # Current regime + target weights (mirrors the dashboard, lagged macro)
 # ──────────────────────────────────────────────────────────────────────
 def current_regime_and_weights():
+    """Target notionals from the production engine's last day.
+
+    The monthly regime sleeve is not the order. ``run_optimized_regime_backtest``
+    then applies the daily overlay: 200-MA blend, portfolio vol scale, and
+    portfolio drawdown shrink. The VIX 28→40 cut is not applied.
+    This function runs that same engine and reads ``result.overlay``. Names with
+    no price are dropped and the sleeve is renormalized inside the engine. They
+    are not left as cash. There is no event-only order mode.
+    """
     import pickle
+    from config.regime_rules import STRATEGY_PARAMS
+    from src.backtester.daily_overlay import policy_lines, weights_from_overlay
+    from src.backtester.engine import BacktestEngine
+    from src.backtester.regime_clock import MODE_TARGETED, classify_regimes
+
     price = pd.read_csv(PRICE_CACHE, index_col=0, parse_dates=True).ffill()
     macro = pickle.load(open(MACRO_CACHE, "rb"))
-    vix = macro["vix"]; vix.index = pd.to_datetime(vix.index)
-    cpi = macro["cpi"]; cpi.index = pd.to_datetime(cpi.index)
-    gdp = macro["gdp"]; gdp.index = pd.to_datetime(gdp.index)
+    history, current, _info = classify_regimes(macro, price, mode=MODE_TARGETED)
+    regime = current.get("regime", "goldilocks")
+    vix_now = float(current.get("vix", 0.0))
 
-    # publication lag (no look-ahead) — same as run_dashboard / run_backtest
-    cpi_yoy = cpi.pct_change(12) * 100
-    cpi_yoy.index = cpi_yoy.index + pd.DateOffset(months=1)
-    gdp = gdp.copy(); gdp.index = gdp.index + pd.DateOffset(months=4)
-    cpi_m = cpi_yoy.resample("MS").last().ffill()
-    gdp_m = gdp.resample("MS").last().ffill()
-    spy_mom = price["SPY"].resample("MS").last().pct_change(12)
-    vix_now = float(vix.dropna().iloc[-1])
-    now = price.index[-1]
+    available = set(price.columns)
+    weights_map = {}
+    for name, raw in REGIME_WEIGHTS.items():
+        filtered = {k: v for k, v in raw.items() if k in available}
+        total = sum(filtered.values())
+        weights_map[name] = {k: v / total for k, v in filtered.items()} if total else {}
 
-    g = gdp_m.asof(now); s = spy_mom.asof(now)
-    c = cpi_m.asof(now); c3 = cpi_m.asof(now - pd.DateOffset(months=3))
-    growth = (g > 1.5) or (s > 0.05)
-    infl = (c > 3.0) and (c > c3)
-    if vix_now > REGIME_VIX_DEFENSIVE:
-        regime = "deflation"
-    elif growth and not infl:
-        regime = "goldilocks"
-    elif growth and infl:
-        regime = "reflation"
-    elif (not growth) and infl:
-        regime = "stagflation"
+    ff = macro.get("ff_rate", pd.Series(dtype=float))
+    if ff is not None and len(ff):
+        ff = ff.copy()
+        ff.index = pd.to_datetime(ff.index)
+        ff = ff.loc[str(price.index.min().date()):]
+        avg_rf = float(ff.mean() / 100.0) if len(ff) else 0.02
     else:
-        regime = "deflation"
-
-    raw = dict(REGIME_WEIGHTS[regime])
-    # VIX gate: zero TQQQ/SOXL when VIX >= 20, redirect to QQQ/SOXX (production rule)
-    if vix_now >= 20:
-        freed = sum(raw.pop(t, 0) for t in LEVERAGED)
-        for rt, share in REDIRECT.items():
-            if rt in raw:
-                raw[rt] += freed * share
-    # keep only tradeable tickers (have a recent price) and renormalise
+        avg_rf = 0.02
+    engine = BacktestEngine(price, initial_capital=100_000, risk_free_rate=avg_rf)
+    result = engine.run_optimized_regime_backtest(
+        regime_history=history,
+        regime_weights=weights_map,
+        name="live-overlay",
+        vix_data=macro.get("vix"),
+        **STRATEGY_PARAMS,
+    )
+    overlay = result.overlay or {}
+    weights = weights_from_overlay(overlay)
     last_px = price.ffill().iloc[-1]
-    avail = {t: w for t, w in raw.items() if t in price.columns and pd.notna(last_px.get(t))}
-    tot = sum(avail.values())
-    weights = {t: w / tot for t, w in avail.items()} if tot else {}
-    prices = {t: float(last_px[t]) for t in weights}
+    prices = {t: float(last_px[t]) for t in weights if t in last_px.index and pd.notna(last_px[t])}
+    weights = {t: w for t, w in weights.items() if t in prices}
+    print("\n".join(policy_lines()))
+    print(
+        f"\nOverlay as of {overlay.get('as_of')}: "
+        f"trend_risk_on={overlay.get('trend_risk_on')} "
+        f"equity_scale={float(overlay.get('equity_scale') or 1):.3f} "
+        f"(vix={float(overlay.get('vix_scale') or 1):.3f}, "
+        f"spy_dd={float(overlay.get('spy_dd_scale') or 1):.3f}) "
+        f"vol_scale={overlay.get('vol_scale'):.3f} "
+        f"dd_scale={overlay.get('dd_scale'):.3f} "
+        f"gross={sum(weights.values()):.3f}"
+    )
     return regime, vix_now, weights, prices
 
 
