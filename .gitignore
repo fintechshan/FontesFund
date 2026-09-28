@@ -60,6 +60,9 @@ ehthumbs.db
 *.log
 logs/
 
+# Notifier run log. The committed record is last_delivery inside data/notify_state.json.
+data/notify_audit.json
+
 # Jupyter
 .ipynb_checkpoints/
 
