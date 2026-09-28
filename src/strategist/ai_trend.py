@@ -449,28 +449,13 @@ def build_ai_trend_intelligence(price_data: pd.DataFrame, regime: str,
     except Exception as e:
         logger.warning(f"EDGAR capex unavailable: {e}")
 
-    # Tier 3 (experimental) — Reddit retail attention. Scored watchlist is
-    # exposed as retail_attention for stock picking. It does not change
-    # regime weights or the backtest.
+    # Tier 3 (experimental) — Reddit retail attention (VADER, display-only).
     reddit = {}
     try:
         from src.strategist.reddit_sentiment import analyze_reddit
         reddit = analyze_reddit()
     except Exception as e:
         logger.warning(f"Reddit sentiment unavailable: {e}")
-
-    retail_attention = (reddit or {}).get("retail_attention") or {}
-    picks = (retail_attention.get("picks") or {}) if retail_attention else {}
-    bits = []
-    for key in ("watch_long", "watch_avoid", "hype_caution"):
-        names = picks.get(key) or []
-        if names:
-            bits.append(f"{key} {', '.join(names)}")
-    if bits:
-        report = list(report) + [
-            "Retail attention overlay (experimental, not in ETF weights): "
-            + "; ".join(bits) + "."
-        ]
 
     return {
         "signals": signals,
@@ -481,7 +466,6 @@ def build_ai_trend_intelligence(price_data: pd.DataFrame, regime: str,
         "market_sentiment": market_sentiment,
         "edgar_capex": edgar,
         "reddit": reddit,
-        "retail_attention": retail_attention,
         "generated": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
         "price_as_of": signals.get("as_of"),
     }
