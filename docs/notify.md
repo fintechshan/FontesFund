@@ -15,7 +15,7 @@ This path is separate from Cloud Run and from `run_backtest.py`. It does not cha
 
 Bands: `0-20` 正常, `20-28` 偏高, `28-30` 开始降敞口, `30-40` 大幅降敞口, `40+` 接近清仓股票.
 
-The regime is `classify_regimes(..., apply_lag=True)` from `run_dashboard.py` (CPI lagged 1 month, GDP lagged 4 months). The script loads that function with `ast` so importing `run_dashboard` does not run dashboard startup. The VIX band uses the latest `VIXCLS` print. Monthly average VIX above 30 still forces `deflation` inside the classifier.
+The regime is `classify_regimes(..., mode="targeted")` from `src/backtester/regime_clock.py`, the same call the dashboard and `scripts/ibkr_rebalance.py` use. That clock lags CPI by 1 month and GDP by 4 months, then lags the VIX monthly mean and 12-month momentum by one month. A latest VIX print above 30 forces the live label to `deflation`. The email's VIX band is the latest `VIXCLS` print, separate from that monthly mean.
 
 US weights come from `REGIME_WEIGHTS`. CDN weights come from `CDN_REGIME_WEIGHTS` for the same regime.
 

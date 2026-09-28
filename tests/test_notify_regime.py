@@ -151,23 +151,69 @@ class MessageTests(unittest.TestCase):
         self.assertEqual(restored['title'], title)
         self.assertIn('→', restored['title'])
 
-    def test_source_file_is_utf8(self):
+    def test_source_file_is_utf8_and_imports_clock(self):
         text = (ROOT / 'scripts' / 'notify_regime.py').read_text(encoding='utf-8')
         self.assertIn('调仓', text)
-        self.assertIn('DateOffset(months=1)', (ROOT / 'run_dashboard.py').read_text(encoding='utf-8'))
+        self.assertIn('src.backtester.regime_clock', text)
+        self.assertIn('MODE_TARGETED', text)
+        self.assertNotIn('get_source_segment', text)
+        clock = (ROOT / 'src' / 'backtester' / 'regime_clock.py').read_text(encoding='utf-8')
+        self.assertIn('CPI_RELEASE_LAG_M = 1', clock)
+        self.assertIn('GDP_RELEASE_LAG_M = 4', clock)
+
+
+def _august_vix_spike():
+    """Calm September print, hot August. Targeted September sees August."""
+    cpi_idx = pd.date_range('2003-01-01', '2026-09-01', freq='MS')
+    level = 100.0 * (1.02 ** (np.arange(len(cpi_idx)) / 12.0))
+    cpi = pd.Series(level, index=cpi_idx)
+    gdp = pd.Series(2.5, index=pd.date_range('2003-01-01', '2026-07-01', freq='QS'))
+    days = pd.bdate_range('2005-01-03', '2026-09-15')
+    vix = pd.Series(15.0, index=days)
+    vix.loc[(days.year == 2026) & (days.month == 8)] = 45.0
+    spy = pd.Series(np.linspace(100.0, 400.0, len(days)), index=days, name='SPY')
+    macro = {
+        'vix': vix,
+        'gdp': gdp,
+        'cpi': cpi,
+        't10y': pd.Series(4.0, index=days),
+        't2y': pd.Series(3.5, index=days),
+    }
+    return macro, spy.to_frame('SPY')
 
 
 class ClassifierLagTests(unittest.TestCase):
-    def test_compute_state_uses_publication_lag(self):
+    def test_compute_state_uses_targeted_clock(self):
+        from src.backtester.regime_clock import (
+            MODE_LOOKAHEAD,
+            MODE_TARGETED,
+            MODE_UNLAGGED,
+            classify_regimes,
+        )
+
         macro, price = _spiked_inputs()
         state = nr.compute_state(macro, price)
         self.assertEqual(state['regime'], 'goldilocks')
+        self.assertEqual(state['clock'], MODE_TARGETED)
         self.assertEqual(state['vix_band'], '0-20')
-        fn = nr.load_classifier()
-        _hist, unlagged, _derived = fn(macro, price, apply_lag=False)
+        _hist, unlagged, _info = classify_regimes(macro, price, mode=MODE_UNLAGGED)
         self.assertEqual(unlagged['regime'], 'reflation')
-        sig_default = fn.__defaults__
-        self.assertEqual(sig_default, (True,))
+        _hist, targeted, info = classify_regimes(macro, price, mode=MODE_TARGETED)
+        self.assertEqual(targeted['regime'], 'goldilocks')
+        self.assertTrue(info['publication_lag'])
+        self.assertFalse(info['same_month_market'])
+        _hist, lookahead, _la = classify_regimes(macro, price, mode=MODE_LOOKAHEAD)
+        self.assertEqual(lookahead['regime'], 'goldilocks')
+
+    def test_targeted_sees_prior_month_vix(self):
+        from src.backtester.regime_clock import MODE_LOOKAHEAD, classify_regimes
+
+        macro, price = _august_vix_spike()
+        state = nr.compute_state(macro, price)
+        self.assertEqual(state['regime'], 'deflation')
+        self.assertEqual(state['vix_band'], '0-20')
+        _hist, lookahead, _info = classify_regimes(macro, price, mode=MODE_LOOKAHEAD)
+        self.assertEqual(lookahead['regime'], 'goldilocks')
 
 
 class ExecuteTests(unittest.TestCase):

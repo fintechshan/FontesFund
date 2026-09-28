@@ -8,21 +8,18 @@ notify_regime.py — 象限 / VIX 跨档提醒（GitHub Issue → 邮件）。
     python scripts/notify_regime.py --refresh --github-issue --force
 
 发信条件（满足其一才开 Issue）:
-  1. Merrill 象限变了（run_dashboard.classify_regimes，apply_lag=True）
+  1. Merrill 象限变了（src.backtester.regime_clock，mode=targeted）
   2. 最新 VIX 跨档：0-20 / 20-28 / 28-30 / 30-40 / 40+
 
 同一档内的 VIX 波动、以及象限未变，都静默退出。首次运行只写
 data/notify_state.json 基线，不开 Issue；--force 用于测试发信。
 
-分类器从 run_dashboard.py 用 ast 抽出 classify_regimes，不 import 该模块。
-import 会执行模块级启动（读缓存、建 DASHBOARD_DATA）。仓库里没有单独的
-regime_clock 可导入；run_backtest.py 的分类是脚本顶层代码，不是可调用函数。
-抽出的函数仍是 dashboard 那一份，CPI +1 个月、GDP +4 个月，默认 apply_lag=True。
+targeted 与仪表盘、ibkr_rebalance 相同：CPI +1 个月，GDP +4 个月，
+VIX 月均和 12 个月动量再 shift(1)。不 import run_dashboard（那会跑启动逻辑）。
 """
 from __future__ import annotations
 
 import argparse
-import ast
 import json
 import os
 import pickle
@@ -102,34 +99,20 @@ def format_pct(x: float, signed: bool = False) -> str:
     return f'{pct_value:{spec}}%'
 
 
-def _classifier_source() -> tuple[ast.FunctionDef, str]:
-    path = ROOT / 'run_dashboard.py'
-    src = path.read_text(encoding='utf-8')
-    fn = next(
-        (n for n in ast.parse(src).body
-         if isinstance(n, ast.FunctionDef) and n.name == 'classify_regimes'),
-        None,
-    )
-    if fn is None:
-        die('run_dashboard.py 里找不到 classify_regimes。')
-    segment = ast.get_source_segment(src, fn) or ''
-    if 'DateOffset(months=1)' not in segment or 'DateOffset(months=4)' not in segment:
-        die('classify_regimes 已不再包含 CPI+1 / GDP+4 发布滞后，拒绝沿用，避免静默换成另一套规则。')
-    first = segment.splitlines()[0] if segment else ''
-    if 'apply_lag=True' not in first:
-        die('classify_regimes 的默认参数已不是 apply_lag=True。')
-    return fn, segment
-
-
 def load_classifier():
-    """Load dashboard classify_regimes without executing run_dashboard startup."""
+    """Production clock. Importing run_dashboard would run its startup path."""
     global _CLASSIFIER
     if _CLASSIFIER is not None:
         return _CLASSIFIER
-    _fn, segment = _classifier_source()
-    ns: dict = {'pd': pd}
-    exec(segment, ns)  # noqa: S102 — this repo's own classify_regimes
-    _CLASSIFIER = ns['classify_regimes']
+    from src.backtester.regime_clock import (
+        CPI_RELEASE_LAG_M,
+        GDP_RELEASE_LAG_M,
+        MODE_TARGETED,
+        classify_regimes,
+    )
+    if CPI_RELEASE_LAG_M != 1 or GDP_RELEASE_LAG_M != 4:
+        die('regime_clock 的 CPI/GDP 滞后已不是 +1 / +4，拒绝发信。')
+    _CLASSIFIER = (classify_regimes, MODE_TARGETED)
     return _CLASSIFIER
 
 
@@ -168,7 +151,19 @@ def _num(value, ndigits: int):
 
 def compute_state(macro: dict, price: pd.DataFrame) -> dict:
     validate_inputs(macro, price)
-    _history, cur, _derived = load_classifier()(macro, price, apply_lag=True)
+    classify, mode = load_classifier()
+    _history, cur, info = classify(macro, price, mode=mode)
+    if (
+        not info
+        or info.get('mode') != mode
+        or not info.get('publication_lag')
+        or info.get('same_month_market')
+    ):
+        die(
+            '时钟不是 targeted（需要 CPI+1、GDP+4，且 VIX/动量再滞后 1 个月）。'
+            f" mode={None if not info else info.get('mode')}",
+            code=2,
+        )
     regime = (cur or {}).get('regime')
     if not regime:
         die('分类结果为空。', code=2)
@@ -179,6 +174,7 @@ def compute_state(macro: dict, price: pd.DataFrame) -> dict:
     asof_txt = pd.Timestamp(asof).date().isoformat()
     return {
         'schema': 1,
+        'clock': mode,
         'regime': str(regime),
         'vix_band': band,
         'vix_band_name': band_name,
@@ -333,8 +329,9 @@ def _fmt_snapshot(cur: dict) -> list[str]:
         f'- CPI YoY {cpi_s} · GDP {gdp_s} · SPY 12 月动量 {mom_s}',
         f"- 价格数据截至 {cur['price_asof']}；检查时间 {cur['checked_at']}",
         '',
-        '象限规则与仪表盘相同：CPI 滞后 1 个月，GDP 滞后 4 个月（apply_lag=True）。'
-        'VIX 档位用最新 VIX 收盘；月均 VIX 高于 30 时分类器会把象限打成 deflation。',
+        '象限与仪表盘相同，用 targeted 时钟：CPI 滞后 1 个月，GDP 滞后 4 个月，'
+        'VIX 月均和 12 个月动量再滞后 1 个月。最新 VIX 高于 30 时，当日标签改为 deflation。'
+        '下面的 VIX 档位用最新收盘；同一档内的波动不单独发信。',
         '',
         '### 执行提醒',
         '- 上表是四象限目标权重。日频股票敞口由引擎按 VIX 与回撤计算；本提醒标出跨档。',
