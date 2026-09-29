@@ -108,6 +108,8 @@ class BandAndDedupeTests(unittest.TestCase):
         self.assertIn('月中再平衡：不建议', body)
         self.assertIn('观察为主', body)
         self.assertIn('scripts/ibkr_rebalance.py', body)
+        self.assertIn('scripts/moomoo_rebalance.py', body)
+        self.assertIn('不要为了这一档加上 `--execute`', body)
         self.assertNotIn('减持 QQQ', body)
 
     def test_unchanged_regime_and_band_silent(self):
@@ -169,6 +171,8 @@ class MessageTests(unittest.TestCase):
         )
         self.assertLess(body.index('减持 QQQ'), body.index('增持 IEF'))
         self.assertIn('scripts/ibkr_rebalance.py', body)
+        self.assertIn('scripts/moomoo_rebalance.py', body)
+        self.assertIn('SIMULATE', body)
         self.assertIn('dry-run', body)
         self.assertIn('不是已成交', body)
         self.assertIn('Regime Monitor', body)
