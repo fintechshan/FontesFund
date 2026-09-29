@@ -17,7 +17,9 @@ This path is separate from Cloud Run and from `run_backtest.py`. It does not cha
 
 Bands: `0-20` 正常, `20-28` 偏高, `28-30` 开始降敞口, `30-40` 大幅降敞口, `40+` 接近清仓股票.
 
-The regime is `classify_regimes(..., mode="targeted")` from `src/backtester/regime_clock.py`, the same call the dashboard and `scripts/ibkr_rebalance.py` use. That clock lags CPI by 1 month and GDP by 4 months, then lags the VIX monthly mean and 12-month momentum by one month. A latest VIX print above 30 forces the live label to `deflation`. The email's VIX band is the latest `VIXCLS` print, separate from that monthly mean.
+The regime is `classify_regimes(..., mode="targeted")` from `src/backtester/regime_clock.py`, the same call the dashboard, `scripts/ibkr_rebalance.py`, and `scripts/moomoo_rebalance.py` use. That clock lags CPI by 1 month and GDP by 4 months, then lags the VIX monthly mean and 12-month momentum by one month. A latest VIX print above 30 forces the live label to `deflation`. The email's VIX band is the latest `VIXCLS` print, separate from that monthly mean.
+
+The 怎么执行 block names a local IBKR dry-run and a local Moomoo/Futu US paper dry-run (`python scripts/moomoo_rebalance.py`). Both lines are operator hints. This workflow does not connect to TWS or OpenD and does not place orders. See `docs/moomoo_paper.md`.
 
 US weights come from `REGIME_WEIGHTS`. CDN weights come from `CDN_REGIME_WEIGHTS` for the same regime. A sleeve change smaller than 1% does not flip **需要调仓** to 是 and is left off the trade list.
 
@@ -80,7 +82,8 @@ Illustration only. The regime sample is `goldilocks` → `deflation` with VIX al
 ### 怎么执行
 - 上面是目标权重差额，不是已成交。这封邮件不会下单。
 - 本机 TWS 或 Gateway 开着时，先跑 `python scripts/ibkr_rebalance.py`（默认 dry-run，只打印计划）。
-- 核对纸账户计划后，再加 `--execute` 才会发单。脚本拒绝向非纸账户 `--execute`。
+- 本机 OpenD 已登录时，美股模拟盘可跑 `python scripts/moomoo_rebalance.py`（默认 dry-run，只打印计划；`--execute` 只允许 SIMULATE）。
+- 核对纸账户计划后，再加 `--execute` 才会发单。IBKR 脚本拒绝向非纸账户 `--execute`；Moomoo 脚本拒绝 REAL。
 - 对照仪表盘 **Regime Monitor**（当前象限）和 **Portfolio**（目标权重）。
 
 ### 判定依据
@@ -108,6 +111,7 @@ VIX-only (regime stays `goldilocks`, band `0-20` → `28-30`):
 - **月中再平衡：不建议。** 观察为主，不改四象限目标权重。
 - 日频股票敞口由引擎按 VIX 与回撤缩放。这一档只说明 overlay 应收紧还是可放松。
 - 若要核对账户是否偏离当前象限目标，本机跑 `python scripts/ibkr_rebalance.py`（默认 dry-run）。不要为了这一档加上 `--execute`。
+- Moomoo 美股模拟盘同样只核对：`python scripts/moomoo_rebalance.py`（默认 dry-run）。不要为了这一档加上 `--execute`。
 - 对照仪表盘 **Regime Monitor** 和 **Portfolio**。
 - 打印出来的是目标，不是已成交。
 
@@ -251,5 +255,6 @@ python -m unittest tests.test_notify_regime
 |---|---|
 | `.github/workflows/notify.yml` | Weekday cron, manual force, then `--audit` |
 | `scripts/notify_regime.py` | Classify, dedupe, open Issue, audit a miss |
+| `scripts/moomoo_rebalance.py` | Local US SIMULATE rebalance via OpenD. Not called by this workflow. See `docs/moomoo_paper.md` |
 | `data/notify_state.json` | Baseline plus `last_delivery` after a successful Issue. Keep it tracked |
 | `data/notify_audit.json` | Gitignored run log for the audit step in the same job |
