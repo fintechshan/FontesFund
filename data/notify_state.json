@@ -1,13 +1,28 @@
 {
   "schema": 1,
   "clock": "targeted",
-  "regime": "goldilocks",
+  "regime": "reflation",
   "vix_band": "0-20",
   "vix_band_name": "正常",
-  "vix": 14.2,
-  "cpi_yoy": 3.71,
-  "gdp": 1.5,
-  "spy_momentum": 0.1794,
-  "price_asof": "2026-09-25",
-  "checked_at": "2026-09-28 04:50 UTC"
+  "vix": 15.3,
+  "cpi_yoy": 4.02,
+  "gdp": 2.2,
+  "spy_momentum": 0.1732,
+  "price_asof": "2026-10-14",
+  "checked_at": "2026-10-15 01:06 UTC",
+  "last_delivery": {
+    "schema": 1,
+    "action": "notify",
+    "should_fire": true,
+    "kind": "regime",
+    "title": "[调仓] goldilocks → reflation（2026-10-14）",
+    "fingerprint": "regime|goldilocks>reflation|0-20>0-20|2026-10-14",
+    "delivery": "created",
+    "issue_number": 16,
+    "issue_url": "https://github.com/fintechshan/FontesFund/issues/16",
+    "checked_at": "2026-10-15 01:06 UTC",
+    "checked_at_iso": "2026-10-15T01:06:09Z",
+    "price_asof": "2026-10-14",
+    "error": null
+  }
 }
