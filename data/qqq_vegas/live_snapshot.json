@@ -1,0 +1,38 @@
+{
+  "broker": "moomoo",
+  "as_of": null,
+  "positions": {
+    "QQQ": {
+      "shares": 0,
+      "weight": null,
+      "status": "unknown"
+    },
+    "QLD": {
+      "shares": 0,
+      "weight": null,
+      "status": "unknown"
+    },
+    "BIL": {
+      "shares": 0,
+      "weight": null,
+      "status": "unknown"
+    },
+    "SGOV": {
+      "shares": 0,
+      "weight": null,
+      "status": "unknown"
+    },
+    "cash_usd": null
+  },
+  "target": {
+    "state": "RISK_ON",
+    "QQQ": 0.7,
+    "QLD": 0.3,
+    "cash_ticker": null,
+    "cash_w": 0.0
+  },
+  "match": false,
+  "notes": "尚未接入实盘快照",
+  "strategy_id": "qqq_vegas_1_3x",
+  "signal_as_of": "2026-10-16"
+}

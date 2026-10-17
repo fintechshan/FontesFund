@@ -1,0 +1,204 @@
+{
+  "engine": "v8.2 close-to-close + shift(1) weights; cost_bps on L1 weight change",
+  "note": "May differ from v4 open-fill 8bps engine (prior Vegas ~13.8%/-21.1%)",
+  "as_of": "2026-10-17",
+  "configs": {
+    "vegas_1x_zero_cash": {
+      "name": "Vegas 原版 (100% QQQ + 0息现金)",
+      "w_qld": 0.0,
+      "use_cash_yield": false,
+      "cost_bps": 4.0,
+      "full": {
+        "CAGR": 0.139396,
+        "CAGR_pct": 13.94,
+        "MaxDD": -0.189269,
+        "MaxDD_pct": -18.93,
+        "MaxDD_Date": "2013-02-25",
+        "Sharpe": 0.9595,
+        "Calmar": 0.7365,
+        "start": "2010-02-11",
+        "end": "2026-10-16",
+        "n_days": 4196
+      },
+      "oos": {
+        "CAGR": 0.144844,
+        "CAGR_pct": 14.48,
+        "MaxDD": -0.14061,
+        "MaxDD_pct": -14.06,
+        "MaxDD_Date": "2023-02-24",
+        "Sharpe": 0.9534,
+        "Calmar": 1.0301,
+        "start": "2021-01-04",
+        "end": "2026-10-16",
+        "n_days": 1454
+      }
+    },
+    "vegas_1x_bil": {
+      "name": "Vegas + 短债利息 (100% QQQ + BIL)",
+      "w_qld": 0.0,
+      "use_cash_yield": true,
+      "cost_bps": 4.0,
+      "full": {
+        "CAGR": 0.142102,
+        "CAGR_pct": 14.21,
+        "MaxDD": -0.189978,
+        "MaxDD_pct": -19.0,
+        "MaxDD_Date": "2013-02-25",
+        "Sharpe": 0.9756,
+        "Calmar": 0.748,
+        "start": "2010-02-11",
+        "end": "2026-10-16",
+        "n_days": 4196
+      },
+      "oos": {
+        "CAGR": 0.151273,
+        "CAGR_pct": 15.13,
+        "MaxDD": -0.134541,
+        "MaxDD_pct": -13.45,
+        "MaxDD_Date": "2024-08-06",
+        "Sharpe": 0.9898,
+        "Calmar": 1.1244,
+        "start": "2021-01-04",
+        "end": "2026-10-16",
+        "n_days": 1454
+      }
+    },
+    "vegas_1_2x": {
+      "name": "Vegas 1.2x (80% QQQ + 20% QLD + BIL)",
+      "w_qld": 0.2,
+      "use_cash_yield": true,
+      "cost_bps": 4.0,
+      "full": {
+        "CAGR": 0.165081,
+        "CAGR_pct": 16.51,
+        "MaxDD": -0.223997,
+        "MaxDD_pct": -22.4,
+        "MaxDD_Date": "2013-02-25",
+        "Sharpe": 0.9539,
+        "Calmar": 0.737,
+        "start": "2010-02-11",
+        "end": "2026-10-16",
+        "n_days": 4196
+      },
+      "oos": {
+        "CAGR": 0.171332,
+        "CAGR_pct": 17.13,
+        "MaxDD": -0.160737,
+        "MaxDD_pct": -16.07,
+        "MaxDD_Date": "2024-09-09",
+        "Sharpe": 0.9466,
+        "Calmar": 1.0659,
+        "start": "2021-01-04",
+        "end": "2026-10-16",
+        "n_days": 1454
+      }
+    },
+    "vegas_1_3x": {
+      "name": "★最终主推 Vegas 1.3x (70% QQQ + 30% QLD + BIL)",
+      "w_qld": 0.3,
+      "use_cash_yield": true,
+      "cost_bps": 4.0,
+      "full": {
+        "CAGR": 0.176358,
+        "CAGR_pct": 17.64,
+        "MaxDD": -0.24066,
+        "MaxDD_pct": -24.07,
+        "MaxDD_Date": "2013-02-25",
+        "Sharpe": 0.9455,
+        "Calmar": 0.7328,
+        "start": "2010-02-11",
+        "end": "2026-10-16",
+        "n_days": 4196
+      },
+      "oos": {
+        "CAGR": 0.181066,
+        "CAGR_pct": 18.11,
+        "MaxDD": -0.174044,
+        "MaxDD_pct": -17.4,
+        "MaxDD_Date": "2024-09-09",
+        "Sharpe": 0.93,
+        "Calmar": 1.0403,
+        "start": "2021-01-04",
+        "end": "2026-10-16",
+        "n_days": 1454
+      }
+    }
+  },
+  "side_notes": {
+    "vegas_1_3x_cost_8bps": {
+      "name": "Vegas 1.3x cost_bps=8",
+      "full": {
+        "CAGR": 0.17329,
+        "CAGR_pct": 17.33,
+        "MaxDD": -0.247918,
+        "MaxDD_pct": -24.79,
+        "MaxDD_Date": "2013-02-25",
+        "Sharpe": 0.9319,
+        "Calmar": 0.699,
+        "start": "2010-02-11",
+        "end": "2026-10-16",
+        "n_days": 4196
+      },
+      "oos": {
+        "CAGR": 0.178615,
+        "CAGR_pct": 17.86,
+        "MaxDD": -0.175033,
+        "MaxDD_pct": -17.5,
+        "MaxDD_Date": "2024-09-09",
+        "Sharpe": 0.9196,
+        "Calmar": 1.0205,
+        "start": "2021-01-04",
+        "end": "2026-10-16",
+        "n_days": 1454
+      }
+    }
+  },
+  "buy_hold_qqq": {
+    "full": {
+      "CAGR": 0.1933,
+      "CAGR_pct": 19.33,
+      "MaxDD": -0.351187,
+      "MaxDD_pct": -35.12,
+      "MaxDD_Date": "2022-11-03",
+      "Sharpe": 0.9614,
+      "Calmar": 0.5504,
+      "start": "2010-02-11",
+      "end": "2026-10-16",
+      "n_days": 4196
+    },
+    "oos": {
+      "CAGR": 0.158401,
+      "CAGR_pct": 15.84,
+      "MaxDD": -0.351187,
+      "MaxDD_pct": -35.12,
+      "MaxDD_Date": "2022-11-03",
+      "Sharpe": 0.7698,
+      "Calmar": 0.451,
+      "start": "2021-01-04",
+      "end": "2026-10-16",
+      "n_days": 1454
+    }
+  },
+  "user_guess_verdicts_1_3x": {
+    "full_CAGR_17.5_to_18.5": {
+      "guess": "17.5–18.5%",
+      "measured_pct": 17.64,
+      "confirmed": true
+    },
+    "full_MaxDD_neg26_to_neg27.5": {
+      "guess": "-26.0–-27.5%",
+      "measured_pct": -24.07,
+      "confirmed": false
+    },
+    "oos_CAGR_20_to_21": {
+      "guess": "20.0–21.0%",
+      "measured_pct": 18.11,
+      "confirmed": false
+    },
+    "oos_MaxDD_neg17_to_neg17.5": {
+      "guess": "-17.0–-17.5%",
+      "measured_pct": -17.4,
+      "confirmed": true
+    }
+  }
+}

@@ -25,7 +25,8 @@ dashboard_review.md
 *.png
 *.tar.gz
 
-# Large/irrelevant assets — keep the source upload small (data/ stays: app reads it)
+# Large/irrelevant assets — keep the source upload small (data/ stays: app reads it,
+# including data/qqq_vegas/ for the read-only QQQ Vegas tab).
 co_pilot_src/
 node_modules/
 *.zip
