@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-notify_regime.py — 象限 / VIX 跨档提醒（GitHub Issue → 邮件）。
+notify_regime.py — Merrill 象限 / VIX 跨档，以及 QQQ Vegas 调仓提醒。
 
     python scripts/notify_regime.py --dry-run
     python scripts/notify_regime.py --refresh --dry-run
@@ -8,12 +8,23 @@ notify_regime.py — 象限 / VIX 跨档提醒（GitHub Issue → 邮件）。
     python scripts/notify_regime.py --refresh --github-issue --force
     python scripts/notify_regime.py --audit
 
-发信条件（满足其一才开 Issue）:
+发信条件（满足其一就开一张 Issue，不等另一袖套）:
   1. Merrill 象限变了（src.backtester.regime_clock，mode=targeted）
   2. 最新 VIX 跨档：0-20 / 20-28 / 28-30 / 30-40 / 40+
+  3. QQQ Vegas 可执行信号变了：RISK_ON / RISK_OFF / CASH、ENTER / EXIT /
+     下一步动作、目标权重变化达到 1%，或现金标的 BIL / SGOV 切换
 
-同一档内的 VIX 波动、以及象限未变，都静默退出。首次运行只写
-data/notify_state.json 基线，不开 Issue；--force 用于测试发信。
+同一档内的 VIX 波动、Merrill 象限未变、且 QQQ Vegas 指纹未变，都静默退出。
+首次运行（或状态里还没有 qqq_vegas）只写 data/notify_state.json 基线，不开 Issue。
+--force 用于测试发信。两个袖套的指纹彼此独立：只更新一边时，另一边的基线留在原地。
+
+Merrill 触发时，正文仍附上 QQQ Vegas 当前信号。QQQ 单独触发时，正文写明
+Merrill 未变。QQQ 信号来自已提交的 data/qqq_vegas/（与仪表盘只读页同一份），
+--refresh 不重算 Vegas。
+
+有 GitHub Issue 时，若环境变量 SERVERCHAN_SENDKEY 有值，再以表单
+title + desp 调用 Server酱（纯文本 / Markdown，不上传图片）。
+没配密钥只警告，不让这次 Issue 失败，也不回滚基线。密钥只来自环境变量。
 
 象限变了时，Issue 先写组合变化：旧→新、需要调仓（任一标的 |差额|≥1%）、
 美加风险姿态、权重表、减持/增持清单、怎么执行。只跨 VIX 档时写需要调仓：否，
@@ -22,9 +33,10 @@ data/notify_state.json 基线，不开 Issue；--force 用于测试发信。
 targeted 与仪表盘、ibkr_rebalance 相同：CPI +1 个月，GDP +4 个月，
 VIX 月均和 12 个月动量再 shift(1)。不 import run_dashboard（那会跑启动逻辑）。
 
-审计：象限变化、VIX 跨档或 --force 应发信时，必须创建 rebalance Issue。
-创建失败、Actions 上漏了 --github-issue，或响应里没有 number / html_url，
-都不写入新的象限状态（避免下次被去重静默），并以非零退出。
+审计：Merrill 变化、QQQ Vegas 变化、VIX 跨档或 --force 应发信时，必须创建
+rebalance Issue。创建失败、Actions 上漏了 --github-issue，或响应里没有
+number / html_url，都不写入新的状态（避免下次被去重静默），并以非零退出。
+微信失败只警告：Issue 已经在，回滚基线会让下一次再开一张 Issue。
 --audit 核对本次 data/notify_audit.json 或状态里的 last_delivery。
 记下的 issue number 只要 Issue 还在就通过（改标题、关 Issue 都不算漏报）。
 没有编号时，只认 7 日内同标题且带 rebalance 标签的 Issue。
@@ -37,6 +49,7 @@ import argparse
 import json
 import os
 import pickle
+import re
 import sys
 import time
 import urllib.error
@@ -122,6 +135,14 @@ def set_github_output(name: str, value: str) -> None:
         return
     with open(path, 'a', encoding='utf-8') as fh:
         fh.write(f'{name}={value}\n')
+
+
+def _warn(msg: str) -> None:
+    """Surface a non-fatal problem. Actions shows it as a warning annotation."""
+    print(msg, file=sys.stderr)
+    if os.environ.get('GITHUB_ACTIONS') == 'true':
+        flat = ' '.join(str(msg).split())
+        print(f'::warning::{flat}', file=sys.stderr)
 
 
 def vix_band(vix: float) -> tuple[str, str]:
@@ -271,7 +292,12 @@ def load_inputs() -> tuple[dict, pd.DataFrame]:
 
 def current_state() -> dict:
     macro, price = load_inputs()
-    return compute_state(macro, price)
+    cur = compute_state(macro, price)
+    snap = load_qqq_signal()
+    if snap is not None:
+        cur['qqq_vegas'] = snap
+        cur['schema'] = 2
+    return cur
 
 
 def read_state():
@@ -287,8 +313,179 @@ def write_state(cur: dict) -> None:
     path.write_text(json.dumps(cur, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
 
 
+def qqq_vegas_dir() -> Path:
+    return Path(os.environ.get('NOTIFY_QQQ_VEGAS_DIR', str(ROOT / 'data' / 'qqq_vegas')))
+
+
+_SENDKEY_RE = re.compile(r'^[A-Za-z0-9]+$')
+# Server酱 title is short. 40 is the preferred cap; desp carries the full text.
+WECHAT_TITLE_MAX = 40
+
+
+def _qqq_snap(state) -> dict | None:
+    """Actionable QQQ snapshot stored on a notify state, or None."""
+    if not isinstance(state, dict):
+        return None
+    snap = state.get('qqq_vegas')
+    if not isinstance(snap, dict):
+        return None
+    if not str(snap.get('state') or '').strip():
+        return None
+    return snap
+
+
+def _as_weight(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number:  # NaN
+        return None
+    return round(number, 4)
+
+
+def _blank_ticker(value) -> str:
+    if value is None:
+        return ''
+    text = str(value).strip()
+    if text.lower() in {'', 'none', 'nan', 'null', '—', '-'}:
+        return ''
+    return text.upper()
+
+
+def _pick_weight(signal: dict, flat_key: str, nested_key: str) -> float:
+    weights = signal.get('weights') if isinstance(signal.get('weights'), dict) else {}
+    for source, key in ((signal, flat_key), (weights, nested_key)):
+        if isinstance(source, dict) and key in source:
+            parsed = _as_weight(source.get(key))
+            if parsed is not None:
+                return parsed
+    return 0.0
+
+
+def qqq_fingerprint(snap: dict) -> str:
+    """Dedupe key. as_of and the prose reason are not part of it."""
+    ticker = snap.get('cash_ticker') or '-'
+    return (
+        f"{snap.get('state') or ''}|{snap.get('next_action') or ''}|"
+        f"qqq={float(snap.get('qqq_w') or 0):.4f}|"
+        f"qld={float(snap.get('qld_w') or 0):.4f}|"
+        f"cash={float(snap.get('cash_w') or 0):.4f}|"
+        f"ticker={ticker}|"
+        f"reb={snap.get('last_rebalance_date') or ''}:{snap.get('last_rebalance_action') or ''}"
+    )
+
+
+def qqq_actionable_change(prev: dict, cur: dict) -> bool:
+    """True when the sleeve would actually be traded differently."""
+    if str(prev.get('state') or '').upper() != str(cur.get('state') or '').upper():
+        return True
+    if str(prev.get('next_action') or '').upper() != str(cur.get('next_action') or '').upper():
+        return True
+    if _blank_ticker(prev.get('cash_ticker')) != _blank_ticker(cur.get('cash_ticker')):
+        return True
+    if (prev.get('last_rebalance_date') or '') != (cur.get('last_rebalance_date') or ''):
+        return True
+    if str(prev.get('last_rebalance_action') or '').upper() != str(cur.get('last_rebalance_action') or '').upper():
+        return True
+    for key in ('qqq_w', 'qld_w', 'cash_w'):
+        old = float(prev.get(key) or 0.0)
+        new = float(cur.get(key) or 0.0)
+        if abs(new - old) + 1e-12 >= REBALANCE_EPS:
+            return True
+    return False
+
+
+def _rebalance_from_csv(path: Path) -> dict:
+    if not path.is_file():
+        return {}
+    import csv
+    try:
+        with path.open(encoding='utf-8', newline='') as fh:
+            rows = list(csv.DictReader(fh))
+    except OSError:
+        return {}
+    if not rows:
+        return {}
+    last = rows[-1]
+    return {
+        'date': last.get('date') or last.get('exec_date') or '',
+        'action': last.get('action') or '',
+        'from_state': last.get('from_state') or '',
+        'to_state': last.get('to_state') or '',
+    }
+
+
+def normalize_qqq_signal(signal: dict, csv_reb: dict | None = None) -> dict | None:
+    """Map signal_current.json into the fingerprint stored on notify_state."""
+    if not isinstance(signal, dict):
+        return None
+    state = str(signal.get('state') or '').strip().upper()
+    if not state:
+        return None
+    reb = signal.get('last_rebalance')
+    if not isinstance(reb, dict) or not (reb.get('date') or reb.get('action')):
+        reb = csv_reb or {}
+    snap = {
+        'state': state,
+        'next_action': str(signal.get('next_action') or 'HOLD').strip().upper() or 'HOLD',
+        'qqq_w': _pick_weight(signal, 'qqq_w', 'QQQ'),
+        'qld_w': _pick_weight(signal, 'qld_w', 'QLD'),
+        'cash_w': _pick_weight(signal, 'cash_w', 'cash'),
+        'cash_ticker': _blank_ticker(signal.get('cash_ticker')),
+        'last_rebalance_date': str(reb.get('date') or '')[:10],
+        'last_rebalance_action': str(reb.get('action') or '').strip().upper(),
+        'last_rebalance_from': str(reb.get('from_state') or '').strip().upper(),
+        'last_rebalance_to': str(reb.get('to_state') or '').strip().upper(),
+        'as_of': str(signal.get('as_of') or signal.get('signal_date') or '')[:10],
+        'signal_date': str(signal.get('signal_date') or signal.get('as_of') or '')[:10],
+        'reason': ' '.join(str(signal.get('reason') or '').split()),
+    }
+    snap['fingerprint'] = qqq_fingerprint(snap)
+    return snap
+
+
+def load_qqq_signal(directory: Path | None = None) -> dict | None:
+    """Read the committed Vegas pack. None means 'do not treat this as a trade'."""
+    base = Path(directory) if directory is not None else qqq_vegas_dir()
+    path = base / 'signal_current.json'
+    if not path.is_file():
+        _warn(f'没有 {path.name}（{base}），QQQ Vegas 本次不参与比较。')
+        return None
+    try:
+        signal = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        _warn(f'无法读取 QQQ Vegas 信号（{exc.__class__.__name__}），本次不参与比较。')
+        return None
+    snap = normalize_qqq_signal(signal, _rebalance_from_csv(base / 'rebalances.csv'))
+    if snap is None:
+        _warn('QQQ Vegas 信号缺少 state，本次不参与比较。')
+    return snap
+
+
+def _state_for_disk(cur: dict, prev=None, audit: dict | None = None) -> dict:
+    """Persist both sleeves. A quiet QQQ seed must not drop Merrill last_delivery."""
+    out = {k: v for k, v in cur.items() if k != 'qqq_vegas_load'}
+    if isinstance(out.get('qqq_vegas'), dict) and out['qqq_vegas'].get('state'):
+        out['schema'] = 2
+    if audit is not None:
+        out['last_delivery'] = dict(audit)
+    elif (
+        isinstance(prev, dict)
+        and isinstance(prev.get('last_delivery'), dict)
+        and 'last_delivery' not in cur
+    ):
+        out['last_delivery'] = prev['last_delivery']
+    return out
+
+
 def classify_change(prev, cur: dict, force: bool = False) -> tuple[str, dict]:
-    """Return (action, reasons). action is 'silent', 'baseline', or 'notify'."""
+    """Return (action, reasons). action is 'silent', 'baseline', or 'notify'.
+
+    A missing qqq_vegas on an otherwise known Merrill baseline is 'baseline':
+    write the QQQ fingerprint, do not open an Issue. A later QQQ change notifies
+    on its own. Merrill and QQQ reasons are independent.
+    """
     reasons: dict[str, str] = {}
     if prev is None:
         reasons['init'] = f"首次运行，记录当前象限 **{cur['regime']}**（本次不视为调仓信号）"
@@ -304,25 +501,45 @@ def classify_change(prev, cur: dict, force: bool = False) -> tuple[str, dict]:
             f"**{cur['vix_band']} {cur['vix_band_name']}**"
             f"（VIX {prev.get('vix', '?')} → {cur['vix']}）"
         )
+    prev_q = _qqq_snap(prev)
+    cur_q = _qqq_snap(cur)
+    if prev_q is not None and cur_q is not None and qqq_actionable_change(prev_q, cur_q):
+        reasons['qqq'] = (
+            f"QQQ Vegas：**{prev_q.get('state')} → {cur_q.get('state')}**"
+            f"（{prev_q.get('next_action') or '—'} → {cur_q.get('next_action') or '—'}）"
+        )
     if force and not reasons:
-        reasons['forced'] = '（--force 测试，象限与 VIX 档位都没有变化）'
-    if not reasons:
-        return 'silent', reasons
-    return 'notify', reasons
+        reasons['forced'] = '（--force 测试，象限、VIX 档位与 QQQ Vegas 都没有变化）'
+    if reasons:
+        return 'notify', reasons
+    if prev_q is None and cur_q is not None:
+        return 'baseline', {
+            'qqq_baseline': (
+                f"QQQ Vegas 首次写入基线 **{cur_q.get('state')}**（本次不视为调仓信号）"
+            ),
+        }
+    return 'silent', reasons
 
 
 def delivery_kind(reasons: dict) -> str:
-    if 'regime' in reasons and 'vix' in reasons:
-        return 'regime+vix'
+    parts = []
     if 'regime' in reasons:
-        return 'regime'
+        parts.append('regime')
     if 'vix' in reasons:
-        return 'vix'
-    return 'force'
+        parts.append('vix')
+    if 'qqq' in reasons:
+        parts.append('qqq')
+    if not parts:
+        return 'force'
+    return '+'.join(parts)
 
 
 def delivery_fingerprint(prev, cur: dict, reasons: dict) -> str:
-    """Stable id for one should-fire event. Force includes the check date."""
+    """Stable id for one should-fire event. Force includes the check date.
+
+    QQQ is appended only when that sleeve is a reason, so a Merrill-only
+    fingerprint stays the historical regime|old>new|band|day form.
+    """
     kind = delivery_kind(reasons)
     day = cur.get('price_asof') or ''
     if kind == 'force':
@@ -330,7 +547,12 @@ def delivery_fingerprint(prev, cur: dict, reasons: dict) -> str:
         return f"force|{cur.get('regime')}|{cur.get('vix_band')}|{day}|{checked}"
     prev_regime = (prev or {}).get('regime') or ''
     prev_band = (prev or {}).get('vix_band') or ''
-    return f"{kind}|{prev_regime}>{cur.get('regime')}|{prev_band}>{cur.get('vix_band')}|{day}"
+    base = f"{kind}|{prev_regime}>{cur.get('regime')}|{prev_band}>{cur.get('vix_band')}|{day}"
+    if 'qqq' in reasons:
+        prev_fp = qqq_fingerprint(_qqq_snap(prev) or {})
+        cur_fp = qqq_fingerprint(_qqq_snap(cur) or {})
+        base += f"|qqq:{prev_fp}>{cur_fp}"
+    return base
 
 
 def blank_audit(action: str, cur: dict | None) -> dict:
@@ -467,7 +689,11 @@ def expectation_to_verify(run_record, state) -> dict | None:
 _KIND_ZH = {
     'regime': '象限切换',
     'vix': 'VIX 跨档',
+    'qqq': 'QQQ Vegas 调仓',
     'regime+vix': '象限切换与 VIX 跨档',
+    'regime+qqq': '象限切换与 QQQ Vegas 调仓',
+    'vix+qqq': 'VIX 跨档与 QQQ Vegas 调仓',
+    'regime+vix+qqq': '象限切换、VIX 跨档与 QQQ Vegas 调仓',
     'force': '强制测试',
 }
 
@@ -488,7 +714,8 @@ def audit_issue_body(record: dict, detail: str) -> str:
         '### 审计',
         '这次应该打开一个标签为 `rebalance` 的 GitHub Issue（并指派仓库所有者），'
         '由 GitHub 通知发邮件。没有找到对应 Issue。',
-        '这里不走 SMTP。邮件只来自 GitHub 的 Watch / assignee 通知。',
+        '这里不走 SMTP。邮件来自 GitHub 的 Watch / assignee 通知。',
+        '若配置了 SERVERCHAN_SENDKEY，同一封正文也会推到微信；审计只核对这张 Issue。',
         '',
         f'- 预期标题：{expected}',
         f'- 记录的 Issue：{number_s} {url}',
@@ -713,14 +940,116 @@ def _fmt_snapshot(cur: dict) -> list[str]:
     ]
 
 
+def _qqq_weights_text(snap: dict) -> str:
+    ticker = snap.get('cash_ticker') or ''
+    cash = f"现金 {format_pct(float(snap.get('cash_w') or 0))}"
+    if ticker:
+        cash += f'（{ticker}）'
+    return (
+        f"QQQ {format_pct(float(snap.get('qqq_w') or 0))} · "
+        f"QLD {format_pct(float(snap.get('qld_w') or 0))} · {cash}"
+    )
+
+
+def _qqq_rebalance_text(snap: dict) -> str:
+    date = snap.get('last_rebalance_date') or '—'
+    action = snap.get('last_rebalance_action') or '—'
+    src = snap.get('last_rebalance_from') or '—'
+    dst = snap.get('last_rebalance_to') or '—'
+    return f'{date} {action}（{src} → {dst}）'
+
+
+def _qqq_title_bit(prev, cur: dict) -> str:
+    prev_q = _qqq_snap(prev) or {}
+    cur_q = _qqq_snap(cur) or {}
+    old = prev_q.get('state') or '?'
+    new = cur_q.get('state') or '?'
+    if old != new:
+        return f'{old} → {new}'
+    old_action = prev_q.get('next_action') or '?'
+    new_action = cur_q.get('next_action') or '?'
+    if old_action != new_action:
+        return f'信号 {old_action} → {new_action}'
+    old_ticker = _blank_ticker(prev_q.get('cash_ticker')) or '—'
+    new_ticker = _blank_ticker(cur_q.get('cash_ticker')) or '—'
+    if old_ticker != new_ticker:
+        return f'现金 {old_ticker} → {new_ticker}'
+    return f'权重变化 {new}'
+
+
+def _ops_qqq() -> list[str]:
+    return [
+        '- QQQ Vegas 是只读袖套（风险开启时 70% QQQ + 30% QLD，关闭时现金 BIL 或 SGOV）。它不改 Merrill 的 `REGIME_WEIGHTS`。',
+        '- 这封提醒不会下单。对照仪表盘 **QQQ Vegas** 与仓库里的 `data/qqq_vegas/signal_current.json`。',
+    ]
+
+
+def _qqq_section(prev, cur: dict, reasons: dict) -> list[str]:
+    """Always name QQQ Vegas. A Merrill mail still carries the current Vegas signal."""
+    cur_q = _qqq_snap(cur)
+    prev_q = _qqq_snap(prev)
+    if cur_q is None:
+        return [
+            '',
+            '### QQQ Vegas',
+            '本次没有读到 `data/qqq_vegas/signal_current.json`。不把缺失当成调仓。Merrill 提醒照常。',
+        ]
+    if 'qqq' in reasons:
+        old_q = prev_q or {}
+        lines = [
+            '',
+            '### QQQ Vegas 调仓',
+            '**QQQ Vegas 需要调仓：是**（状态、ENTER/EXIT、下一步动作、目标权重达到 1%，或现金标的 BIL/SGOV 切换）',
+            f"状态：**{old_q.get('state') or '无记录'} → {cur_q.get('state')}**",
+            f"下一步：{old_q.get('next_action') or '—'} → {cur_q.get('next_action') or '—'}",
+            f"目标：{_qqq_weights_text(old_q) if old_q else '无记录'} → {_qqq_weights_text(cur_q)}",
+            f"最近调仓：{_qqq_rebalance_text(old_q) if old_q else '无记录'} → {_qqq_rebalance_text(cur_q)}",
+        ]
+        if cur_q.get('reason'):
+            lines.append(f"信号说明：{cur_q['reason']}")
+        lines.append(f"信号截至 {cur_q.get('as_of') or cur_q.get('signal_date') or '—'}")
+        lines.extend(_ops_qqq())
+        return lines
+    lines = [
+        '',
+        '### QQQ Vegas（本次未触发）',
+        f"状态：{cur_q.get('state')}（下一步 {cur_q.get('next_action') or '—'}）",
+        f"目标权重：{_qqq_weights_text(cur_q)}",
+        f"最近调仓：{_qqq_rebalance_text(cur_q)}",
+        f"信号截至 {cur_q.get('as_of') or cur_q.get('signal_date') or '—'}。本次 QQQ Vegas 不需要单独动手。",
+    ]
+    if prev_q is None:
+        lines.append('尚无 QQQ 基线：这封只附上当前信号，不单独特成 QQQ 调仓。')
+    lines.extend(_ops_qqq())
+    return lines
+
+
 def build_message(prev, cur: dict, reasons: dict) -> tuple[str, str]:
     old_regime = (prev or {}).get('regime')
+    cur_q = _qqq_snap(cur)
+    qqq_day = ''
+    if cur_q:
+        qqq_day = cur_q.get('as_of') or cur_q.get('signal_date') or ''
     if 'regime' in reasons:
         title = f"[调仓] {old_regime or '?'} → {cur['regime']}（{cur['price_asof']}）"
+        if 'qqq' in reasons:
+            title = (
+                f"[调仓] {old_regime or '?'} → {cur['regime']} · "
+                f"QQQ Vegas {_qqq_title_bit(prev, cur)}（{cur['price_asof']}）"
+            )
     elif 'vix' in reasons:
         title = f"[风险档位] VIX {cur['vix']} → {cur['vix_band_name']}（{cur['price_asof']}）"
+        if 'qqq' in reasons:
+            title = (
+                f"[风险档位] VIX {cur['vix']} → {cur['vix_band_name']} · "
+                f"QQQ Vegas {_qqq_title_bit(prev, cur)}（{cur['price_asof']}）"
+            )
+    elif 'qqq' in reasons:
+        when = qqq_day or cur.get('price_asof') or ''
+        title = f"[QQQ Vegas] {_qqq_title_bit(prev, cur)}（{when}）"
     else:
-        title = f"[测试] 象限 {cur['regime']} / VIX {cur['vix']}（{cur['price_asof']}）"
+        qbit = f" / QQQ Vegas {cur_q.get('state')}" if cur_q else ''
+        title = f"[测试] 象限 {cur['regime']} / VIX {cur['vix']}{qbit}（{cur['price_asof']}）"
 
     if 'regime' in reasons:
         flag, _books = _rebalance_flag(old_regime, cur['regime'])
@@ -744,6 +1073,13 @@ def build_message(prev, cur: dict, reasons: dict) -> tuple[str, str]:
         body.extend(_suggestion_block(old_regime, cur['regime']))
     elif 'vix' in reasons:
         body = _vix_only_block(prev, cur)
+    elif 'qqq' in reasons:
+        body = [
+            '### Merrill 象限',
+            f"Merrill 象限未变：**{cur['regime']}**。目标权重不变。",
+            '**需要调仓：否**',
+            '本次触发的是 QQQ Vegas，不是四象限袖套。',
+        ]
     elif 'init' in reasons or 'forced' in reasons:
         body = [
             '### 组合变化',
@@ -758,6 +1094,7 @@ def build_message(prev, cur: dict, reasons: dict) -> tuple[str, str]:
             f"象限未变：**{cur['regime']}**。目标权重不变。",
             '**需要调仓：否**',
         ]
+    body.extend(_qqq_section(prev, cur, reasons))
     body.extend(_fmt_snapshot(cur))
     return title, '\n'.join(body)
 
@@ -922,7 +1259,7 @@ def ensure_label(repo: str, token: str, name: str, color: str, description: str)
 def ensure_rebalance_label(repo: str, token: str) -> None:
     ensure_label(
         repo, token, 'rebalance', 'D93F0B',
-        'Merrill regime or VIX band change / 象限或 VIX 跨档',
+        'Merrill, VIX band, or QQQ Vegas change / 象限、VIX 或 QQQ Vegas',
     )
 
 
@@ -1124,8 +1461,99 @@ def run_audit(finder=None, alerter=None, find_audit=None) -> str:
     die('漏报：应发的 rebalance Issue 不存在。' + detail + extra)
 
 
+def serverchan_sendkey() -> str:
+    return (os.environ.get('SERVERCHAN_SENDKEY') or '').strip()
+
+
+def serverchan_endpoint(sendkey: str) -> str | None:
+    """POST target for a Turbo SendKey. The key is a path segment, never logged.
+
+    Returns None when the key is empty or not alphanumeric. Callers must not
+    print the key or this URL.
+    """
+    if not sendkey or not _SENDKEY_RE.fullmatch(sendkey):
+        return None
+    return f'https://sctapi.ftqq.com/{sendkey}.send'
+
+
+def wechat_title(title: str) -> str:
+    """One line, at most WECHAT_TITLE_MAX characters. No newlines."""
+    text = ' '.join(str(title).split())
+    if len(text) <= WECHAT_TITLE_MAX:
+        return text
+    return text[: WECHAT_TITLE_MAX - 3] + '...'
+
+
+def wechat_desp(title: str, body: str) -> str:
+    """Markdown text only: full title, then the Issue body. No images."""
+    full = ' '.join(str(title).split())
+    text = f'{full}\n\n{str(body).strip()}\n'
+    raw = text.encode('utf-8')
+    if len(raw) > 30000:
+        text = raw[:30000].decode('utf-8', errors='ignore')
+    return text
+
+
+def _redact(text: str, secret: str) -> str:
+    if secret and secret in text:
+        return text.replace(secret, '***')
+    return text
+
+
+def push_serverchan(title: str, body: str) -> dict:
+    """Push one WeChat message. Missing key is a warning, not a failure of the Issue.
+
+    A transport or API error is also a warning. The Issue already exists; rolling
+    the baseline back would open a second Issue on the next run.
+    """
+    key = serverchan_sendkey()
+    if not key:
+        _warn('未设置 SERVERCHAN_SENDKEY，跳过微信（Server酱）。GitHub Issue 仍会发送。')
+        return {'status': 'skipped', 'reason': 'missing_sendkey'}
+    url = serverchan_endpoint(key)
+    if url is None:
+        _warn('SERVERCHAN_SENDKEY 格式无法识别，跳过微信。密钥应为字母和数字，例如 SCT…。')
+        return {'status': 'skipped', 'reason': 'bad_sendkey'}
+    # Form fields only. title is the short subject; desp is Markdown text.
+    payload = urllib.parse.urlencode({
+        'title': wechat_title(title),
+        'desp': wechat_desp(title, body),
+    }).encode('utf-8')
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        method='POST',
+        headers={
+            'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8',
+            'User-Agent': 'notify-regime',
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            raw = resp.read().decode('utf-8', errors='replace')
+    except Exception as exc:  # noqa: BLE001 — WeChat must not fail the Issue path
+        _warn(f'Server酱推送失败（{exc.__class__.__name__}）。GitHub Issue 已创建，不回滚基线。')
+        return {'status': 'failed', 'reason': exc.__class__.__name__}
+    try:
+        data = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        _warn('Server酱返回的不是 JSON。GitHub Issue 已创建，不回滚基线。')
+        return {'status': 'failed', 'reason': 'bad_json'}
+    code = data.get('code') if isinstance(data, dict) else None
+    if code in (0, '0'):
+        print('已推送微信（Server酱）。')
+        return {'status': 'sent'}
+    message = ''
+    if isinstance(data, dict):
+        message = _redact(str(data.get('message') or data.get('info') or '')[:180], key)
+    _warn(f'Server酱未接受推送（code={code}）。GitHub Issue 已创建，不回滚基线。')
+    return {'status': 'failed', 'reason': message or f'code={code}'}
+
+
 def parse_args(argv=None) -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description='象限 / VIX 跨档提醒。没变化则静默退出。')
+    ap = argparse.ArgumentParser(
+        description='Merrill 象限 / VIX / QQQ Vegas 提醒。两边都没变化则静默退出。',
+    )
     ap.add_argument('--dry-run', action='store_true', help='打印邮件，不发 Issue，不写状态')
     ap.add_argument('--github-issue', action='store_true', help='有信号时开 GitHub Issue')
     ap.add_argument('--force', action='store_true', help='忽略去重，用于测试发信')
@@ -1148,26 +1576,54 @@ def _stamp_expectation(audit: dict, prev, cur: dict, reasons: dict, title: str) 
     audit['checked_at_iso'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
-def execute(args: argparse.Namespace, opener=None) -> str:
+def _deliver_wechat(title: str, body: str, wechat) -> dict:
+    """Best-effort WeChat after the Issue exists. Never raises."""
+    try:
+        result = (wechat or push_serverchan)(title, body)
+    except Exception as exc:  # noqa: BLE001
+        _warn(f'微信推送抛错（{exc.__class__.__name__}）。GitHub Issue 已创建，不回滚基线。')
+        return {'status': 'failed', 'reason': exc.__class__.__name__}
+    if not isinstance(result, dict):
+        return {'status': 'failed', 'reason': 'bad_wechat_result'}
+    status = result.get('status') or 'failed'
+    reason = result.get('reason')
+    if reason is not None:
+        reason = _redact(str(reason), serverchan_sendkey())
+    return {'status': status, 'reason': reason}
+
+
+def execute(args: argparse.Namespace, opener=None, wechat=None) -> str:
     if args.refresh:
         refresh_caches()
     cur = current_state()
     prev = read_state()
+    if _qqq_snap(cur) is None and _qqq_snap(prev) is not None:
+        cur = dict(cur)
+        cur['qqq_vegas'] = prev['qqq_vegas']
+        _warn('本次没有新的 QQQ Vegas 信号，沿用已保存的快照，不把它当成调仓。')
     action, reasons = classify_change(prev, cur, force=args.force)
     audit = blank_audit(action, cur)
 
     if action == 'silent':
+        q_state = (_qqq_snap(cur) or {}).get('state') or '无快照'
         print(
             f"无变化：{cur['regime']} / VIX {cur['vix']}（{cur['vix_band']} {cur['vix_band_name']}）"
-            '—— 不发送。'
+            f" / QQQ Vegas {q_state}—— 不发送。"
         )
         write_audit(audit)
         return action
 
     if action == 'baseline':
-        print(f"首次运行，写入基线：{cur['regime']} / VIX 档位 {cur['vix_band']}（不发送）")
+        if prev is None:
+            print(f"首次运行，写入基线：{cur['regime']} / VIX 档位 {cur['vix_band']}（不发送）")
+        else:
+            q_state = (_qqq_snap(cur) or {}).get('state') or '未知'
+            print(
+                f"无变化：{cur['regime']} / VIX {cur['vix']}（{cur['vix_band']} {cur['vix_band_name']}）"
+                f"；QQQ Vegas 首次写入基线 {q_state}（不发送）"
+            )
         if not args.dry_run:
-            write_state(cur)
+            write_state(_state_for_disk(cur, prev))
         write_audit(audit)
         return action
 
@@ -1201,12 +1657,11 @@ def execute(args: argparse.Namespace, opener=None) -> str:
             audit['error'] = 'opener 没有返回 number 和 html_url'
             write_audit(audit)
             die('应发信，但 Issue 没有创建成功（缺少 number 或 html_url）。拒绝写入状态。')
+        audit['wechat'] = _deliver_wechat(title, body, wechat)
         audit['delivery'] = 'created'
         audit['issue_number'] = issue['number']
         audit['issue_url'] = issue['html_url']
-        cur = dict(cur)
-        cur['last_delivery'] = dict(audit)
-        write_state(cur)
+        write_state(_state_for_disk(cur, prev, audit))
         write_audit(audit)
         print(f"发信记录：Issue #{issue['number']} {issue['html_url']}")
         return action

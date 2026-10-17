@@ -1,19 +1,35 @@
-# 象限 / VIX 跨档提醒
+# 策略调仓提醒（Merrill + QQQ Vegas）
 
-Weekday notifier. It opens a GitHub Issue (label `rebalance`) only when the Merrill regime changes or the latest VIX print crosses a band. GitHub notification settings deliver the email. An unchanged regime and the same VIX band end the run with no Issue. There is no SMTP send.
+Weekday notifier. It opens **one** GitHub Issue (label `rebalance`) when **either** sleeve changes. GitHub notification settings deliver the email. An optional [Server酱](#微信server酱) push sends the same body to WeChat. There is no SMTP send.
 
-If a run should have opened that Issue and it did not, the job fails and an audit Issue (title prefix `[审计]`, label `notify-audit`) is opened so the miss is not silent. See [Audit](#audit).
+Either sleeve alone is enough. The job does not wait for the other sleeve.
 
-This path is separate from Cloud Run and from `run_backtest.py`. It does not change `REGIME_WEIGHTS`, `CDN_REGIME_WEIGHTS`, or the CPI+1 / GDP+4 lag.
+| Sleeve | What counts as a change |
+|---|---|
+| Merrill | Regime changes (`goldilocks` / `reflation` / `stagflation` / `deflation`), or the latest VIX print crosses a band. |
+| QQQ Vegas | `RISK_ON` / `RISK_OFF` / `CASH`, `ENTER` / `EXIT`, `next_action`, a target weight move of at least 1% (70/30 QQQ+QLD versus cash), or the cash ticker switching between BIL and SGOV. |
+
+An unchanged Merrill regime, the same VIX band, and the same QQQ Vegas fingerprint end the run with no Issue. The two fingerprints live side by side in `data/notify_state.json`. Updating one does not clear the other.
+
+If a run should have opened that Issue and it did not, the job fails and an audit Issue (title prefix `[审计]`, label `notify-audit`) is opened so the miss is not silent. See [Audit](#audit). The audit checks the GitHub Issue. A WeChat miss does not roll the baseline back, because the Issue is already the mail.
+
+This path is separate from Cloud Run and from `run_backtest.py`. It does not change `REGIME_WEIGHTS`, `CDN_REGIME_WEIGHTS`, or the CPI+1 / GDP+4 lag. It does not send broker orders.
 
 ## When an Issue is opened
 
+One run opens at most one Issue. If Merrill and QQQ Vegas both change on the same run, that one Issue describes both. The body always names the other sleeve, including when it did not fire.
+
 | Event | Issue |
 |---|---|
-| Regime changes (`goldilocks` / `reflation` / `stagflation` / `deflation`) | Yes. Title `[调仓]`. Headline is old → new, **需要调仓：是/否** (any sleeve moves by ≥ 1%), US and CDN weight deltas, equity-vs-defensive one-liners, and a 减持/增持 list. |
-| Latest VIX crosses 20, 28, 30, or 40, regime unchanged | Yes. Title `[风险档位]`. Says whether the overlay should tighten or ease, and **月中再平衡：不建议**. No weight table. |
-| First successful run | No. Writes `data/notify_state.json` only. |
-| `workflow_dispatch` with **force** | Yes, even when nothing changed. Title `[测试]`. |
+| Merrill regime changes | Yes. Title `[调仓]`. Headline is old → new, **需要调仓：是/否** (any sleeve moves by ≥ 1%), US and CDN weight deltas, equity-vs-defensive one-liners, and a 减持/增持 list. A **QQQ Vegas（本次未触发）** block gives the current ON/OFF state, 70/30 or cash weights, and the last rebalance date. If Vegas also changed, the title gains `· QQQ Vegas …` and the Vegas block is the trade. |
+| Latest VIX crosses 20, 28, 30, or 40, regime unchanged, Vegas unchanged | Yes. Title `[风险档位]`. Says whether the overlay should tighten or ease, and **月中再平衡：不建议**. No Merrill weight table. The QQQ Vegas block is still there, marked 本次未触发. |
+| QQQ Vegas changes, Merrill regime and VIX band unchanged | Yes. Title `[QQQ Vegas]`. Merrill is summarized as unchanged (**需要调仓：否**). No Merrill weight table. |
+| Both sleeves change | Yes. One Issue, title starts with `[调仓]` or `[风险档位]` and includes `QQQ Vegas`. |
+| First successful run | No. Writes `data/notify_state.json` only, Merrill fields and `qqq_vegas` together. |
+| State file exists but has no `qqq_vegas` yet | No Issue for that adoption. Merrill is compared as usual. The new `qqq_vegas` fingerprint is written. `last_delivery` from the previous Merrill mail is kept. |
+| `workflow_dispatch` with **force** | Yes, even when nothing changed. Title `[测试]`. Body includes both sleeves. WeChat is pushed too when the secret is set. |
+
+QQQ Vegas is not recomputed in this workflow. `--refresh` still downloads FRED (`VIXCLS`, CPI, GDP, `DGS10`, `DGS2`) and Yahoo `SPY` only. The Vegas snapshot is the committed pack under `data/qqq_vegas/`, the same files the read-only dashboard tab displays. See [How the QQQ signal gets here](#how-the-qqq-signal-gets-here).
 
 Bands: `0-20` 正常, `20-28` 偏高, `28-30` 开始降敞口, `30-40` 大幅降敞口, `40+` 接近清仓股票.
 
@@ -83,6 +99,14 @@ Illustration only. The regime sample is `goldilocks` → `deflation` with VIX al
 - 核对纸账户计划后，再加 `--execute` 才会发单。脚本拒绝向非纸账户 `--execute`。
 - 对照仪表盘 **Regime Monitor**（当前象限）和 **Portfolio**（目标权重）。
 
+### QQQ Vegas（本次未触发）
+状态：RISK_ON（下一步 HOLD）
+目标权重：QQQ 70% · QLD 30% · 现金 0%
+最近调仓：2026-04-09 ENTER（CASH → RISK_ON）
+信号截至 2026-10-16。本次 QQQ Vegas 不需要单独动手。
+- QQQ Vegas 是只读袖套（风险开启时 70% QQQ + 30% QLD，关闭时现金 BIL 或 SGOV）。它不改 Merrill 的 `REGIME_WEIGHTS`。
+- 这封提醒不会下单。对照仪表盘 **QQQ Vegas** 与仓库里的 `data/qqq_vegas/signal_current.json`。
+
 ### 判定依据
 - VIX 22.4（档位 20-28 · 偏高）
 - CPI YoY 2.40% · GDP 2.10% · SPY 12 月动量 12.0%
@@ -111,6 +135,12 @@ VIX-only (regime stays `goldilocks`, band `0-20` → `28-30`):
 - 对照仪表盘 **Regime Monitor** 和 **Portfolio**。
 - 打印出来的是目标，不是已成交。
 
+### QQQ Vegas（本次未触发）
+状态：RISK_ON（下一步 HOLD）
+目标权重：QQQ 70% · QLD 30% · 现金 0%
+最近调仓：2026-04-09 ENTER（CASH → RISK_ON）
+信号截至 2026-10-16。本次 QQQ Vegas 不需要单独动手。
+
 ### 判定依据
 - VIX 28.6（档位 28-30 · 开始降敞口）
 - CPI YoY 2.40% · GDP 2.10% · SPY 12 月动量 12.0%
@@ -121,6 +151,49 @@ VIX-only (regime stays `goldilocks`, band `0-20` → `28-30`):
 本邮件是信号提醒，不是成交回执，也不构成投资建议。
 ```
 
+QQQ Vegas only (Merrill stays `reflation`, VIX stays in `0-20`). One Issue, even though the four-quadrant book did not move:
+
+```text
+标题: [QQQ Vegas] RISK_ON → CASH（2026-10-17）
+
+### Merrill 象限
+Merrill 象限未变：**reflation**。目标权重不变。
+**需要调仓：否**
+本次触发的是 QQQ Vegas，不是四象限袖套。
+
+### QQQ Vegas 调仓
+**QQQ Vegas 需要调仓：是**（状态、ENTER/EXIT、下一步动作、目标权重达到 1%，或现金标的 BIL/SGOV 切换）
+状态：**RISK_ON → CASH**
+下一步：HOLD → EXIT
+目标：QQQ 70% · QLD 30% · 现金 0% → QQQ 0% · QLD 0% · 现金 100%（BIL）
+最近调仓：2026-04-09 ENTER（CASH → RISK_ON） → 2026-10-17 EXIT（RISK_ON → CASH）
+信号截至 2026-10-17
+- QQQ Vegas 是只读袖套（风险开启时 70% QQQ + 30% QLD，关闭时现金 BIL 或 SGOV）。它不改 Merrill 的 `REGIME_WEIGHTS`。
+- 这封提醒不会下单。对照仪表盘 **QQQ Vegas** 与仓库里的 `data/qqq_vegas/signal_current.json`。
+
+### 判定依据
+- VIX 15.3（档位 0-20 · 正常）
+- 价格数据截至 2026-10-14；检查时间 2026-10-17 23:05 UTC
+
+本邮件是信号提醒，不是成交回执，也不构成投资建议。
+```
+
+Same-day Merrill and Vegas changes are still one Issue. The title looks like `[调仓] goldilocks → deflation · QQQ Vegas RISK_ON → CASH（2026-09-25）`. A weight-only Vegas change (state stays `RISK_ON`) is titled `[QQQ Vegas] 权重变化 RISK_ON（…）`. A `next_action` change with the same state is titled `[QQQ Vegas] 信号 HOLD → EXIT（…）`.
+
+## How the QQQ signal gets here
+
+The dashboard tab and this notifier both read `data/qqq_vegas/signal_current.json`. There is no FRED-style download for Vegas in `notify.yml`. A runner only sees what is committed on the branch it checks out.
+
+To publish a new Vegas signal:
+
+1. Regenerate the pack with the same offline builder that produced `data/qqq_vegas/` (`signal_current.json`, and `rebalances.csv` when a new ENTER/EXIT row exists). `last_rebalance` inside the JSON is what the notifier prefers. If that object is missing, the last row of `rebalances.csv` is the fallback.
+2. Commit those files to the default branch and push.
+3. The next weekday run (or a manual **Run workflow**) checks the new snapshot against `qqq_vegas` in `data/notify_state.json`.
+
+Fields that fire: `state`, `next_action`, `qqq_w` / `qld_w` / `cash_w` (1% band), `cash_ticker` (empty versus `BIL` versus `SGOV`), `last_rebalance.date`, `last_rebalance.action`. `as_of`, `signal_date`, and the prose `reason` do not fire by themselves. A missing or unreadable signal file is not an exit to cash: the job warns and keeps the stored fingerprint. `RISK_OFF` and `CASH` are different states; either one leaving `RISK_ON` fires.
+
+`schema` 2 means the file has a `qqq_vegas` object. A schema 1 file still compares Merrill. The first run that sees a readable pack writes `qqq_vegas` and does not treat that adoption as a trade.
+
 ## Enable
 
 1. **Secret `FRED_API_KEY`**  
@@ -130,30 +203,53 @@ VIX-only (regime stays `goldilocks`, band `0-20` → `28-30`):
 2. **Actions**  
    Settings → Actions → allow this repository's workflows. The file is `.github/workflows/notify.yml`.  
    Cron: `0 23 * * 1-5` (23:00 UTC weekdays, after the US cash close).  
-   You can also run it by hand: Actions → 象限切换提醒 → Run workflow.
+   You can also run it by hand: Actions → 策略调仓提醒 → Run workflow.
 
 3. **Email**  
    The script assigns the Issue to the repository owner and adds the label `rebalance`. It creates that label when it is missing (`issues: write`).  
    Confirm the label exists after the first alert, or create it once:
 
    ```bash
-   gh label create rebalance --color D93F0B --description "Merrill regime or VIX band change / 象限或 VIX 跨档"
+   gh label create rebalance --color D93F0B --description "Merrill, VIX band, or QQQ Vegas change / 象限、VIX 或 QQQ Vegas"
    ```
 
    Email arrives through GitHub notifications: watch the repo (Issues) and/or leave yourself as the assignee. Being the repo owner plus assignee covers the usual account.
 
 4. **First baseline**  
-   The first scheduled run (or a manual run with force left off) writes `data/notify_state.json` and pushes it. It does not open an Issue. Later runs compare regime and `vix_band` to that file.
+   The first scheduled run (or a manual run with force left off) writes `data/notify_state.json` and pushes it. It does not open an Issue. Later runs compare Merrill `regime` and `vix_band`, and the `qqq_vegas` fingerprint, to that file. Each sleeve has its own fields. A QQQ change does not rewrite the Merrill comparison into a false "already switched", and a Merrill change does not clear the Vegas fingerprint.
 
-5. **Force test**  
-   Actions → 象限切换提醒 → Run workflow → set **force** → Run.  
-   That opens one test Issue even when the regime and band are unchanged. Use it to confirm mail delivery, then close the Issue. Closing is fine. Deleting it makes the next audit treat the send as missing.
+5. **WeChat (Server酱)**  
+   Repo secret **`SERVERCHAN_SENDKEY`**. Leave it unset and the job still opens the Issue; the log warns and skips WeChat. See [微信（Server酱）](#微信server酱).
+
+6. **Force test**  
+   Actions → 策略调仓提醒 → Run workflow → set **force** → Run.  
+   That opens one test Issue even when the regime, the VIX band, and QQQ Vegas are unchanged, and it pushes WeChat when the secret is set. Use it to confirm mail (and WeChat) delivery, then close the Issue. Closing is fine. Deleting it makes the next audit treat the send as missing.
+
+## 微信（Server酱）
+
+The mail channel is the GitHub Issue. WeChat is the same notice, sent after the Issue exists, as text only.
+
+The SendKey is a password. It lives only in the GitHub Actions secret `SERVERCHAN_SENDKEY`. Do not commit it, do not paste it into docs or pull requests, and do not put it in the dashboard or any other frontend. The workflow injects it into the notify step and the script never prints it.
+
+1. Open [sct.ftqq.com](https://sct.ftqq.com/), copy the SendKey (it looks like `SCT` plus letters and digits), and bind the WeChat channel in that console. This repo does not choose the channel.
+2. On GitHub: the repository → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**. Name: `SERVERCHAN_SENDKEY`. Value: the SendKey alone.
+3. On a Merrill or QQQ Vegas trigger the script `POST`s form fields to `https://sctapi.ftqq.com/<SendKey>.send`:
+   - `title` — required, one line, cut at 40 characters. The full title is repeated at the top of `desp`.
+   - `desp` — Markdown text (the Issue body). No images, no screenshot host, no extra upload.
+   - Success is JSON `code == 0`.
+4. One run sends one message, even when both sleeves fire. A quiet run sends nothing, so it does not spend the free quota (about 5 messages a day). A **force** run spends one.
+5. Missing secret: warning, no HTTP call, Issue still opens, baseline still advances, job stays green when the Issue succeeded.
+6. Server酱 returns `code != 0`, or the HTTP call fails: warning only. The baseline still advances. Rolling it back would open a second Issue on the next run. Fix the secret or the channel binding, then use **force** if you want another copy.
+
+PushPlus is not connected. Do not add a `PUSHPLUS_TOKEN` value to the repo. A later change can read that secret if a second channel is needed.
+
+The audit step does not call Server酱. It only checks that the `rebalance` Issue exists.
 
 ## Audit
 
 The mail channel is the `rebalance` Issue itself (assignee + label → GitHub notification). The audit answers: when this run should have opened that Issue, does a matching Issue exist?
 
-A run should notify when the regime changes, the latest VIX print crosses a band, or the workflow is started with **force**. Same run:
+A run should notify when the Merrill regime changes, the latest VIX print crosses a band, QQQ Vegas changes, or the workflow is started with **force**. Same run:
 
 1. Opens the Issue and requires `number` and `html_url` in the API response.
 2. Stores them on `data/notify_state.json` as `last_delivery`, and writes a gitignored run log at `data/notify_audit.json`.
@@ -243,13 +339,14 @@ python scripts/notify_regime.py --audit            # quiet when nothing should h
 python -m unittest tests.test_notify_regime
 ```
 
-`.github/workflows/test-notify.yml` runs that file on pull requests that touch the notifier. It does not use `FRED_API_KEY`. The scheduled workflow is the one that needs the secret.
+`.github/workflows/test-notify.yml` runs that file on pull requests that touch the notifier. It does not use `FRED_API_KEY` or `SERVERCHAN_SENDKEY`. The scheduled workflow needs `FRED_API_KEY`. `SERVERCHAN_SENDKEY` stays optional there.
 
 ## Files
 
 | Path | Role |
 |---|---|
-| `.github/workflows/notify.yml` | Weekday cron, manual force, then `--audit` |
-| `scripts/notify_regime.py` | Classify, dedupe, open Issue, audit a miss |
-| `data/notify_state.json` | Baseline plus `last_delivery` after a successful Issue. Keep it tracked |
+| `.github/workflows/notify.yml` | Weekday cron, manual force, optional Server酱, then `--audit` |
+| `scripts/notify_regime.py` | Classify both sleeves, dedupe, open one Issue, push WeChat, audit a miss |
+| `data/notify_state.json` | Merrill baseline, `qqq_vegas` fingerprint, and `last_delivery` after a successful Issue. Keep it tracked |
+| `data/qqq_vegas/signal_current.json` | Committed Vegas signal the notifier reads. Not refreshed by `--refresh` |
 | `data/notify_audit.json` | Gitignored run log for the audit step in the same job |

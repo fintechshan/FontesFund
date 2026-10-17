@@ -412,6 +412,8 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('git diff --cached', text)
         self.assertIn('--refresh', text)
         self.assertIn('--audit', text)
+        self.assertIn('SERVERCHAN_SENDKEY', text)
+        self.assertNotIn('缺少仓库 Secret SERVERCHAN', text)
         self.assertIn('id: audit', text)
         self.assertIn('confirmed_miss', text)
         self.assertIn("steps.notify.outcome == 'failure'", text)
@@ -437,6 +439,10 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('SMTP', text)
         self.assertIn('7 days', text)
         self.assertIn('last_delivery', text)
+        self.assertIn('QQQ Vegas', text)
+        self.assertIn('SERVERCHAN_SENDKEY', text)
+        self.assertIn('signal_current.json', text)
+        self.assertIn('sctapi.ftqq.com', text)
 
 
 def _fake_issue(number, title, created_at='2026-09-28T05:00:00Z'):
@@ -472,8 +478,10 @@ class AuditDecisionTests(unittest.TestCase):
         self.assertFalse(nr.issue_satisfies(pull, record, numbered=True))
 
     def test_quiet_when_nothing_should_fire(self):
-        state = json.loads((ROOT / 'data' / 'notify_state.json').read_text(encoding='utf-8'))
-        self.assertNotIn('last_delivery', state)
+        # The committed notify_state.json is updated by the weekday job and may
+        # already carry last_delivery. Quiet means "no should-fire record", not
+        # "the production file has never sent".
+        state = {'regime': 'reflation', 'vix_band': '0-20'}
         self.assertIsNone(nr.expectation_to_verify(None, state))
         silent = {'should_fire': False, 'delivery': 'not_required', 'action': 'silent'}
         self.assertIsNone(nr.expectation_to_verify(silent, state))
@@ -885,6 +893,469 @@ class AuditExecuteTests(unittest.TestCase):
             nr.time.sleep = real_sleep
         self.assertIsNone(found)
         self.assertGreaterEqual(sum(url.endswith('/issues/4') for url in calls), 3)
+
+
+def _qqq(**overrides):
+    snap = {
+        'state': 'RISK_ON',
+        'next_action': 'HOLD',
+        'qqq_w': 0.7,
+        'qld_w': 0.3,
+        'cash_w': 0.0,
+        'cash_ticker': '',
+        'last_rebalance_date': '2026-04-09',
+        'last_rebalance_action': 'ENTER',
+        'last_rebalance_from': 'CASH',
+        'last_rebalance_to': 'RISK_ON',
+        'as_of': '2026-10-16',
+        'signal_date': '2026-10-16',
+        'reason': 'tunnel ok',
+    }
+    snap.update(overrides)
+    snap['fingerprint'] = nr.qqq_fingerprint(snap)
+    return snap
+
+
+def _cash_qqq(**overrides):
+    base = dict(
+        state='CASH',
+        next_action='EXIT',
+        qqq_w=0.0,
+        qld_w=0.0,
+        cash_w=1.0,
+        cash_ticker='BIL',
+        last_rebalance_date='2026-10-17',
+        last_rebalance_action='EXIT',
+        last_rebalance_from='RISK_ON',
+        last_rebalance_to='CASH',
+        as_of='2026-10-17',
+        signal_date='2026-10-17',
+        reason='exit',
+    )
+    base.update(overrides)
+    return _qqq(**base)
+
+
+class DualSleeveTests(unittest.TestCase):
+    def test_pack_on_disk_normalizes(self):
+        snap = nr.load_qqq_signal(ROOT / 'data' / 'qqq_vegas')
+        self.assertIsNotNone(snap)
+        self.assertIn(snap['state'], {'RISK_ON', 'RISK_OFF', 'CASH'})
+        self.assertAlmostEqual(snap['qqq_w'] + snap['qld_w'] + snap['cash_w'], 1.0, places=2)
+        self.assertTrue(snap['fingerprint'])
+        committed = json.loads((ROOT / 'data' / 'notify_state.json').read_text(encoding='utf-8'))
+        self.assertIn('qqq_vegas', committed)
+        self.assertTrue(committed['qqq_vegas'].get('state'))
+        self.assertIn('last_delivery', committed)
+
+    def test_as_of_and_small_weight_wiggle_stay_silent(self):
+        prev = _state('reflation', '0-20', '正常', 15.0, qqq_vegas=_qqq())
+        cur = _state(
+            'reflation', '0-20', '正常', 16.2,
+            qqq_vegas=_qqq(as_of='2026-10-17', signal_date='2026-10-17', reason='newer prose', qqq_w=0.704),
+        )
+        action, reasons = nr.classify_change(prev, cur, force=False)
+        self.assertEqual(action, 'silent')
+        self.assertEqual(reasons, {})
+
+    def test_weight_band_cash_ticker_and_next_action(self):
+        prev = _state('reflation', '0-20', '正常', 15.0, qqq_vegas=_qqq())
+        moved = _state('reflation', '0-20', '正常', 15.0, qqq_vegas=_qqq(qqq_w=0.68, qld_w=0.32))
+        self.assertEqual(nr.classify_change(prev, moved)[0], 'notify')
+        held_cash = _state('reflation', '0-20', '正常', 15.0, qqq_vegas=_cash_qqq(next_action='HOLD'))
+        sgov = _state(
+            'reflation', '0-20', '正常', 15.0,
+            qqq_vegas=_cash_qqq(next_action='HOLD', cash_ticker='SGOV'),
+        )
+        action, reasons = nr.classify_change(held_cash, sgov)
+        self.assertIn('qqq', reasons)
+        title, body = nr.build_message(held_cash, sgov, reasons)
+        self.assertIn('现金 BIL → SGOV', title)
+        self.assertIn('SGOV', body)
+        signal = _state('reflation', '0-20', '正常', 15.0, qqq_vegas=_qqq(next_action='EXIT'))
+        action, reasons = nr.classify_change(prev, signal)
+        self.assertEqual(action, 'notify')
+        title, body = nr.build_message(prev, signal, reasons)
+        self.assertTrue(title.startswith('[QQQ Vegas] 信号 HOLD → EXIT'))
+        self.assertIn('HOLD → EXIT', body)
+
+    def test_merrill_only_mentions_qqq_and_does_not_reset_it(self):
+        q = _qqq()
+        prev = _state('goldilocks', '0-20', '正常', 15.0, qqq_vegas=q)
+        cur = _state('deflation', '0-20', '正常', 16.0, price_asof='2026-09-25', qqq_vegas=dict(q))
+        action, reasons = nr.classify_change(prev, cur)
+        self.assertEqual(action, 'notify')
+        self.assertIn('regime', reasons)
+        self.assertNotIn('qqq', reasons)
+        self.assertEqual(
+            nr.delivery_fingerprint(prev, cur, reasons),
+            'regime|goldilocks>deflation|0-20>0-20|2026-09-25',
+        )
+        title, body = nr.build_message(prev, cur, reasons)
+        self.assertTrue(title.startswith('[调仓]'))
+        self.assertNotIn('QQQ Vegas', title)
+        self.assertIn('**需要调仓：是**', body)
+        self.assertIn('### QQQ Vegas（本次未触发）', body)
+        self.assertIn('QQQ 70%', body)
+        self.assertIn('2026-04-09', body)
+        self.assertIn('US 目标权重', body)
+        self.assertLess(body.index('减持 QQQ'), body.index('### QQQ Vegas'))
+
+    def test_qqq_only_opens_without_merrill_table(self):
+        prev = _state('reflation', '0-20', '正常', 15.3, qqq_vegas=_qqq())
+        cur = _state('reflation', '0-20', '正常', 15.4, price_asof='2026-10-14', qqq_vegas=_cash_qqq())
+        action, reasons = nr.classify_change(prev, cur)
+        self.assertEqual(action, 'notify')
+        self.assertEqual(set(reasons), {'qqq'})
+        self.assertEqual(nr.delivery_kind(reasons), 'qqq')
+        fingerprint = nr.delivery_fingerprint(prev, cur, reasons)
+        self.assertIn('|qqq:', fingerprint)
+        self.assertIn('RISK_ON|HOLD', fingerprint)
+        self.assertIn('CASH|EXIT', fingerprint)
+        title, body = nr.build_message(prev, cur, reasons)
+        self.assertEqual(title, '[QQQ Vegas] RISK_ON → CASH（2026-10-17）')
+        self.assertIn('Merrill 象限未变：**reflation**', body)
+        self.assertIn('**需要调仓：否**', body)
+        self.assertIn('**QQQ Vegas 需要调仓：是**', body)
+        self.assertIn('现金 100%（BIL）', body)
+        self.assertNotIn('| 标的 |', body)
+        self.assertNotIn('减持 ', body)
+        record = {
+            'kind': 'qqq',
+            'price_asof': '2026-10-14',
+            'title': title,
+            'fingerprint': fingerprint,
+        }
+        self.assertIn('QQQ Vegas', nr.audit_issue_title(record))
+
+    def test_both_sleeves_are_one_issue(self):
+        prev = _state('goldilocks', '0-20', '正常', 15.0, qqq_vegas=_qqq())
+        cur = _state('deflation', '28-30', '开始降敞口', 28.4, price_asof='2026-09-25', qqq_vegas=_cash_qqq())
+        action, reasons = nr.classify_change(prev, cur)
+        self.assertEqual(nr.delivery_kind(reasons), 'regime+vix+qqq')
+        title, body = nr.build_message(prev, cur, reasons)
+        self.assertIn('[调仓]', title)
+        self.assertIn('QQQ Vegas RISK_ON → CASH', title)
+        self.assertIn('**需要调仓：是**', body)
+        self.assertIn('### QQQ Vegas 调仓', body)
+        self.assertEqual(title.count('QQQ Vegas'), 1)
+
+    def test_first_run_and_qqq_adoption_stay_quiet(self):
+        cur = _state('goldilocks', '0-20', '正常', 15.0, qqq_vegas=_qqq())
+        self.assertEqual(nr.classify_change(None, cur)[0], 'baseline')
+        prev = _state('goldilocks', '0-20', '正常', 15.0)
+        action, reasons = nr.classify_change(prev, cur)
+        self.assertEqual(action, 'baseline')
+        self.assertIn('qqq_baseline', reasons)
+        self.assertNotIn('qqq', reasons)
+
+    def test_missing_signal_is_not_an_exit(self):
+        prev = _state('goldilocks', '0-20', '正常', 15.0, qqq_vegas=_qqq())
+        cur = _state('deflation', '0-20', '正常', 16.0)
+        self.assertNotIn('qqq', nr.classify_change(prev, cur)[1])
+        kept = dict(cur)
+        kept['qqq_vegas'] = prev['qqq_vegas']
+        _action, reasons = nr.classify_change(prev, kept)
+        self.assertNotIn('qqq', reasons)
+        self.assertIn('regime', reasons)
+
+
+class DualSleeveExecuteTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self._env = {
+            'NOTIFY_STATE_PATH': os.environ.get('NOTIFY_STATE_PATH'),
+            'NOTIFY_AUDIT_PATH': os.environ.get('NOTIFY_AUDIT_PATH'),
+            'SERVERCHAN_SENDKEY': os.environ.get('SERVERCHAN_SENDKEY'),
+            'GITHUB_ACTIONS': os.environ.get('GITHUB_ACTIONS'),
+        }
+        os.environ['NOTIFY_STATE_PATH'] = str(self.tmp / 'notify_state.json')
+        os.environ['NOTIFY_AUDIT_PATH'] = str(self.tmp / 'notify_audit.json')
+        os.environ.pop('SERVERCHAN_SENDKEY', None)
+        os.environ.pop('GITHUB_ACTIONS', None)
+
+    def tearDown(self):
+        for key, value in self._env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        self._tmp.cleanup()
+
+    def _run(self, cur, args, opener=None, wechat=None):
+        real = nr.current_state
+        nr.current_state = lambda: dict(cur)
+        try:
+            return nr.execute(nr.parse_args(args), opener=opener, wechat=wechat)
+        finally:
+            nr.current_state = real
+
+    def test_neither_is_silent_and_force_still_sends_both(self):
+        prev = _state('stagflation', '30-40', '大幅降敞口 / 象限转 deflation', 32.0, qqq_vegas=_qqq())
+        nr.write_state(prev)
+        original = nr.state_path().read_text(encoding='utf-8')
+        calls = []
+        action = self._run(
+            dict(prev, checked_at='2026-09-28 02:00 UTC', vix=33.5),
+            [],
+            opener=lambda title, body: calls.append((title, body)),
+            wechat=lambda title, body: calls.append(('wechat', title)),
+        )
+        self.assertEqual(action, 'silent')
+        self.assertEqual(calls, [])
+        self.assertEqual(nr.state_path().read_text(encoding='utf-8'), original)
+
+        opened = []
+        pushed = []
+        action = self._run(
+            dict(prev),
+            ['--github-issue', '--force'],
+            opener=lambda title, body: opened.append((title, body)) or _fake_issue(21, title),
+            wechat=lambda title, body: pushed.append(body) or {'status': 'sent'},
+        )
+        self.assertEqual(action, 'notify')
+        self.assertEqual(len(opened), 1)
+        self.assertTrue(opened[0][0].startswith('[测试]'))
+        self.assertIn('QQQ Vegas', opened[0][0])
+        self.assertIn('US 目标权重', opened[0][1])
+        self.assertIn('### QQQ Vegas（本次未触发）', opened[0][1])
+        self.assertIn('需要调仓：否', opened[0][1])
+        self.assertEqual(len(pushed), 1)
+        saved = json.loads(nr.state_path().read_text(encoding='utf-8'))
+        self.assertEqual(saved['last_delivery']['kind'], 'force')
+        self.assertEqual(saved['last_delivery']['wechat']['status'], 'sent')
+        self.assertEqual(saved['qqq_vegas']['state'], 'RISK_ON')
+
+    def test_merrill_only_and_qqq_only_do_not_reset_each_other(self):
+        prev = _state('goldilocks', '0-20', '正常', 15.0, qqq_vegas=_qqq())
+        nr.write_state(prev)
+        opened = []
+
+        def opener(title, body):
+            opened.append((title, body))
+            return _fake_issue(30 + len(opened), title)
+
+        wechat_calls = []
+        merrill = _state(
+            'deflation', '0-20', '正常', 16.0,
+            price_asof='2026-09-25', qqq_vegas=_qqq(as_of='2026-09-25'),
+        )
+        action = self._run(
+            merrill, ['--github-issue'], opener=opener,
+            wechat=lambda title, body: wechat_calls.append(title) or {'status': 'sent'},
+        )
+        self.assertEqual(action, 'notify')
+        self.assertEqual(len(opened), 1)
+        self.assertIn('goldilocks → deflation', opened[0][0])
+        self.assertIn('### QQQ Vegas（本次未触发）', opened[0][1])
+        self.assertIn('US 目标权重', opened[0][1])
+        self.assertEqual(len(wechat_calls), 1)
+        saved = json.loads(nr.state_path().read_text(encoding='utf-8'))
+        self.assertEqual(saved['regime'], 'deflation')
+        self.assertEqual(saved['qqq_vegas']['fingerprint'], _qqq()['fingerprint'])
+        self.assertEqual(saved['last_delivery']['kind'], 'regime')
+
+        quiet = self._run(
+            dict(merrill, checked_at='2026-09-26 23:00 UTC'),
+            ['--github-issue'],
+            opener=opener,
+            wechat=lambda title, body: wechat_calls.append('again'),
+        )
+        self.assertEqual(quiet, 'silent')
+        self.assertEqual(len(opened), 1)
+
+        qqq_cur = _state(
+            'deflation', '0-20', '正常', 16.1,
+            price_asof='2026-10-14', qqq_vegas=_cash_qqq(),
+        )
+        action = self._run(
+            qqq_cur, ['--github-issue'], opener=opener,
+            wechat=lambda title, body: wechat_calls.append(title) or {'status': 'sent'},
+        )
+        self.assertEqual(action, 'notify')
+        self.assertEqual(len(opened), 2)
+        self.assertTrue(opened[1][0].startswith('[QQQ Vegas]'))
+        self.assertIn('Merrill 象限未变：**deflation**', opened[1][1])
+        saved = json.loads(nr.state_path().read_text(encoding='utf-8'))
+        self.assertEqual(saved['regime'], 'deflation')
+        self.assertEqual(saved['qqq_vegas']['state'], 'CASH')
+        self.assertEqual(saved['last_delivery']['kind'], 'qqq')
+        self.assertEqual(len(wechat_calls), 2)
+
+    def test_qqq_adoption_keeps_last_delivery_and_skips_channels(self):
+        prev = _state('goldilocks', '0-20', '正常', 15.0)
+        prev['last_delivery'] = {
+            'should_fire': True,
+            'delivery': 'created',
+            'issue_number': 16,
+            'issue_url': 'https://github.com/fintechshan/FontesFund/issues/16',
+            'title': '[调仓] old',
+            'fingerprint': 'regime|a>goldilocks|0-20>0-20|2026-10-14',
+            'kind': 'regime',
+        }
+        nr.write_state(prev)
+        calls = []
+        cur = _state('goldilocks', '0-20', '正常', 15.4, qqq_vegas=_qqq())
+        action = self._run(
+            cur, ['--github-issue'],
+            opener=lambda title, body: calls.append(title),
+            wechat=lambda title, body: calls.append('wechat'),
+        )
+        self.assertEqual(action, 'baseline')
+        self.assertEqual(calls, [])
+        saved = json.loads(nr.state_path().read_text(encoding='utf-8'))
+        self.assertEqual(saved['qqq_vegas']['state'], 'RISK_ON')
+        self.assertEqual(saved['schema'], 2)
+        self.assertEqual(saved['last_delivery']['issue_number'], 16)
+        self.assertEqual(saved['regime'], 'goldilocks')
+
+    def test_missing_pack_on_merrill_change_keeps_stored_qqq(self):
+        prev = _state('goldilocks', '0-20', '正常', 15.0, qqq_vegas=_qqq())
+        nr.write_state(prev)
+        opened = []
+        cur = _state('reflation', '0-20', '正常', 16.0, price_asof='2026-10-14')
+        action = self._run(
+            cur, ['--github-issue'],
+            opener=lambda title, body: opened.append(body) or _fake_issue(40, 't'),
+            wechat=lambda title, body: {'status': 'skipped', 'reason': 'missing_sendkey'},
+        )
+        self.assertEqual(action, 'notify')
+        self.assertIn('QQQ 70%', opened[0])
+        self.assertIn('本次未触发', opened[0])
+        saved = json.loads(nr.state_path().read_text(encoding='utf-8'))
+        self.assertEqual(saved['regime'], 'reflation')
+        self.assertEqual(saved['qqq_vegas']['state'], 'RISK_ON')
+
+    def test_wechat_missing_key_and_push_error_still_advance_after_issue(self):
+        prev = _state('goldilocks', '0-20', '正常', 15.0, qqq_vegas=_qqq())
+        nr.write_state(prev)
+        cur = _state('goldilocks', '20-28', '偏高', 22.0, price_asof='2026-09-25', qqq_vegas=_qqq())
+        action = self._run(
+            cur, ['--github-issue'],
+            opener=lambda title, body: _fake_issue(41, title),
+        )
+        self.assertEqual(action, 'notify')
+        saved = json.loads(nr.state_path().read_text(encoding='utf-8'))
+        self.assertEqual(saved['vix_band'], '20-28')
+        self.assertEqual(saved['last_delivery']['wechat']['status'], 'skipped')
+        self.assertEqual(saved['last_delivery']['wechat']['reason'], 'missing_sendkey')
+        self.assertEqual(saved['qqq_vegas']['state'], 'RISK_ON')
+
+        nr.write_state(prev)
+        action = self._run(
+            cur, ['--github-issue'],
+            opener=lambda title, body: _fake_issue(42, title),
+            wechat=lambda title, body: (_ for _ in ()).throw(RuntimeError('SCTSECRET123')),
+        )
+        self.assertEqual(action, 'notify')
+        saved = json.loads(nr.state_path().read_text(encoding='utf-8'))
+        self.assertEqual(saved['last_delivery']['delivery'], 'created')
+        self.assertEqual(saved['last_delivery']['wechat']['status'], 'failed')
+        self.assertNotIn('SCTSECRET123', json.dumps(saved))
+        self.assertEqual(saved['vix_band'], '20-28')
+
+
+class WeChatApiTests(unittest.TestCase):
+    def test_endpoint_and_title(self):
+        self.assertIsNone(nr.serverchan_endpoint(''))
+        self.assertIsNone(nr.serverchan_endpoint('SCT bad'))
+        self.assertIsNone(nr.serverchan_endpoint('sctp-not-a-key'))
+        self.assertEqual(
+            nr.serverchan_endpoint('SCT1234Tdemo'),
+            'https://sctapi.ftqq.com/SCT1234Tdemo.send',
+        )
+        self.assertEqual(nr.wechat_title('短标题'), '短标题')
+        self.assertEqual(len(nr.wechat_title('M' * 40)), 40)
+        self.assertEqual(len(nr.wechat_title('M' * 41)), 40)
+        self.assertTrue(nr.wechat_title('M' * 41).endswith('...'))
+        self.assertNotIn('\n', nr.wechat_title('a\nb'))
+        desp = nr.wechat_desp('完整标题', '一行\n| a | b |\n|---|---|')
+        self.assertTrue(desp.startswith('完整标题'))
+        self.assertIn('| a | b |', desp)
+        self.assertNotIn('![', desp)
+
+    def test_missing_key_does_not_call_network(self):
+        old = os.environ.pop('SERVERCHAN_SENDKEY', None)
+        called = []
+        real = nr.urllib.request.urlopen
+        nr.urllib.request.urlopen = lambda *args, **kwargs: called.append(args)
+        try:
+            result = nr.push_serverchan('标题', '正文')
+        finally:
+            nr.urllib.request.urlopen = real
+            if old is not None:
+                os.environ['SERVERCHAN_SENDKEY'] = old
+        self.assertEqual(result, {'status': 'skipped', 'reason': 'missing_sendkey'})
+        self.assertEqual(called, [])
+
+    def test_http_error_redacts_the_key_and_accepts_code_zero(self):
+        key = 'SCTTESTKEY123'
+        old = os.environ.get('SERVERCHAN_SENDKEY')
+        os.environ['SERVERCHAN_SENDKEY'] = key
+        real = nr.urllib.request.urlopen
+        stderr = []
+
+        def boom(req, timeout=0):
+            raise nr.urllib.error.URLError(req.full_url)
+
+        nr.urllib.request.urlopen = boom
+        try:
+            from io import StringIO
+            buf = StringIO()
+            real_stderr = sys.stderr
+            sys.stderr = buf
+            try:
+                failed = nr.push_serverchan('标题', '正文')
+            finally:
+                sys.stderr = real_stderr
+            stderr.append(buf.getvalue())
+        finally:
+            nr.urllib.request.urlopen = real
+            if old is None:
+                os.environ.pop('SERVERCHAN_SENDKEY', None)
+            else:
+                os.environ['SERVERCHAN_SENDKEY'] = old
+        self.assertEqual(failed['status'], 'failed')
+        self.assertNotIn(key, failed['reason'])
+        self.assertNotIn(key, stderr[0])
+
+        os.environ['SERVERCHAN_SENDKEY'] = key
+
+        class _Resp:
+            def read(self):
+                return b'{"code":0,"message":"ok"}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        seen = {}
+
+        def ok(req, timeout=0):
+            seen['url'] = req.full_url
+            seen['content_type'] = req.get_header('Content-type')
+            seen['form'] = nr.urllib.parse.parse_qs(req.data.decode('utf-8'))
+            return _Resp()
+
+        nr.urllib.request.urlopen = ok
+        try:
+            sent = nr.push_serverchan('一个比较长的标题 ' + ('甲' * 40), '正文\n第二行')
+        finally:
+            nr.urllib.request.urlopen = real
+            os.environ.pop('SERVERCHAN_SENDKEY', None)
+            if old is not None:
+                os.environ['SERVERCHAN_SENDKEY'] = old
+        self.assertEqual(sent, {'status': 'sent'})
+        self.assertTrue(seen['url'].startswith('https://sctapi.ftqq.com/'))
+        self.assertTrue(seen['url'].endswith('/SCTTESTKEY123.send'))
+        self.assertIn('application/x-www-form-urlencoded', seen['content_type'])
+        self.assertLessEqual(len(seen['form']['title'][0]), 40)
+        self.assertIn('一个比较长的标题', seen['form']['desp'][0])
+        self.assertNotIn('\n', seen['form']['title'][0])
+        self.assertNotIn('![', seen['form']['desp'][0])
 
 
 if __name__ == '__main__':
