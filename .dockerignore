@@ -27,6 +27,7 @@ README.md
 *.log
 
 # Large/irrelevant assets
+# data/ is copied into the image (static results and data/qqq_vegas/). Do not exclude it.
 co_pilot_src/
 node_modules/
 *.zip

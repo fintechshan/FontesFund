@@ -1,0 +1,54 @@
+{
+  "strategy_id": "qqq_vegas_1_3x",
+  "backtest_tag": "v8_2",
+  "signal_name": "Vegas Tunnel Filter v4",
+  "as_of": "2026-10-16",
+  "signal_date": "2026-10-16",
+  "exec_date": "2026-10-16",
+  "state": "RISK_ON",
+  "weights": {
+    "QQQ": 0.7,
+    "QLD": 0.3,
+    "cash": 0.0
+  },
+  "cash_ticker": null,
+  "qqq_w": 0.7,
+  "qld_w": 0.3,
+  "cash_w": 0.0,
+  "current_signal": 1,
+  "current_pos": 1,
+  "next_action": "HOLD",
+  "reason": "Mom189=OK (0.1454); Close>SMA150=OK; Close>=VegasLow=OK → RISK_ON",
+  "last_rebalance": {
+    "date": "2026-04-09",
+    "action": "ENTER",
+    "from_state": "CASH",
+    "to_state": "RISK_ON"
+  },
+  "filter_version": "v4",
+  "metrics": {
+    "full": {
+      "cagr": 0.176358,
+      "max_dd": -0.24066,
+      "sharpe": 0.9455,
+      "cagr_pct": 17.64,
+      "max_dd_pct": -24.07,
+      "max_dd_date": "2013-02-25",
+      "calmar": 0.7328,
+      "start": "2010-02-11",
+      "end": "2026-10-16"
+    },
+    "oos": {
+      "cagr": 0.181066,
+      "max_dd": -0.174044,
+      "sharpe": 0.93,
+      "cagr_pct": 18.11,
+      "max_dd_pct": -17.4,
+      "max_dd_date": "2024-09-09",
+      "calmar": 1.0403,
+      "start": "2021-01-04",
+      "end": "2026-10-16"
+    }
+  },
+  "disclaimer": "Backtest only. Not investment advice. Not live trading."
+}

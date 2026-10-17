@@ -2,8 +2,10 @@
 src/dashboard/app.py
 ====================
 ETF Regime Strategist — Live Dashboard
-4 tabs: Regime Monitor, Portfolio, Backtest, Execution
+Tabs: Regime Monitor, Portfolio, Backtest, CDN Portfolio, QQQ Vegas, Auditor.
+QQQ Vegas reads data/qqq_vegas only. It does not change the Merrill sleeve.
 """
+import json
 import os
 import sys
 from pathlib import Path
@@ -3455,6 +3457,505 @@ def build_cdn_portfolio_tab(data):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# QQQ VEGAS — read-only sleeve display (not the Merrill book)
+# ═══════════════════════════════════════════════════════════════════════════
+QQQ_VEGAS_DIR = Path(__file__).resolve().parents[2] / 'data' / 'qqq_vegas'
+
+_VEGAS_HDR = {'backgroundColor': '#16213e', 'color': '#c8c8d4', 'fontWeight': '600',
+              'border': '1px solid #2d2d44', 'fontFamily': 'Inter', 'fontSize': '11px'}
+_VEGAS_CELL = {'backgroundColor': '#1a1a2e', 'color': '#c8c8d4', 'border': '1px solid #2d2d44',
+               'fontFamily': 'Inter', 'fontSize': '12px', 'padding': '7px', 'textAlign': 'center'}
+
+
+def _vegas_blank(value):
+    if value is None:
+        return '—'
+    try:
+        if pd.isna(value):
+            return '—'
+    except (TypeError, ValueError):
+        pass
+    text = str(value).strip()
+    if text.lower() in {'', 'nan', 'nat', 'none'}:
+        return '—'
+    return text
+
+
+def _vegas_date(value):
+    if isinstance(value, pd.Timestamp):
+        if pd.isna(value):
+            return '—'
+        return value.strftime('%Y-%m-%d')
+    return _vegas_blank(value)[:10] if _vegas_blank(value) != '—' else '—'
+
+
+def _vegas_weight(value):
+    if value is None:
+        return '—'
+    try:
+        if pd.isna(value):
+            return '—'
+        number = float(value)
+    except (TypeError, ValueError):
+        return '—'
+    if np.isnan(number):
+        return '—'
+    points = number * 100
+    rounded = round(points)
+    if abs(points - rounded) < 1e-6:
+        return f'{rounded:.0f}%'
+    return f'{points:.1f}%'
+
+
+def _vegas_ratio(value):
+    if value is None:
+        return '—'
+    try:
+        if pd.isna(value):
+            return '—'
+        number = float(value)
+    except (TypeError, ValueError):
+        return _vegas_blank(value)
+    if np.isnan(number):
+        return '—'
+    return f'{number:.4f}'.rstrip('0').rstrip('.')
+
+
+def _vegas_pct_points(value):
+    """Format a percent-point number already stored as 17.64, not 0.1764."""
+    if value is None:
+        return '—'
+    try:
+        if pd.isna(value):
+            return '—'
+        number = float(value)
+    except (TypeError, ValueError):
+        return _vegas_blank(value)
+    if np.isnan(number):
+        return '—'
+    text = f'{number:.2f}'.rstrip('0').rstrip('.')
+    return f'{text}%'
+
+
+def _vegas_metric_pct(block, pct_key, fraction_key):
+    if not isinstance(block, dict):
+        return '—'
+    if block.get(pct_key) is not None:
+        return _vegas_pct_points(block.get(pct_key))
+    raw = block.get(fraction_key)
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        return _vegas_pct_points(raw * 100)
+    return '—'
+
+
+def _vegas_state_color(state):
+    token = str(state or '').upper()
+    if token in {'RISK_ON', 'ENTER'}:
+        return '#00d97e'
+    if token in {'CASH', 'RISK_OFF', 'EXIT'}:
+        return '#e74c3c'
+    if token == 'HOLD':
+        return '#3498db'
+    return '#f5a623'
+
+
+def _read_vegas_json(path, missing):
+    try:
+        return json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        missing.append(path.name)
+        return {}
+
+
+def load_qqq_vegas(directory=None):
+    """Load the precomputed QQQ/QLD sleeve. Missing files stay empty."""
+    base = Path(directory) if directory is not None else QQQ_VEGAS_DIR
+    missing = []
+    signal = summary = live = {}
+    rebalances = pd.DataFrame()
+    equity = pd.DataFrame()
+
+    for key, name in (
+        ('signal', 'signal_current.json'),
+        ('summary', 'summary.json'),
+        ('live', 'live_snapshot.json'),
+    ):
+        path = base / name
+        if path.is_file():
+            payload = _read_vegas_json(path, missing)
+        else:
+            missing.append(name)
+            payload = {}
+        if key == 'signal':
+            signal = payload if isinstance(payload, dict) else {}
+        elif key == 'summary':
+            summary = payload if isinstance(payload, dict) else {}
+        else:
+            live = payload if isinstance(payload, dict) else {}
+
+    rebalance_path = base / 'rebalances.csv'
+    if rebalance_path.is_file():
+        try:
+            rebalances = pd.read_csv(rebalance_path)
+            if 'date' in rebalances.columns:
+                rebalances = rebalances.copy()
+                rebalances['date'] = pd.to_datetime(rebalances['date'], errors='coerce')
+                rebalances = rebalances.sort_values('date', ascending=False, kind='mergesort')
+        except (OSError, ValueError, pd.errors.ParserError):
+            missing.append(rebalance_path.name)
+            rebalances = pd.DataFrame()
+    else:
+        missing.append(rebalance_path.name)
+
+    equity_path = base / 'equity_curve.csv'
+    if equity_path.is_file():
+        try:
+            equity = pd.read_csv(equity_path)
+            if 'date' in equity.columns:
+                equity = equity.copy()
+                equity['date'] = pd.to_datetime(equity['date'], errors='coerce')
+        except (OSError, ValueError, pd.errors.ParserError):
+            missing.append(equity_path.name)
+            equity = pd.DataFrame()
+    else:
+        missing.append(equity_path.name)
+
+    return {
+        'directory': base,
+        'signal': signal,
+        'summary': summary,
+        'live': live,
+        'rebalances': rebalances,
+        'equity': equity,
+        'missing': missing,
+    }
+
+
+def _vegas_rebalance_rows(frame):
+    if frame is None or frame.empty:
+        return []
+    rows = []
+    for record in frame.to_dict(orient='records'):
+        rows.append({
+            'date': _vegas_date(record.get('date')),
+            'signal_date': _vegas_date(record.get('signal_date')),
+            'exec_date': _vegas_date(record.get('exec_date')),
+            'action': _vegas_blank(record.get('action')),
+            'from_state': _vegas_blank(record.get('from_state')),
+            'to_state': _vegas_blank(record.get('to_state')),
+            'qqq_w': _vegas_weight(record.get('qqq_w')),
+            'qld_w': _vegas_weight(record.get('qld_w')),
+            'cash_ticker': _vegas_blank(record.get('cash_ticker')),
+            'cash_w': _vegas_weight(record.get('cash_w')),
+            'filter_version': _vegas_blank(record.get('filter_version')),
+            'notes': _vegas_blank(record.get('notes')),
+        })
+    return rows
+
+
+def _vegas_position_rows(live):
+    positions = live.get('positions') if isinstance(live.get('positions'), dict) else {}
+    target = live.get('target') if isinstance(live.get('target'), dict) else {}
+    preferred = ['QQQ', 'QLD', 'BIL', 'SGOV']
+    keys = [key for key in preferred if key in positions]
+    keys += [key for key in positions if key not in preferred and key != 'cash_usd']
+    cash_ticker = target.get('cash_ticker')
+    rows = []
+    for key in keys:
+        pos = positions.get(key)
+        pos = pos if isinstance(pos, dict) else {}
+        if key in target:
+            target_w = target.get(key)
+        elif cash_ticker and key == cash_ticker:
+            target_w = target.get('cash_w')
+        else:
+            target_w = None
+        rows.append({
+            'ticker': key,
+            'shares': _vegas_blank(pos.get('shares')),
+            'live_w': _vegas_weight(pos.get('weight')),
+            'status': _vegas_blank(pos.get('status')),
+            'target_w': _vegas_weight(target_w) if target_w is not None else '—',
+        })
+    if 'cash_usd' in positions or 'cash_w' in target:
+        rows.append({
+            'ticker': 'cash_usd',
+            'shares': _vegas_blank(positions.get('cash_usd')),
+            'live_w': '—',
+            'status': '—',
+            'target_w': _vegas_weight(target.get('cash_w')),
+        })
+    return rows
+
+
+def _vegas_equity_figure(curve):
+    fig = go.Figure()
+    if curve is None or curve.empty or 'date' not in getattr(curve, 'columns', []):
+        fig.update_layout(**PL, title='Equity curve — no data', height=420)
+        return fig
+    dates = curve['date']
+    if 'equity' in curve.columns:
+        fig.add_trace(go.Scatter(
+            x=dates, y=pd.to_numeric(curve['equity'], errors='coerce'),
+            name='QQQ Vegas',
+            line=dict(color='#00d97e', width=2.2),
+            hovertemplate='%{x|%Y-%m-%d}: %{y:.3f}<extra>QQQ Vegas</extra>',
+        ))
+    if 'qqq_bh' in curve.columns:
+        fig.add_trace(go.Scatter(
+            x=dates, y=pd.to_numeric(curve['qqq_bh'], errors='coerce'),
+            name='Buy & hold QQQ',
+            line=dict(color='#00e5ff', width=1.5, dash='dot'),
+            hovertemplate='%{x|%Y-%m-%d}: %{y:.3f}<extra>Buy & hold QQQ</extra>',
+        ))
+    fig.update_layout(**{
+        **PL,
+        **_multi_series_chrome('QQQ Vegas vs buy-and-hold QQQ', height=480, bottom=96),
+        'yaxis_title': 'Growth of $1',
+        'hovermode': 'x unified',
+    })
+    fig.update_xaxes(automargin=True)
+    fig.update_yaxes(automargin=True)
+    return fig
+
+
+def _vegas_drawdown_figure(curve):
+    fig = go.Figure()
+    if curve is not None and not curve.empty and {'date', 'drawdown'} <= set(curve.columns):
+        dd = pd.to_numeric(curve['drawdown'], errors='coerce') * 100
+        fig.add_trace(go.Scatter(
+            x=curve['date'], y=dd, fill='tozeroy', name='Drawdown',
+            line=dict(color='#e74c3c', width=1),
+            fillcolor='rgba(231,76,60,0.2)',
+            hovertemplate='%{x|%Y-%m-%d}: %{y:.2f}%<extra>Drawdown</extra>',
+        ))
+    fig.update_layout(**PL, title='Daily drawdown', height=250, yaxis_title='Drawdown (%)', showlegend=False)
+    return fig
+
+
+def _vegas_metric_row(title, block):
+    span_start = _vegas_blank(block.get('start')) if isinstance(block, dict) else '—'
+    span_end = _vegas_blank(block.get('end')) if isinstance(block, dict) else '—'
+    window = f'{span_start} → {span_end}' if span_start != '—' or span_end != '—' else ''
+    trough = _vegas_blank(block.get('max_dd_date')) if isinstance(block, dict) else '—'
+    calmar = _vegas_ratio(block.get('calmar')) if isinstance(block, dict) else '—'
+    return html.Div([
+        html.Div(title, style={'color': '#8888a0', 'fontSize': '11px', 'letterSpacing': '1px',
+                               'textTransform': 'uppercase', 'margin': '8px 0'}),
+        dbc.Row([
+            dbc.Col(mc('CAGR', _vegas_metric_pct(block, 'cagr_pct', 'cagr'), window, '#00d97e', '📈'), md=4),
+            dbc.Col(mc('Max DD', _vegas_metric_pct(block, 'max_dd_pct', 'max_dd'),
+                       f'trough {trough}', '#e74c3c', '📉'), md=4),
+            dbc.Col(mc('Sharpe', _vegas_ratio(block.get('sharpe') if isinstance(block, dict) else None),
+                       f'Calmar {calmar}', '#3498db', '⚡'), md=4),
+        ]),
+    ])
+
+
+def _build_qqq_vegas_body(bundle):
+    signal = bundle.get('signal') if isinstance(bundle.get('signal'), dict) else {}
+    summary = bundle.get('summary') if isinstance(bundle.get('summary'), dict) else {}
+    live = bundle.get('live') if isinstance(bundle.get('live'), dict) else {}
+    weights = signal.get('weights') if isinstance(signal.get('weights'), dict) else {}
+    metrics = signal.get('metrics') if isinstance(signal.get('metrics'), dict) else {}
+    full = metrics.get('full') if isinstance(metrics.get('full'), dict) else {}
+    oos = metrics.get('oos') if isinstance(metrics.get('oos'), dict) else {}
+    last = signal.get('last_rebalance') if isinstance(signal.get('last_rebalance'), dict) else {}
+    target = live.get('target') if isinstance(live.get('target'), dict) else {}
+    missing = bundle.get('missing') or []
+    matched = bool(live.get('match'))
+    state = signal.get('state') or '—'
+    action = signal.get('next_action') or '—'
+    qqq_w = weights.get('QQQ', signal.get('qqq_w'))
+    qld_w = weights.get('QLD', signal.get('qld_w'))
+    cash_w = weights.get('cash', signal.get('cash_w'))
+    cash_ticker = signal.get('cash_ticker')
+    cash_sub = f'cash ticker {cash_ticker}' if cash_ticker else 'no named cash ticker'
+    disclaimer = signal.get('disclaimer') or 'Backtest only. Not investment advice. Not live trading.'
+    engine_bits = [summary.get('engine'), summary.get('note')]
+    if summary.get('as_of'):
+        engine_bits.append(f"summary as of {summary.get('as_of')}")
+    engine_line = ' · '.join(str(bit) for bit in engine_bits if bit)
+    rebalance_rows = _vegas_rebalance_rows(bundle.get('rebalances'))
+    position_rows = _vegas_position_rows(live)
+    broker = _vegas_blank(live.get('broker'))
+    match_label = 'match = true' if matched else '尚未接入实盘 · match = false'
+    match_color = '#00d97e' if matched else '#f5a623'
+    target_line = (
+        f"Target { _vegas_blank(target.get('state')) } · "
+        f"QQQ {_vegas_weight(target.get('QQQ'))} · "
+        f"QLD {_vegas_weight(target.get('QLD'))} · "
+        f"cash {_vegas_weight(target.get('cash_w'))}"
+    )
+
+    return html.Div([
+        html.H4('QQQ Vegas', style={'color': '#e6e6f0', 'fontWeight': '700', 'marginBottom': '4px'}),
+        html.Div(
+            'Separate QQQ / QLD sleeve. Read-only display of precomputed artifacts in data/qqq_vegas. '
+            'This page does not change the Merrill four-quadrant book.',
+            style={'color': '#8888a0', 'fontSize': '12px', 'marginBottom': '8px'},
+        ),
+        html.Div([
+            html.Div(disclaimer, style={'color': '#f5a623', 'fontSize': '12px', 'fontWeight': '600'}),
+            html.Div('回测展示，不构成投资建议。此页不接入下单。',
+                     style={'color': '#8888a0', 'fontSize': '11px', 'marginTop': '2px'}),
+        ], style={'backgroundColor': '#16213e', 'border': '1px solid #2d2d44', 'borderRadius': '8px',
+                  'padding': '8px 12px', 'marginBottom': '12px'}),
+        html.Div(
+            f"Missing artifacts: {', '.join(missing)}. The sleeve is not recomputed here." if missing else '',
+            id='qqq-vegas-missing',
+            style={'color': '#f5a623', 'fontSize': '12px', 'marginBottom': '10px'} if missing else {'display': 'none'},
+        ),
+
+        html.Div([
+            html.H5('当前信号 · Current signal', style={'color': '#00d97e', 'marginBottom': '6px', 'fontWeight': '700'}),
+            html.Div(
+                ' · '.join(part for part in (
+                    _vegas_blank(signal.get('signal_name')),
+                    _vegas_blank(signal.get('strategy_id')),
+                    _vegas_blank(signal.get('backtest_tag')),
+                    f"filter {_vegas_blank(signal.get('filter_version'))}",
+                ) if part and part != '—'),
+                style={'color': '#8888a0', 'fontSize': '12px', 'marginBottom': '10px'},
+            ),
+            dbc.Row([
+                dbc.Col(mc('State', state, '', _vegas_state_color(state), '📡'), md=2),
+                dbc.Col(mc('Next action', action, '', _vegas_state_color(action), '▶'), md=2),
+                dbc.Col(mc('QQQ', _vegas_weight(qqq_w), 'target sleeve', '#00e5ff'), md=2),
+                dbc.Col(mc('QLD', _vegas_weight(qld_w), 'target sleeve', '#9b59b6'), md=2),
+                dbc.Col(mc('Cash', _vegas_weight(cash_w), cash_sub, '#f5a623'), md=4),
+            ], className='mb-2'),
+            html.Div(signal.get('reason') or '—',
+                     style={'color': '#c8c8d4', 'fontSize': '13px', 'lineHeight': '1.45', 'margin': '8px 0'}),
+            html.Div([
+                html.Span(f"as_of {_vegas_blank(signal.get('as_of'))}", style={'marginRight': '18px'}),
+                html.Span(f"signal_date {_vegas_blank(signal.get('signal_date'))}", style={'marginRight': '18px'}),
+                html.Span(f"exec_date {_vegas_blank(signal.get('exec_date'))}"),
+            ], style={'color': '#8888a0', 'fontSize': '12px', 'marginBottom': '6px'}),
+            html.Div(
+                'Last rebalance: '
+                f"{_vegas_blank(last.get('date'))} · {_vegas_blank(last.get('action'))} · "
+                f"{_vegas_blank(last.get('from_state'))} → {_vegas_blank(last.get('to_state'))}",
+                style={'color': '#c8c8d4', 'fontSize': '13px', 'fontWeight': '600'},
+            ),
+            _vegas_metric_row('Full sample · metrics.full', full),
+            _vegas_metric_row('Out of sample · metrics.oos', oos),
+            _source_line(
+                'Source: data/qqq_vegas/signal_current.json'
+                + (f'. {engine_line}' if engine_line else '')
+            ),
+        ], style={**CS, 'marginBottom': '16px'}),
+
+        html.Div([
+            html.H5('净值曲线 · Equity curve', style={'color': '#00d97e', 'marginBottom': '6px', 'fontWeight': '700'}),
+            html.Div('Strategy equity versus buy-and-hold QQQ. Values are the growth index in equity_curve.csv.',
+                     style={'color': '#8888a0', 'fontSize': '12px', 'marginBottom': '8px'}),
+            dcc.Graph(id='qqq-vegas-equity', figure=_vegas_equity_figure(bundle.get('equity')),
+                      config={'displayModeBar': False}),
+            dcc.Graph(id='qqq-vegas-drawdown', figure=_vegas_drawdown_figure(bundle.get('equity')),
+                      config={'displayModeBar': False}),
+            _source_line('Source: data/qqq_vegas/equity_curve.csv (date, equity, qqq_bh, drawdown).'),
+        ], style={**CS, 'marginBottom': '16px'}),
+
+        html.Div([
+            html.H5('调仓记录 · Rebalance history', style={'color': '#00d97e', 'marginBottom': '6px', 'fontWeight': '700'}),
+            html.Div(f'{len(rebalance_rows)} ENTER/EXIT rows. Newest first. Click a column to sort.',
+                     style={'color': '#8888a0', 'fontSize': '12px', 'marginBottom': '8px'}),
+            dash_table.DataTable(
+                id='qqq-vegas-rebalances',
+                columns=[
+                    {'name': 'Date', 'id': 'date'},
+                    {'name': 'Signal', 'id': 'signal_date'},
+                    {'name': 'Exec', 'id': 'exec_date'},
+                    {'name': 'Action', 'id': 'action'},
+                    {'name': 'From', 'id': 'from_state'},
+                    {'name': 'To', 'id': 'to_state'},
+                    {'name': 'QQQ', 'id': 'qqq_w'},
+                    {'name': 'QLD', 'id': 'qld_w'},
+                    {'name': 'Cash ticker', 'id': 'cash_ticker'},
+                    {'name': 'Cash', 'id': 'cash_w'},
+                    {'name': 'Filter', 'id': 'filter_version'},
+                    {'name': 'Notes', 'id': 'notes'},
+                ],
+                data=rebalance_rows,
+                sort_action='native',
+                page_size=15,
+                style_header=_VEGAS_HDR,
+                style_cell=_VEGAS_CELL,
+                style_cell_conditional=[
+                    {'if': {'column_id': 'notes'}, 'textAlign': 'left', 'minWidth': '180px'},
+                    {'if': {'column_id': 'action'}, 'fontWeight': '700'},
+                ],
+                style_data_conditional=[
+                    {'if': {'row_index': 'odd'}, 'backgroundColor': '#16213e'},
+                    {'if': {'filter_query': '{action} = "ENTER"', 'column_id': 'action'}, 'color': '#00d97e'},
+                    {'if': {'filter_query': '{action} = "EXIT"', 'column_id': 'action'}, 'color': '#e74c3c'},
+                ],
+            ),
+            _source_line('Source: data/qqq_vegas/rebalances.csv. Display only.'),
+        ], style={**CS, 'marginBottom': '16px'}),
+
+        html.Div([
+            html.H5('实盘对照 · Live vs target', style={'color': '#00d97e', 'marginBottom': '6px', 'fontWeight': '700'}),
+            html.Div([
+                html.Span(f'Broker {broker}', style={'color': '#c8c8d4', 'fontWeight': '700', 'marginRight': '12px'}),
+                html.Span(match_label, style={'color': match_color, 'fontWeight': '700'}),
+                html.Span(' · placeholder snapshot' if not matched else '',
+                          style={'color': '#f5a623', 'fontSize': '12px', 'marginLeft': '8px'}),
+            ], style={'marginBottom': '6px'}),
+            html.Div(target_line, style={'color': '#c8c8d4', 'fontSize': '13px', 'marginBottom': '4px'}),
+            html.Div(
+                f"signal_as_of {_vegas_blank(live.get('signal_as_of'))} · "
+                f"snapshot as_of {_vegas_blank(live.get('as_of'))} · "
+                f"strategy {_vegas_blank(live.get('strategy_id'))}",
+                style={'color': '#8888a0', 'fontSize': '11px', 'marginBottom': '8px'},
+            ),
+            html.Div(live.get('notes') or '',
+                     style={'color': '#f5a623' if not matched else '#c8c8d4', 'fontSize': '13px',
+                            'marginBottom': '10px'}),
+            dash_table.DataTable(
+                id='qqq-vegas-live',
+                columns=[
+                    {'name': 'Ticker', 'id': 'ticker'},
+                    {'name': 'Shares', 'id': 'shares'},
+                    {'name': 'Live weight', 'id': 'live_w'},
+                    {'name': 'Status', 'id': 'status'},
+                    {'name': 'Target weight', 'id': 'target_w'},
+                ],
+                data=position_rows,
+                style_header=_VEGAS_HDR,
+                style_cell=_VEGAS_CELL,
+                style_cell_conditional=[{'if': {'column_id': 'ticker'}, 'textAlign': 'left', 'fontWeight': '600'}],
+                style_data_conditional=[
+                    {'if': {'row_index': 'odd'}, 'backgroundColor': '#16213e'},
+                    {'if': {'filter_query': '{status} = "unknown"', 'column_id': 'status'}, 'color': '#f5a623'},
+                ],
+            ),
+            _source_line(
+                'Source: data/qqq_vegas/live_snapshot.json. '
+                'match = false means the broker book is not connected (尚未接入实盘). '
+                'Target weights are the Vegas sleeve, not Merrill REGIME_WEIGHTS.'
+            ),
+        ], style={**CS, 'marginBottom': '16px', 'border': f'1px solid {match_color}'}),
+    ], id='qqq-vegas-root', style={'padding': '0 4px'})
+
+
+def build_qqq_vegas_tab(bundle=None):
+    """Read-only QQQ Vegas tab. A bad artifact must not brick dashboard startup."""
+    try:
+        loaded = load_qqq_vegas() if bundle is None else bundle
+        return _build_qqq_vegas_body(loaded)
+    except Exception:
+        return html.Div([
+            html.H4('QQQ Vegas', style={'color': '#e6e6f0', 'fontWeight': '700'}),
+            html.Div('Could not read data/qqq_vegas. The Merrill book is unchanged.',
+                     style={'color': '#e74c3c', 'fontSize': '13px'}),
+            html.Div('Backtest only. Not investment advice. Not live trading.',
+                     style={'color': '#f5a623', 'fontSize': '12px', 'marginTop': '8px'}),
+        ], id='qqq-vegas-root', style={'padding': '0 4px'})
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # APP FACTORY
 # ═══════════════════════════════════════════════════════════════════════════
 def create_app(data):
@@ -3488,6 +3989,8 @@ def create_app(data):
                     label_style={'fontFamily': 'Inter'}, active_label_style={'color': rc, 'fontWeight': '700'}),
             dbc.Tab(build_cdn_portfolio_tab(data), label='🍁 CDN Portfolio', tab_id='t4',
                     label_style={'fontFamily': 'Inter'}, active_label_style={'color': '#f5a623', 'fontWeight': '700'}),
+            dbc.Tab(build_qqq_vegas_tab(), label='🎰 QQQ Vegas', tab_id='t6',
+                    label_style={'fontFamily': 'Inter'}, active_label_style={'color': '#00e5ff', 'fontWeight': '700'}),
             dbc.Tab(build_auditor_tab(data), label='🔍 Auditor', tab_id='t5',
                     label_style={'fontFamily': 'Inter'}, active_label_style={'color': rc, 'fontWeight': '700'}),
         ], id='tabs', active_tab='t1', style={'marginBottom': '16px', 'padding': '0 20px'}),
