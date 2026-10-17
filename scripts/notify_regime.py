@@ -19,7 +19,7 @@ data/notify_state.json 基线，不开 Issue；--force 用于测试发信。
 美加风险姿态、权重表、减持/增持清单、怎么执行。只跨 VIX 档时写需要调仓：否，
 并说明防御应收紧或可放松；不改目标权重。
 
-targeted 与仪表盘、ibkr_rebalance 相同：CPI +1 个月，GDP +4 个月，
+targeted 与仪表盘、ibkr_rebalance、moomoo_rebalance 相同：CPI +1 个月，GDP +4 个月，
 VIX 月均和 12 个月动量再 shift(1)。不 import run_dashboard（那会跑启动逻辑）。
 
 审计：象限变化、VIX 跨档或 --force 应发信时，必须创建 rebalance Issue。
@@ -590,7 +590,8 @@ def _ops_regime() -> list[str]:
         '### 怎么执行',
         '- 上面是目标权重差额，不是已成交。这封邮件不会下单。',
         '- 本机 TWS 或 Gateway 开着时，先跑 `python scripts/ibkr_rebalance.py`（默认 dry-run，只打印计划）。',
-        '- 核对纸账户计划后，再加 `--execute` 才会发单。脚本拒绝向非纸账户 `--execute`。',
+        '- 本机 OpenD 已登录时，美股模拟盘可跑 `python scripts/moomoo_rebalance.py`（默认 dry-run，只打印计划；`--execute` 只允许 SIMULATE）。',
+        '- 核对纸账户计划后，再加 `--execute` 才会发单。IBKR 脚本拒绝向非纸账户 `--execute`；Moomoo 脚本拒绝 REAL。',
         '- 对照仪表盘 **Regime Monitor**（当前象限）和 **Portfolio**（目标权重）。',
     ]
 
@@ -602,6 +603,7 @@ def _ops_vix_only() -> list[str]:
         '- **月中再平衡：不建议。** 观察为主，不改四象限目标权重。',
         '- 日频股票敞口由引擎按 VIX 与回撤缩放。这一档只说明 overlay 应收紧还是可放松。',
         '- 若要核对账户是否偏离当前象限目标，本机跑 `python scripts/ibkr_rebalance.py`（默认 dry-run）。不要为了这一档加上 `--execute`。',
+        '- Moomoo 美股模拟盘同样只核对：`python scripts/moomoo_rebalance.py`（默认 dry-run）。不要为了这一档加上 `--execute`。',
         '- 对照仪表盘 **Regime Monitor** 和 **Portfolio**。',
         '- 打印出来的是目标，不是已成交。',
     ]
