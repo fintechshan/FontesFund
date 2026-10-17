@@ -3733,6 +3733,33 @@ def _vegas_drawdown_figure(curve):
     return fig
 
 
+def _vegas_equity_series(curve):
+    """Growth index from equity_curve.csv, indexed by date."""
+    if not isinstance(curve, pd.DataFrame) or curve.empty:
+        return pd.Series(dtype=float)
+    if 'date' not in curve.columns or 'equity' not in curve.columns:
+        return pd.Series(dtype=float)
+    dates = pd.to_datetime(curve['date'], errors='coerce')
+    values = pd.to_numeric(curve['equity'], errors='coerce')
+    series = pd.Series(values.to_numpy(dtype=float), index=dates)
+    series = series[series.index.notna()].dropna().sort_index()
+    return series[~series.index.duplicated(keep='last')]
+
+
+def _vegas_monthly_returns(curve):
+    """Month-end returns of the Vegas growth index.
+
+    Same input the Backtest heatmap uses: ``monthly_from_equity`` on one
+    equity curve. The series is the ``equity`` column only.
+    """
+    return monthly_from_equity(_vegas_equity_series(curve))
+
+
+def _vegas_heatmap_figure(curve):
+    """Year × month heatmap with the Backtest color scale and Year column."""
+    return make_monthly_heatmap(_vegas_monthly_returns(curve))
+
+
 def _vegas_metric_row(title, block):
     span_start = _vegas_blank(block.get('start')) if isinstance(block, dict) else '—'
     span_end = _vegas_blank(block.get('end')) if isinstance(block, dict) else '—'
@@ -3855,6 +3882,27 @@ def _build_qqq_vegas_body(bundle):
             dcc.Graph(id='qqq-vegas-drawdown', figure=_vegas_drawdown_figure(bundle.get('equity')),
                       config={'displayModeBar': False}),
             _source_line('Source: data/qqq_vegas/equity_curve.csv (date, equity, qqq_bh, drawdown).'),
+        ], style={**CS, 'marginBottom': '16px'}),
+
+        html.Div([
+            html.H5('月度收益热力图 · Monthly returns',
+                    style={'color': '#00d97e', 'marginBottom': '6px', 'fontWeight': '700'}),
+            html.Div(
+                'Year-by-month returns of the QQQ Vegas growth index. '
+                'Green is a positive month and red is a negative month. '
+                'The Year column is that calendar year’s compounded return.',
+                style={'color': '#8888a0', 'fontSize': '12px', 'marginBottom': '8px'},
+            ),
+            dcc.Graph(
+                id='qqq-vegas-heatmap',
+                figure=_vegas_heatmap_figure(bundle.get('equity')),
+                config={'displayModeBar': False},
+            ),
+            _source_line(
+                'Source: data/qqq_vegas/equity_curve.csv (equity). '
+                'Month-end change of that growth index, with the Backtest heatmap’s '
+                'month labels, red-to-green scale, and compounded Year column.'
+            ),
         ], style={**CS, 'marginBottom': '16px'}),
 
         html.Div([
