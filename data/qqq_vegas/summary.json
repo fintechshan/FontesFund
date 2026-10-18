@@ -1,114 +1,111 @@
 {
-  "engine": "v8.2 close-to-close + shift(1) weights; cost_bps on L1 weight change",
-  "note": "May differ from v4 open-fill 8bps engine (prior Vegas ~13.8%/-21.1%)",
-  "as_of": "2026-10-17",
+  "strategy_id": "qqq_vegas_rv20_q80",
+  "prior_strategy_id": "qqq_vegas_1_3x",
+  "backtest_tag": "v9_rv20_q80",
+  "filter_version": "v5_rv20_q80",
+  "name": "Vegas∧RV20≤expanding Q80 1.3x (70% QQQ + 30% QLD + cash)",
+  "name_zh": "Vegas∧RV20≤扩窗Q80 1.3x（70% QQQ + 30% QLD，空仓现金）",
+  "engine": "close-to-close + shift(1) weights; cost_bps on QQQ+2x L1; cash IRX→BIL; QLD real after 2006-06-21 else synthetic 2x",
+  "cost_bps": 4.0,
+  "w_qld": 0.3,
+  "as_of": "2026-10-16",
+  "generated_at": "2026-10-18",
+  "start_date": "1999-01-04",
+  "end_date": "2026-10-16",
+  "note": "Full sample from 1999-01-04 (dot-com covered). Prior Fontes UI pack started ~2010; start_date is now 1999-01-04. Metrics target ~CAGR 14.9% / MaxDD -27.8% matching factor_dig and_rv20_q80.",
+  "rules": {
+    "zh": [
+      "Vegas 隧道（QQQ 收盘）：Mom189>0 且 Close>SMA150 且 Close≥min(EMA144,EMA169)",
+      "RV 门（无前视）：rv20=std(20)×√252；q80=截至昨日的扩窗 80% 分位（min_periods=252）；rv_ok=(rv20≤q80)",
+      "risk_on = Vegas ∧ rv_ok；开仓 70% QQQ + 30% QLD（或合成 2×），平仓 100% 现金（IRX→BIL）",
+      "执行：收盘确认，次日生效（pos=signal.shift(1)）；QQQ+2× 换手 4bps"
+    ],
+    "en": [
+      "Vegas tunnel on QQQ close: Mom189>0 AND Close>SMA150 AND Close>=min(EMA144,EMA169)",
+      "RV gate (no look-ahead): rv20=std(20)*sqrt(252); q80=expanding_quantile(rv20.shift(1),0.80,min_periods=252); rv_ok=(rv20<=q80)",
+      "risk_on = Vegas AND rv_ok; risk-on 70% QQQ + 30% 2x (QLD/synth); risk-off 100% cash (IRX→BIL)",
+      "Execution: close confirm → pos=signal.shift(1); 4bps on QQQ+2x L1 turnover"
+    ]
+  },
   "configs": {
-    "vegas_1x_zero_cash": {
-      "name": "Vegas 原版 (100% QQQ + 0息现金)",
-      "w_qld": 0.0,
-      "use_cash_yield": false,
-      "cost_bps": 4.0,
-      "full": {
-        "CAGR": 0.139396,
-        "CAGR_pct": 13.94,
-        "MaxDD": -0.189269,
-        "MaxDD_pct": -18.93,
-        "MaxDD_Date": "2013-02-25",
-        "Sharpe": 0.9595,
-        "Calmar": 0.7365,
-        "start": "2010-02-11",
-        "end": "2026-10-16",
-        "n_days": 4196
-      },
-      "oos": {
-        "CAGR": 0.144844,
-        "CAGR_pct": 14.48,
-        "MaxDD": -0.14061,
-        "MaxDD_pct": -14.06,
-        "MaxDD_Date": "2023-02-24",
-        "Sharpe": 0.9534,
-        "Calmar": 1.0301,
-        "start": "2021-01-04",
-        "end": "2026-10-16",
-        "n_days": 1454
-      }
-    },
-    "vegas_1x_bil": {
-      "name": "Vegas + 短债利息 (100% QQQ + BIL)",
-      "w_qld": 0.0,
-      "use_cash_yield": true,
-      "cost_bps": 4.0,
-      "full": {
-        "CAGR": 0.142102,
-        "CAGR_pct": 14.21,
-        "MaxDD": -0.189978,
-        "MaxDD_pct": -19.0,
-        "MaxDD_Date": "2013-02-25",
-        "Sharpe": 0.9756,
-        "Calmar": 0.748,
-        "start": "2010-02-11",
-        "end": "2026-10-16",
-        "n_days": 4196
-      },
-      "oos": {
-        "CAGR": 0.151273,
-        "CAGR_pct": 15.13,
-        "MaxDD": -0.134541,
-        "MaxDD_pct": -13.45,
-        "MaxDD_Date": "2024-08-06",
-        "Sharpe": 0.9898,
-        "Calmar": 1.1244,
-        "start": "2021-01-04",
-        "end": "2026-10-16",
-        "n_days": 1454
-      }
-    },
-    "vegas_1_2x": {
-      "name": "Vegas 1.2x (80% QQQ + 20% QLD + BIL)",
-      "w_qld": 0.2,
-      "use_cash_yield": true,
-      "cost_bps": 4.0,
-      "full": {
-        "CAGR": 0.165081,
-        "CAGR_pct": 16.51,
-        "MaxDD": -0.223997,
-        "MaxDD_pct": -22.4,
-        "MaxDD_Date": "2013-02-25",
-        "Sharpe": 0.9539,
-        "Calmar": 0.737,
-        "start": "2010-02-11",
-        "end": "2026-10-16",
-        "n_days": 4196
-      },
-      "oos": {
-        "CAGR": 0.171332,
-        "CAGR_pct": 17.13,
-        "MaxDD": -0.160737,
-        "MaxDD_pct": -16.07,
-        "MaxDD_Date": "2024-09-09",
-        "Sharpe": 0.9466,
-        "Calmar": 1.0659,
-        "start": "2021-01-04",
-        "end": "2026-10-16",
-        "n_days": 1454
-      }
-    },
-    "vegas_1_3x": {
-      "name": "★最终主推 Vegas 1.3x (70% QQQ + 30% QLD + BIL)",
+    "vegas_rv20_q80": {
+      "name": "★主推 Vegas∧RV20≤Q80 1.3x",
       "w_qld": 0.3,
       "use_cash_yield": true,
       "cost_bps": 4.0,
       "full": {
-        "CAGR": 0.176358,
-        "CAGR_pct": 17.64,
-        "MaxDD": -0.24066,
-        "MaxDD_pct": -24.07,
-        "MaxDD_Date": "2013-02-25",
-        "Sharpe": 0.9455,
-        "Calmar": 0.7328,
-        "start": "2010-02-11",
+        "CAGR": 0.149014,
+        "CAGR_pct": 14.9,
+        "MaxDD": -0.278079,
+        "MaxDD_pct": -27.81,
+        "MaxDD_Date": "2005-10-28",
+        "Sharpe": 0.8389,
+        "Calmar": 0.5359,
+        "Vol_pct": 18.67,
+        "start": "1999-01-05",
         "end": "2026-10-16",
-        "n_days": 4196
+        "n_days": 6989,
+        "final_nav": 47.3943
+      },
+      "oos": {
+        "CAGR": 0.186268,
+        "CAGR_pct": 18.63,
+        "MaxDD": -0.174044,
+        "MaxDD_pct": -17.4,
+        "MaxDD_Date": "2024-09-09",
+        "Sharpe": 0.9605,
+        "Calmar": 1.0702,
+        "Vol_pct": 19.88,
+        "start": "2021-01-04",
+        "end": "2026-10-16",
+        "n_days": 1454,
+        "final_nav": 2.6838
+      },
+      "p1999_2009": {
+        "CAGR": 0.108576,
+        "CAGR_pct": 10.86,
+        "MaxDD": -0.278079,
+        "MaxDD_pct": -27.81,
+        "MaxDD_Date": "2005-10-28",
+        "Sharpe": 0.6584,
+        "Calmar": 0.3904,
+        "Vol_pct": 18.18,
+        "start": "1999-01-04",
+        "end": "2009-12-31",
+        "n_days": 2767,
+        "final_nav": 3.1043
+      },
+      "p2010_2026": {
+        "CAGR": 0.176385,
+        "CAGR_pct": 17.64,
+        "MaxDD": -0.25817,
+        "MaxDD_pct": -25.82,
+        "MaxDD_Date": "2010-08-16",
+        "Sharpe": 0.9524,
+        "Calmar": 0.6832,
+        "Vol_pct": 18.98,
+        "start": "2010-01-04",
+        "end": "2026-10-16",
+        "n_days": 4223,
+        "final_nav": 15.2701
+      }
+    },
+    "vegas_1_3x_same_engine": {
+      "name": "对比：纯 Vegas 1.3x（同 1999 引擎/拼接）",
+      "w_qld": 0.3,
+      "full": {
+        "CAGR": 0.129807,
+        "CAGR_pct": 12.98,
+        "MaxDD": -0.635587,
+        "MaxDD_pct": -63.56,
+        "MaxDD_Date": "2003-04-14",
+        "Sharpe": 0.6793,
+        "Calmar": 0.2042,
+        "Vol_pct": 21.37,
+        "start": "1999-01-05",
+        "end": "2026-10-16",
+        "n_days": 6989,
+        "final_nav": 29.6734
       },
       "oos": {
         "CAGR": 0.181066,
@@ -118,87 +115,86 @@
         "MaxDD_Date": "2024-09-09",
         "Sharpe": 0.93,
         "Calmar": 1.0403,
+        "Vol_pct": 20.11,
         "start": "2021-01-04",
         "end": "2026-10-16",
-        "n_days": 1454
-      }
-    }
-  },
-  "side_notes": {
-    "vegas_1_3x_cost_8bps": {
-      "name": "Vegas 1.3x cost_bps=8",
-      "full": {
-        "CAGR": 0.17329,
-        "CAGR_pct": 17.33,
-        "MaxDD": -0.247918,
-        "MaxDD_pct": -24.79,
-        "MaxDD_Date": "2013-02-25",
-        "Sharpe": 0.9319,
-        "Calmar": 0.699,
-        "start": "2010-02-11",
-        "end": "2026-10-16",
-        "n_days": 4196
+        "n_days": 1454,
+        "final_nav": 2.6165
       },
-      "oos": {
-        "CAGR": 0.178615,
-        "CAGR_pct": 17.86,
-        "MaxDD": -0.175033,
-        "MaxDD_pct": -17.5,
-        "MaxDD_Date": "2024-09-09",
-        "Sharpe": 0.9196,
-        "Calmar": 1.0205,
-        "start": "2021-01-04",
+      "p2010_2026": {
+        "CAGR": 0.169864,
+        "CAGR_pct": 16.99,
+        "MaxDD": -0.25817,
+        "MaxDD_pct": -25.82,
+        "MaxDD_Date": "2010-08-16",
+        "Sharpe": 0.8991,
+        "Calmar": 0.658,
+        "Vol_pct": 19.63,
+        "start": "2010-01-04",
         "end": "2026-10-16",
-        "n_days": 1454
+        "n_days": 4223,
+        "final_nav": 13.9101
       }
     }
   },
   "buy_hold_qqq": {
     "full": {
-      "CAGR": 0.1933,
-      "CAGR_pct": 19.33,
-      "MaxDD": -0.351187,
-      "MaxDD_pct": -35.12,
-      "MaxDD_Date": "2022-11-03",
-      "Sharpe": 0.9614,
-      "Calmar": 0.5504,
-      "start": "2010-02-11",
+      "CAGR": 0.109997,
+      "CAGR_pct": 11.0,
+      "MaxDD": -0.829639,
+      "MaxDD_pct": -82.96,
+      "MaxDD_Date": "2002-10-09",
+      "Sharpe": 0.5222,
+      "Calmar": 0.1326,
+      "Vol_pct": 26.97,
+      "start": "1999-01-05",
       "end": "2026-10-16",
-      "n_days": 4196
-    },
-    "oos": {
-      "CAGR": 0.158401,
-      "CAGR_pct": 15.84,
-      "MaxDD": -0.351187,
-      "MaxDD_pct": -35.12,
-      "MaxDD_Date": "2022-11-03",
-      "Sharpe": 0.7698,
-      "Calmar": 0.451,
-      "start": "2021-01-04",
-      "end": "2026-10-16",
-      "n_days": 1454
+      "n_days": 6989,
+      "final_nav": 18.1534
     }
   },
-  "user_guess_verdicts_1_3x": {
-    "full_CAGR_17.5_to_18.5": {
-      "guess": "17.5–18.5%",
-      "measured_pct": 17.64,
-      "confirmed": true
+  "compare_to_prior_vegas": {
+    "prior_id": "qqq_vegas_1_3x",
+    "prior_full_sample_note": "Prior pack metrics were 2010-02-11 start (~17.6%/-24%). Same-engine 1999-start prior below.",
+    "delta_full": {
+      "dCAGR_pp": 1.92,
+      "dMaxDD_pp": 35.75,
+      "dSharpe": 0.1596,
+      "dCalmar": 0.3317
     },
-    "full_MaxDD_neg26_to_neg27.5": {
-      "guess": "-26.0–-27.5%",
-      "measured_pct": -24.07,
-      "confirmed": false
+    "prior_full": {
+      "CAGR": 0.129807,
+      "CAGR_pct": 12.98,
+      "MaxDD": -0.635587,
+      "MaxDD_pct": -63.56,
+      "MaxDD_Date": "2003-04-14",
+      "Sharpe": 0.6793,
+      "Calmar": 0.2042,
+      "Vol_pct": 21.37,
+      "start": "1999-01-05",
+      "end": "2026-10-16",
+      "n_days": 6989,
+      "final_nav": 29.6734
     },
-    "oos_CAGR_20_to_21": {
-      "guess": "20.0–21.0%",
-      "measured_pct": 18.11,
-      "confirmed": false
-    },
-    "oos_MaxDD_neg17_to_neg17.5": {
-      "guess": "-17.0–-17.5%",
-      "measured_pct": -17.4,
-      "confirmed": true
+    "new_full": {
+      "CAGR": 0.149014,
+      "CAGR_pct": 14.9,
+      "MaxDD": -0.278079,
+      "MaxDD_pct": -27.81,
+      "MaxDD_Date": "2005-10-28",
+      "Sharpe": 0.8389,
+      "Calmar": 0.5359,
+      "Vol_pct": 18.67,
+      "start": "1999-01-05",
+      "end": "2026-10-16",
+      "n_days": 6989,
+      "final_nav": 47.3943
     }
-  }
+  },
+  "data_splices": {
+    "qqq": "NDX returns until 1999-03-10, real QQQ after",
+    "qld": "synthetic 2*QQQ - cash - 0.95%/yr until 2006-06-21, real QLD after",
+    "cash": "IRX/100/252 until 2010-01-04, BIL after"
+  },
+  "disclaimer": "Backtest only. Not investment advice. Not live trading."
 }

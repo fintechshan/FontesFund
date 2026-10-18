@@ -3567,11 +3567,27 @@ def _read_vegas_json(path, missing):
         return {}
 
 
+def _read_optional_frame(path, missing):
+    """Read a CSV when it exists. A missing file is an empty frame, not an error."""
+    if not path.is_file():
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(path)
+    except (OSError, UnicodeError, ValueError, pd.errors.ParserError):
+        missing.append(path.name)
+        return pd.DataFrame()
+
+
 def load_qqq_vegas(directory=None):
-    """Load the precomputed QQQ/QLD sleeve. Missing files stay empty."""
+    """Load the precomputed QQQ/QLD sleeve. Missing files stay empty.
+
+    ``monthly_returns.csv`` feeds the heatmap when it is present. Otherwise
+    the heatmap is the month-end change of ``equity_curve.csv``. ``yearly_returns.csv``
+    and ``strategy.json`` are display-only and optional.
+    """
     base = Path(directory) if directory is not None else QQQ_VEGAS_DIR
     missing = []
-    signal = summary = live = {}
+    signal = summary = live = strategy = {}
     rebalances = pd.DataFrame()
     equity = pd.DataFrame()
 
@@ -3592,6 +3608,11 @@ def load_qqq_vegas(directory=None):
             summary = payload if isinstance(payload, dict) else {}
         else:
             live = payload if isinstance(payload, dict) else {}
+
+    strategy_path = base / 'strategy.json'
+    if strategy_path.is_file():
+        payload = _read_vegas_json(strategy_path, missing)
+        strategy = payload if isinstance(payload, dict) else {}
 
     rebalance_path = base / 'rebalances.csv'
     if rebalance_path.is_file():
@@ -3620,13 +3641,19 @@ def load_qqq_vegas(directory=None):
     else:
         missing.append(equity_path.name)
 
+    monthly = _read_optional_frame(base / 'monthly_returns.csv', missing)
+    yearly = _read_optional_frame(base / 'yearly_returns.csv', missing)
+
     return {
         'directory': base,
         'signal': signal,
         'summary': summary,
         'live': live,
+        'strategy': strategy,
         'rebalances': rebalances,
         'equity': equity,
+        'monthly': monthly,
+        'yearly': yearly,
         'missing': missing,
     }
 
@@ -3688,9 +3715,172 @@ def _vegas_position_rows(live):
     return rows
 
 
+_VEGAS_METRIC_ALIASES = {
+    'CAGR': 'cagr',
+    'CAGR_pct': 'cagr_pct',
+    'MaxDD': 'max_dd',
+    'MaxDD_pct': 'max_dd_pct',
+    'MaxDD_Date': 'max_dd_date',
+    'Sharpe': 'sharpe',
+    'Calmar': 'calmar',
+    'Vol_pct': 'vol_pct',
+}
+_VEGAS_PRIMARY_CONFIGS = ('vegas_rv20_q80', 'vegas_1_3x')
+_VEGAS_RULES_ZH = (
+    'Vegas 隧道（QQQ 收盘）：Mom189>0 且 Close>SMA150 且 Close≥min(EMA144,EMA169)',
+    'RV 门（无前视）：20 日实现波动率（年化）≤ 截至昨日的扩窗 80% 分位（min_periods=252）',
+    'RISK_ON = Vegas 且 RV 门通过：70% QQQ + 30% QLD；否则 100% 现金',
+    '收盘确认，次日生效；权益腿换手 4bps',
+)
+_VEGAS_RULES_EN = (
+    'Vegas tunnel on QQQ: Mom189>0 AND Close>SMA150 AND Close≥min(EMA144,EMA169)',
+    'RV gate: 20d realized vol (ann.) ≤ expanding 80th percentile of past RV20 '
+    '(min_periods=252; threshold uses history through yesterday)',
+    'RISK_ON: 70% QQQ + 30% QLD; else 100% cash',
+    'Close confirm → next bar; 4bps turnover on equity legs; no look-ahead',
+)
+
+
+def _vegas_frame(value):
+    return value if isinstance(value, pd.DataFrame) else pd.DataFrame()
+
+
+def _vegas_on_off(value):
+    if value is None:
+        return '—'
+    try:
+        if pd.isna(value):
+            return '—'
+        number = float(value)
+    except (TypeError, ValueError):
+        return _vegas_blank(value)
+    if np.isnan(number):
+        return '—'
+    if number == 1:
+        return 'ON'
+    if number == 0:
+        return 'OFF'
+    return _vegas_ratio(number)
+
+
+def _vegas_vol_pct(value):
+    """Annualized vol stored as a fraction, e.g. 0.1856 → 18.56%."""
+    if value is None:
+        return '—'
+    try:
+        if pd.isna(value):
+            return '—'
+        number = float(value)
+    except (TypeError, ValueError):
+        return _vegas_blank(value)
+    if np.isnan(number):
+        return '—'
+    return _vegas_pct_points(number * 100)
+
+
+def _vegas_signed(value, digits=2, suffix=''):
+    if value is None:
+        return '—'
+    try:
+        if pd.isna(value):
+            return '—'
+        number = float(value)
+    except (TypeError, ValueError):
+        return '—'
+    if np.isnan(number):
+        return '—'
+    text = f'{number:+.{digits}f}'.rstrip('0').rstrip('.')
+    if text in {'+', '-', '+.', '-.', ''}:
+        text = f'{number:+.{digits}f}'
+    return f'{text}{suffix}'
+
+
+def _vegas_normalize_metric_block(block):
+    if not isinstance(block, dict):
+        return {}
+    out = {}
+    for key, value in block.items():
+        out[_VEGAS_METRIC_ALIASES.get(key, key)] = value
+    return out
+
+
+def _vegas_config_metrics(summary, window):
+    """Metrics for one window from summary.configs, with signal-style keys."""
+    if not isinstance(summary, dict):
+        return {}
+    configs = summary.get('configs')
+    block = {}
+    if isinstance(configs, dict):
+        for key in _VEGAS_PRIMARY_CONFIGS:
+            cfg = configs.get(key)
+            if isinstance(cfg, dict) and isinstance(cfg.get(window), dict):
+                block = cfg.get(window)
+                break
+    if not block and window == 'full':
+        compare = summary.get('compare_to_prior_vegas')
+        if isinstance(compare, dict) and isinstance(compare.get('new_full'), dict):
+            block = compare.get('new_full')
+    return _vegas_normalize_metric_block(block)
+
+
+def _vegas_window_metrics(signal_metrics, summary, window):
+    """Prefer signal_current metrics. Fill gaps from the primary summary config."""
+    raw = signal_metrics.get(window) if isinstance(signal_metrics, dict) else None
+    signal_block = _vegas_normalize_metric_block(raw) if isinstance(raw, dict) else {}
+    summary_block = _vegas_config_metrics(summary, window)
+    if signal_block:
+        merged = dict(summary_block)
+        merged.update(signal_block)
+        return merged
+    return summary_block
+
+
+def _vegas_block_has_numbers(block):
+    if not isinstance(block, dict):
+        return False
+    return any(block.get(key) is not None for key in (
+        'cagr_pct', 'cagr', 'sharpe', 'max_dd_pct', 'max_dd', 'calmar',
+    ))
+
+
+def _vegas_rule_lines(summary, strategy=None):
+    for source in (summary, strategy):
+        rules = source.get('rules') if isinstance(source, dict) else None
+        if not isinstance(rules, dict):
+            continue
+        zh = [str(line) for line in rules.get('zh') or [] if line]
+        en = [str(line) for line in rules.get('en') or [] if line]
+        if zh or en:
+            return zh, en
+    return list(_VEGAS_RULES_ZH), list(_VEGAS_RULES_EN)
+
+
+def _vegas_sample_line(summary, signal, equity):
+    summary = summary if isinstance(summary, dict) else {}
+    signal = signal if isinstance(signal, dict) else {}
+    start = summary.get('start_date')
+    end = summary.get('end_date')
+    frame = _vegas_frame(equity)
+    if (not start or not end) and 'date' in frame.columns:
+        dates = pd.to_datetime(frame['date'], errors='coerce').dropna()
+        if len(dates):
+            start = start or dates.min().strftime('%Y-%m-%d')
+            end = end or dates.max().strftime('%Y-%m-%d')
+    window = f'{start} → {end}' if start or end else ''
+    parts = [
+        window,
+        _vegas_blank(signal.get('strategy_id') or summary.get('strategy_id')),
+        _vegas_blank(signal.get('backtest_tag') or summary.get('backtest_tag')),
+    ]
+    if summary.get('cost_bps') is not None:
+        parts.append(f"{_vegas_ratio(summary.get('cost_bps'))} bps")
+    return ' · '.join(part for part in parts if part and part != '—')
+
+
 def _vegas_equity_figure(curve):
     fig = go.Figure()
-    if curve is None or curve.empty or 'date' not in getattr(curve, 'columns', []):
+    curve = _vegas_frame(curve)
+    if curve.empty or 'date' not in curve.columns:
         fig.update_layout(**PL, title='Equity curve — no data', height=420)
         return fig
     dates = curve['date']
@@ -3708,9 +3898,16 @@ def _vegas_equity_figure(curve):
             line=dict(color='#00e5ff', width=1.5, dash='dot'),
             hovertemplate='%{x|%Y-%m-%d}: %{y:.3f}<extra>Buy & hold QQQ</extra>',
         ))
+    if 'vegas_only_equity' in curve.columns:
+        fig.add_trace(go.Scatter(
+            x=dates, y=pd.to_numeric(curve['vegas_only_equity'], errors='coerce'),
+            name='Vegas only',
+            line=dict(color='#9b59b6', width=1.2, dash='dash'),
+            hovertemplate='%{x|%Y-%m-%d}: %{y:.3f}<extra>Vegas only</extra>',
+        ))
     fig.update_layout(**{
         **PL,
-        **_multi_series_chrome('QQQ Vegas vs buy-and-hold QQQ', height=480, bottom=96),
+        **_multi_series_chrome('QQQ Vegas vs buy-and-hold QQQ', height=480, bottom=110),
         'yaxis_title': 'Growth of $1',
         'hovermode': 'x unified',
     })
@@ -3721,7 +3918,9 @@ def _vegas_equity_figure(curve):
 
 def _vegas_drawdown_figure(curve):
     fig = go.Figure()
-    if curve is not None and not curve.empty and {'date', 'drawdown'} <= set(curve.columns):
+    curve = _vegas_frame(curve)
+    has_prior = False
+    if not curve.empty and {'date', 'drawdown'} <= set(curve.columns):
         dd = pd.to_numeric(curve['drawdown'], errors='coerce') * 100
         fig.add_trace(go.Scatter(
             x=curve['date'], y=dd, fill='tozeroy', name='Drawdown',
@@ -3729,13 +3928,23 @@ def _vegas_drawdown_figure(curve):
             fillcolor='rgba(231,76,60,0.2)',
             hovertemplate='%{x|%Y-%m-%d}: %{y:.2f}%<extra>Drawdown</extra>',
         ))
-    fig.update_layout(**PL, title='Daily drawdown', height=250, yaxis_title='Drawdown (%)', showlegend=False)
+    if not curve.empty and {'date', 'vegas_only_drawdown'} <= set(curve.columns):
+        prior = pd.to_numeric(curve['vegas_only_drawdown'], errors='coerce') * 100
+        fig.add_trace(go.Scatter(
+            x=curve['date'], y=prior, name='Vegas only',
+            line=dict(color='#9b59b6', width=1, dash='dash'),
+            hovertemplate='%{x|%Y-%m-%d}: %{y:.2f}%<extra>Vegas only</extra>',
+        ))
+        has_prior = True
+    fig.update_layout(**PL, title='Daily drawdown', height=280, yaxis_title='Drawdown (%)',
+                      showlegend=has_prior)
     return fig
 
 
 def _vegas_equity_series(curve):
     """Growth index from equity_curve.csv, indexed by date."""
-    if not isinstance(curve, pd.DataFrame) or curve.empty:
+    curve = _vegas_frame(curve)
+    if curve.empty:
         return pd.Series(dtype=float)
     if 'date' not in curve.columns or 'equity' not in curve.columns:
         return pd.Series(dtype=float)
@@ -3749,15 +3958,94 @@ def _vegas_equity_series(curve):
 def _vegas_monthly_returns(curve):
     """Month-end returns of the Vegas growth index.
 
-    Same input the Backtest heatmap uses: ``monthly_from_equity`` on one
-    equity curve. The series is the ``equity`` column only.
+    Fallback when ``monthly_returns.csv`` is absent. Same input the Backtest
+    heatmap uses: ``monthly_from_equity`` on the ``equity`` column only.
     """
     return monthly_from_equity(_vegas_equity_series(curve))
 
 
-def _vegas_heatmap_figure(curve):
-    """Year × month heatmap with the Backtest color scale and Year column."""
-    return make_monthly_heatmap(_vegas_monthly_returns(curve))
+def _vegas_month_column(frame, month):
+    for name in (f'M{month:02d}', f'm{month:02d}'):
+        if name in frame.columns:
+            return name
+    return None
+
+
+def _vegas_monthly_from_table(frame):
+    """Wide ``monthly_returns.csv`` (percent) → a month-end return series (fraction)."""
+    frame = _vegas_frame(frame)
+    if frame.empty or 'year' not in frame.columns:
+        return pd.Series(dtype=float)
+    stamps = []
+    values = []
+    for record in frame.to_dict(orient='records'):
+        try:
+            year = int(record.get('year'))
+        except (TypeError, ValueError):
+            continue
+        for month in range(1, 13):
+            column = _vegas_month_column(frame, month)
+            if column is None:
+                continue
+            raw = record.get(column)
+            if raw is None:
+                continue
+            try:
+                if pd.isna(raw):
+                    continue
+                pct = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if np.isnan(pct):
+                continue
+            stamps.append(pd.Timestamp(year=year, month=month, day=1) + pd.offsets.MonthEnd(0))
+            values.append(pct / 100.0)
+    if not stamps:
+        return pd.Series(dtype=float)
+    series = pd.Series(values, index=pd.DatetimeIndex(stamps)).sort_index()
+    return series[~series.index.duplicated(keep='last')]
+
+
+def _vegas_heatmap_figure(curve, monthly=None):
+    """Year × month heatmap. Prefer monthly_returns.csv; else the equity curve."""
+    series = _vegas_monthly_from_table(monthly)
+    if len(series) == 0:
+        series = _vegas_monthly_returns(curve)
+    return make_monthly_heatmap(series)
+
+
+def _vegas_yearly_figure(frame):
+    fig = go.Figure()
+    frame = _vegas_frame(frame)
+    if frame.empty or 'year' not in frame.columns:
+        fig.update_layout(**PL, title='Yearly returns — no data', height=280)
+        return fig
+    years = frame['year'].map(lambda value: _vegas_blank(value))
+    series = (
+        ('strategy_pct', 'QQQ Vegas', '#00d97e'),
+        ('vegas_only_pct', 'Vegas only', '#9b59b6'),
+        ('qqq_bh_pct', 'Buy & hold QQQ', '#00e5ff'),
+    )
+    for column, name, color in series:
+        if column not in frame.columns:
+            continue
+        fig.add_trace(go.Bar(
+            x=years,
+            y=pd.to_numeric(frame[column], errors='coerce'),
+            name=name,
+            marker_color=color,
+            hovertemplate='%{x}: %{y:.2f}%<extra>' + name + '</extra>',
+        ))
+    fig.update_layout(**{
+        **PL,
+        **_multi_series_chrome('Calendar-year returns (%)', height=380, bottom=96),
+        'barmode': 'group',
+        'yaxis_title': 'Return (%)',
+        'hovermode': 'x unified',
+    })
+    fig.update_xaxes(automargin=True)
+    fig.update_yaxes(automargin=True)
+    return fig
 
 
 def _vegas_metric_row(title, block):
@@ -3779,14 +4067,74 @@ def _vegas_metric_row(title, block):
     ])
 
 
+def _vegas_compare_section(summary):
+    compare = summary.get('compare_to_prior_vegas') if isinstance(summary, dict) else None
+    if not isinstance(compare, dict):
+        return None
+    prior = _vegas_normalize_metric_block(compare.get('prior_full'))
+    current = _vegas_normalize_metric_block(compare.get('new_full'))
+    delta = compare.get('delta_full') if isinstance(compare.get('delta_full'), dict) else {}
+    if not prior and not current:
+        return None
+    prior_id = _vegas_blank(compare.get('prior_id') or summary.get('prior_strategy_id'))
+    rows = [
+        {
+            'book': f'Prior Vegas 1.3x · {prior_id}',
+            'cagr': _vegas_metric_pct(prior, 'cagr_pct', 'cagr'),
+            'max_dd': _vegas_metric_pct(prior, 'max_dd_pct', 'max_dd'),
+            'sharpe': _vegas_ratio(prior.get('sharpe')),
+            'calmar': _vegas_ratio(prior.get('calmar')),
+        },
+        {
+            'book': 'Vegas ∧ RV20≤Q80',
+            'cagr': _vegas_metric_pct(current, 'cagr_pct', 'cagr'),
+            'max_dd': _vegas_metric_pct(current, 'max_dd_pct', 'max_dd'),
+            'sharpe': _vegas_ratio(current.get('sharpe')),
+            'calmar': _vegas_ratio(current.get('calmar')),
+        },
+        {
+            'book': 'Delta (new − prior)',
+            'cagr': _vegas_signed(delta.get('dCAGR_pp'), 2, ' pp'),
+            'max_dd': _vegas_signed(delta.get('dMaxDD_pp'), 2, ' pp'),
+            'sharpe': _vegas_signed(delta.get('dSharpe'), 4),
+            'calmar': _vegas_signed(delta.get('dCalmar'), 4),
+        },
+    ]
+    note = compare.get('prior_full_sample_note') or ''
+    return html.Div([
+        html.Div('Full sample vs prior Vegas 1.3x · 同引擎',
+                 style={'color': '#8888a0', 'fontSize': '11px', 'letterSpacing': '1px',
+                        'textTransform': 'uppercase', 'margin': '10px 0 6px'}),
+        dash_table.DataTable(
+            id='qqq-vegas-compare',
+            columns=[
+                {'name': 'Book', 'id': 'book'},
+                {'name': 'CAGR', 'id': 'cagr'},
+                {'name': 'Max DD', 'id': 'max_dd'},
+                {'name': 'Sharpe', 'id': 'sharpe'},
+                {'name': 'Calmar', 'id': 'calmar'},
+            ],
+            data=rows,
+            style_header=_VEGAS_HDR,
+            style_cell=_VEGAS_CELL,
+            style_cell_conditional=[{'if': {'column_id': 'book'}, 'textAlign': 'left', 'fontWeight': '600'}],
+            style_data_conditional=[{'if': {'row_index': 'odd'}, 'backgroundColor': '#16213e'}],
+        ),
+        html.Div(str(note), style={'color': '#8888a0', 'fontSize': '11px', 'marginTop': '6px'}) if note else html.Div(),
+    ])
+
+
 def _build_qqq_vegas_body(bundle):
+    bundle = bundle if isinstance(bundle, dict) else {}
     signal = bundle.get('signal') if isinstance(bundle.get('signal'), dict) else {}
     summary = bundle.get('summary') if isinstance(bundle.get('summary'), dict) else {}
+    strategy = bundle.get('strategy') if isinstance(bundle.get('strategy'), dict) else {}
     live = bundle.get('live') if isinstance(bundle.get('live'), dict) else {}
     weights = signal.get('weights') if isinstance(signal.get('weights'), dict) else {}
     metrics = signal.get('metrics') if isinstance(signal.get('metrics'), dict) else {}
-    full = metrics.get('full') if isinstance(metrics.get('full'), dict) else {}
-    oos = metrics.get('oos') if isinstance(metrics.get('oos'), dict) else {}
+    full = _vegas_window_metrics(metrics, summary, 'full')
+    oos = _vegas_window_metrics(metrics, summary, 'oos')
+    window_2010 = _vegas_window_metrics(metrics, summary, 'p2010_2026')
     last = signal.get('last_rebalance') if isinstance(signal.get('last_rebalance'), dict) else {}
     target = live.get('target') if isinstance(live.get('target'), dict) else {}
     missing = bundle.get('missing') or []
@@ -3798,12 +4146,14 @@ def _build_qqq_vegas_body(bundle):
     cash_w = weights.get('cash', signal.get('cash_w'))
     cash_ticker = signal.get('cash_ticker')
     cash_sub = f'cash ticker {cash_ticker}' if cash_ticker else 'no named cash ticker'
-    disclaimer = signal.get('disclaimer') or 'Backtest only. Not investment advice. Not live trading.'
+    disclaimer = signal.get('disclaimer') or summary.get('disclaimer') or (
+        'Backtest only. Not investment advice. Not live trading.'
+    )
     engine_bits = [summary.get('engine'), summary.get('note')]
     if summary.get('as_of'):
         engine_bits.append(f"summary as of {summary.get('as_of')}")
     engine_line = ' · '.join(str(bit) for bit in engine_bits if bit)
-    rebalance_rows = _vegas_rebalance_rows(bundle.get('rebalances'))
+    rebalance_rows = _vegas_rebalance_rows(_vegas_frame(bundle.get('rebalances')))
     position_rows = _vegas_position_rows(live)
     broker = _vegas_blank(live.get('broker'))
     match_label = 'match = true' if matched else '尚未接入实盘 · match = false'
@@ -3814,14 +4164,74 @@ def _build_qqq_vegas_body(bundle):
         f"QLD {_vegas_weight(target.get('QLD'))} · "
         f"cash {_vegas_weight(target.get('cash_w'))}"
     )
+    headline = (
+        summary.get('name_zh')
+        or summary.get('name')
+        or strategy.get('name_zh')
+        or 'Vegas ∧ RV20 ≤ expanding Q80 · 70% QQQ + 30% QLD'
+    )
+    rules_zh, rules_en = _vegas_rule_lines(summary, strategy)
+    sample_line = _vegas_sample_line(summary, signal, bundle.get('equity'))
+    monthly = bundle.get('monthly')
+    yearly = bundle.get('yearly')
+    heat_from_file = len(_vegas_monthly_from_table(monthly)) > 0
+    if heat_from_file:
+        heat_source = (
+            'Source: data/qqq_vegas/monthly_returns.csv (year, M01–M12, values in percent). '
+            'The Year column compounds those months. '
+            'Colors match the Backtest heatmap (red to green, zero at the midpoint).'
+        )
+    else:
+        heat_source = (
+            'Source: data/qqq_vegas/equity_curve.csv (equity). '
+            'Month-end change of that growth index, with the Backtest heatmap’s '
+            'month labels, red-to-green scale, and compounded Year column.'
+        )
+    equity_frame = _vegas_frame(bundle.get('equity'))
+    has_prior_equity = 'vegas_only_equity' in equity_frame.columns
+    equity_caption = (
+        'Strategy equity versus buy-and-hold QQQ. '
+        + (
+            'The dashed line is the same engine without the RV gate (vegas_only_equity).'
+            if has_prior_equity else
+            'Values are the growth index in equity_curve.csv.'
+        )
+    )
+    compare = _vegas_compare_section(summary)
+    yearly_block = []
+    if len(_vegas_frame(yearly)) > 0 and 'year' in _vegas_frame(yearly).columns:
+        yearly_block = [
+            html.Div(
+                'Calendar-year returns from yearly_returns.csv. '
+                'QQQ Vegas is this sleeve. Vegas only is the same engine without the RV gate.',
+                style={'color': '#8888a0', 'fontSize': '12px', 'margin': '12px 0 8px'},
+            ),
+            dcc.Graph(
+                id='qqq-vegas-yearly',
+                figure=_vegas_yearly_figure(yearly),
+                config={'displayModeBar': False},
+            ),
+            _source_line('Source: data/qqq_vegas/yearly_returns.csv (strategy_pct, vegas_only_pct, qqq_bh_pct).'),
+        ]
 
     return html.Div([
         html.H4('QQQ Vegas', style={'color': '#e6e6f0', 'fontWeight': '700', 'marginBottom': '4px'}),
+        html.Div(headline, style={'color': '#c8c8d4', 'fontSize': '14px', 'fontWeight': '600', 'marginBottom': '4px'}),
+        html.Div(sample_line, style={'color': '#00e5ff', 'fontSize': '12px', 'marginBottom': '6px'}),
         html.Div(
             'Separate QQQ / QLD sleeve. Read-only display of precomputed artifacts in data/qqq_vegas. '
             'This page does not change the Merrill four-quadrant book.',
             style={'color': '#8888a0', 'fontSize': '12px', 'marginBottom': '8px'},
         ),
+        html.Div([
+            html.Div('规则 · Vegas ∧ RV20 ≤ expanding Q80',
+                     style={'color': '#00d97e', 'fontSize': '12px', 'fontWeight': '700', 'marginBottom': '4px'}),
+            html.Ul([html.Li(line) for line in rules_zh],
+                    style={'color': '#c8c8d4', 'fontSize': '12px', 'marginBottom': '4px', 'paddingLeft': '18px'}),
+            html.Ul([html.Li(line) for line in rules_en],
+                    style={'color': '#8888a0', 'fontSize': '12px', 'marginBottom': '0', 'paddingLeft': '18px'}),
+        ], id='qqq-vegas-rules', style={'backgroundColor': '#16213e', 'border': '1px solid #2d2d44',
+                                       'borderRadius': '8px', 'padding': '8px 12px', 'marginBottom': '12px'}),
         html.Div([
             html.Div(disclaimer, style={'color': '#f5a623', 'fontSize': '12px', 'fontWeight': '600'}),
             html.Div('回测展示，不构成投资建议。此页不接入下单。',
@@ -3852,6 +4262,16 @@ def _build_qqq_vegas_body(bundle):
                 dbc.Col(mc('QLD', _vegas_weight(qld_w), 'target sleeve', '#9b59b6'), md=2),
                 dbc.Col(mc('Cash', _vegas_weight(cash_w), cash_sub, '#f5a623'), md=4),
             ], className='mb-2'),
+            dbc.Row([
+                dbc.Col(mc('Vegas', _vegas_on_off(signal.get('vegas')), 'vegas',
+                           '#00d97e' if signal.get('vegas') == 1 else '#e74c3c'), md=3),
+                dbc.Col(mc('RV gate', _vegas_on_off(signal.get('rv_ok')), 'rv_ok',
+                           '#00d97e' if signal.get('rv_ok') == 1 else '#e74c3c'), md=3),
+                dbc.Col(mc('RV20', _vegas_vol_pct(signal.get('rv20')),
+                           f"rv20 {_vegas_ratio(signal.get('rv20'))}", '#f5a623'), md=3),
+                dbc.Col(mc('RV20 Q80', _vegas_vol_pct(signal.get('rv20_q80')),
+                           f"rv20_q80 {_vegas_ratio(signal.get('rv20_q80'))}", '#3498db'), md=3),
+            ], className='mb-2'),
             html.Div(signal.get('reason') or '—',
                      style={'color': '#c8c8d4', 'fontSize': '13px', 'lineHeight': '1.45', 'margin': '8px 0'}),
             html.Div([
@@ -3867,21 +4287,28 @@ def _build_qqq_vegas_body(bundle):
             ),
             _vegas_metric_row('Full sample · metrics.full', full),
             _vegas_metric_row('Out of sample · metrics.oos', oos),
+            _vegas_metric_row('2010–2026 window · metrics.p2010_2026', window_2010)
+            if _vegas_block_has_numbers(window_2010) else html.Div(),
+            compare if compare is not None else html.Div(),
             _source_line(
                 'Source: data/qqq_vegas/signal_current.json'
-                + (f'. {engine_line}' if engine_line else '')
+                + (' and summary.json (configs.vegas_rv20_q80, compare_to_prior_vegas).' if summary else '')
+                + (f' {engine_line}' if engine_line else '')
             ),
         ], style={**CS, 'marginBottom': '16px'}),
 
         html.Div([
             html.H5('净值曲线 · Equity curve', style={'color': '#00d97e', 'marginBottom': '6px', 'fontWeight': '700'}),
-            html.Div('Strategy equity versus buy-and-hold QQQ. Values are the growth index in equity_curve.csv.',
+            html.Div(equity_caption,
                      style={'color': '#8888a0', 'fontSize': '12px', 'marginBottom': '8px'}),
             dcc.Graph(id='qqq-vegas-equity', figure=_vegas_equity_figure(bundle.get('equity')),
                       config={'displayModeBar': False}),
             dcc.Graph(id='qqq-vegas-drawdown', figure=_vegas_drawdown_figure(bundle.get('equity')),
                       config={'displayModeBar': False}),
-            _source_line('Source: data/qqq_vegas/equity_curve.csv (date, equity, qqq_bh, drawdown).'),
+            _source_line(
+                'Source: data/qqq_vegas/equity_curve.csv (date, equity, qqq_bh, drawdown'
+                + (', vegas_only_equity).' if has_prior_equity else ').')
+            ),
         ], style={**CS, 'marginBottom': '16px'}),
 
         html.Div([
@@ -3895,14 +4322,11 @@ def _build_qqq_vegas_body(bundle):
             ),
             dcc.Graph(
                 id='qqq-vegas-heatmap',
-                figure=_vegas_heatmap_figure(bundle.get('equity')),
+                figure=_vegas_heatmap_figure(bundle.get('equity'), monthly),
                 config={'displayModeBar': False},
             ),
-            _source_line(
-                'Source: data/qqq_vegas/equity_curve.csv (equity). '
-                'Month-end change of that growth index, with the Backtest heatmap’s '
-                'month labels, red-to-green scale, and compounded Year column.'
-            ),
+            *yearly_block,
+            _source_line(heat_source),
         ], style={**CS, 'marginBottom': '16px'}),
 
         html.Div([
