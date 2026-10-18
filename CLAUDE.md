@@ -299,8 +299,8 @@ and cannot reach the local TWS socket, the bridge is a **snapshot file**:
 | `src/backtester/daily_overlay.py` | Live notionals from the engine’s last-day overlay |
 | `scripts/ibkr_snapshot.py` | Read-only IBKR snapshot → `data/cache/ibkr_account.json` (Execution tab) |
 | `scripts/ibkr_rebalance.py` | Local paper/live rebalance to current regime weights (`--execute`) |
-| `scripts/notify_regime.py` | Weekday regime / VIX-band Issue. Silent when unchanged. See `docs/notify.md`. |
-| `.github/workflows/notify.yml` | Cron + `workflow_dispatch` for that notifier (light FRED+SPY refresh). `test-notify.yml` is the offline unit job. |
+| `scripts/notify_regime.py` | Weekday Issue when Merrill regime, VIX band, or QQQ Vegas signal changes. Either sleeve alone notifies. Optional Server酱 WeChat. See `docs/notify.md`. |
+| `.github/workflows/notify.yml` | Cron + `workflow_dispatch` for that notifier (light FRED+SPY refresh; QQQ Vegas is the committed pack). `test-notify.yml` is the offline unit job. |
 | `run_backtest.py` | CLI 20-yr validation; regenerates result CSVs; exits 3 if the series check fails |
 | `scripts/verify_consistency.py` | Reported CAGR/total vs heatmap compound vs equity CAGR and daily max DD |
 | `run_dashboard.py` | Deployed Dash app (Cloud Run); calls the production method |

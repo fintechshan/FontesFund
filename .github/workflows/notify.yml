@@ -1,11 +1,14 @@
-# 象限 / VIX 跨档提醒。只在象限变了或 VIX 跨档时开 Issue（GitHub 通知发邮件）。
-# 没变化就静默退出。首次运行只提交 data/notify_state.json 基线，不开 Issue。
+# Merrill 象限 / VIX 跨档，或 QQQ Vegas 调仓。任一袖套触发就开一张 Issue
+# （GitHub 通知 = 邮件）。两个都没变就静默退出。
+# 首次运行，或状态里还没有 qqq_vegas，只提交 data/notify_state.json 基线，不开 Issue。
 #
 # 独立于 Cloud Run / 回测发布。缓存 data/cache/* 与 *.pkl 被 gitignore，
 # 所以这里用 FRED + SPY 轻量刷新，不跑 run_backtest.py（完整引擎大约数十秒，
 # 还要下载整组 ETF）。轻量刷新通常一两分钟内结束（含 pip）。
+# QQQ Vegas 不在这次刷新里重算，读仓库里已提交的 data/qqq_vegas/。
 #
 # 必需：仓库 Secret FRED_API_KEY。
+# 可选：仓库 Secret SERVERCHAN_SENDKEY。有则 Server酱推微信；没有只警告，不让作业失败。
 # 推送状态：permissions.contents: write + GITHUB_TOKEN，提交信息带 [skip ci]。
 # 若分支保护拒绝 github-actions[bot]，设置 Secret NOTIFY_PUSH_TOKEN
 # （fine-grained PAT，本仓库 Contents 读写）。见 docs/notify.md。
@@ -13,8 +16,9 @@
 # 审计：应发信却没有 rebalance Issue 时，notify_regime.py 非零退出且不推进基线。
 # 下一步 --audit 再核对；确认漏报会开一张 [审计] Issue（标签 notify-audit），
 # 并把 confirmed_miss=true，避免把这次失败的基线推上去。见 docs/notify.md。
+# 审计只核对 Issue。微信失败不回滚基线，否则下一轮会再开一张 Issue。
 
-name: 象限切换提醒
+name: 策略调仓提醒
 
 on:
   schedule:
@@ -56,10 +60,12 @@ jobs:
       - name: 安装轻量依赖
         run: pip install --disable-pip-version-check -q 'pandas>=2.1,<3' 'numpy>=1.24' 'yfinance>=0.2.18' 'fredapi>=0.5'
 
-      - name: 检查象限与 VIX 档位
+      - name: 检查 Merrill 与 QQQ Vegas
         id: notify
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          # SendKey 是密码。只从 Secret 注入，不要 echo。
+          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           NOTIFY_FORCE: ${{ github.event.inputs.force }}
@@ -104,7 +110,7 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898+github-actions[bot]@users.noreply.github.com"
-          git commit -m "象限状态更新 $(date -u +%F) [skip ci]"
+          git commit -m "策略提醒状态更新 $(date -u +%F) [skip ci]"
           if git push origin "HEAD:${GITHUB_REF_NAME}"; then
             exit 0
           fi

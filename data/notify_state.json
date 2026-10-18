@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "clock": "targeted",
   "regime": "reflation",
   "vix_band": "0-20",
@@ -10,6 +10,22 @@
   "spy_momentum": 0.1732,
   "price_asof": "2026-10-14",
   "checked_at": "2026-10-15 01:06 UTC",
+  "qqq_vegas": {
+    "state": "RISK_ON",
+    "next_action": "HOLD",
+    "qqq_w": 0.7,
+    "qld_w": 0.3,
+    "cash_w": 0.0,
+    "cash_ticker": "",
+    "last_rebalance_date": "2026-04-09",
+    "last_rebalance_action": "ENTER",
+    "last_rebalance_from": "CASH",
+    "last_rebalance_to": "RISK_ON",
+    "as_of": "2026-10-16",
+    "signal_date": "2026-10-16",
+    "reason": "Mom189=OK (0.1454); Close>SMA150=OK; Close>=VegasLow=OK → RISK_ON",
+    "fingerprint": "RISK_ON|HOLD|qqq=0.7000|qld=0.3000|cash=0.0000|ticker=-|reb=2026-04-09:ENTER"
+  },
   "last_delivery": {
     "schema": 1,
     "action": "notify",
