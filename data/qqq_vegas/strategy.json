@@ -1,0 +1,87 @@
+{
+  "id": "qqq_vegas_rv20_q80",
+  "name": "Vegas∧RV20≤expanding Q80 1.3x (70% QQQ + 30% QLD + cash)",
+  "name_zh": "Vegas∧RV20≤扩窗Q80 1.3x（70% QQQ + 30% QLD，空仓现金）",
+  "version": "v9_rv20_q80",
+  "filter_version": "v5_rv20_q80",
+  "asof": "2026-10-16",
+  "generated_at": "2026-10-18",
+  "replaces": "qqq_vegas_1_3x",
+  "rules": {
+    "zh": [
+      "Vegas 隧道（QQQ 收盘）：Mom189>0 且 Close>SMA150 且 Close≥min(EMA144,EMA169)",
+      "RV 门（无前视）：rv20=std(20)×√252；q80=截至昨日的扩窗 80% 分位（min_periods=252）；rv_ok=(rv20≤q80)",
+      "risk_on = Vegas ∧ rv_ok；开仓 70% QQQ + 30% QLD（或合成 2×），平仓 100% 现金（IRX→BIL）",
+      "执行：收盘确认，次日生效（pos=signal.shift(1)）；QQQ+2× 换手 4bps"
+    ],
+    "en": [
+      "Vegas tunnel on QQQ close: Mom189>0 AND Close>SMA150 AND Close>=min(EMA144,EMA169)",
+      "RV gate (no look-ahead): rv20=std(20)*sqrt(252); q80=expanding_quantile(rv20.shift(1),0.80,min_periods=252); rv_ok=(rv20<=q80)",
+      "risk_on = Vegas AND rv_ok; risk-on 70% QQQ + 30% 2x (QLD/synth); risk-off 100% cash (IRX→BIL)",
+      "Execution: close confirm → pos=signal.shift(1); 4bps on QQQ+2x L1 turnover"
+    ]
+  },
+  "weights_risk_on": {
+    "QQQ": 0.7,
+    "QLD": 0.3,
+    "BIL": 0.0
+  },
+  "weights_risk_off": {
+    "QQQ": 0.0,
+    "QLD": 0.0,
+    "BIL": 1.0
+  },
+  "current_signal": 1,
+  "current_pos": 1,
+  "vegas": 1,
+  "rv_ok": 1,
+  "rv20": 0.185569,
+  "rv20_q80": 0.312228,
+  "current_weights": {
+    "QQQ": 0.7,
+    "QLD": 0.3,
+    "BIL": 0.0
+  },
+  "last_signal_date": "2026-10-16",
+  "last_rebalance_date": "2026-07-08",
+  "last_rebalance_action": "ENTER",
+  "metrics": {
+    "full": {
+      "CAGR_pct": 14.9,
+      "MaxDD_pct": -27.81,
+      "MaxDD_Date": "2005-10-28",
+      "Sharpe": 0.8389,
+      "Calmar": 0.5359,
+      "start": "1999-01-05",
+      "end": "2026-10-16"
+    },
+    "oos": {
+      "CAGR_pct": 18.63,
+      "MaxDD_pct": -17.4,
+      "MaxDD_Date": "2024-09-09",
+      "Sharpe": 0.9605,
+      "Calmar": 1.0702,
+      "start": "2021-01-04",
+      "end": "2026-10-16"
+    },
+    "p2010_2026": {
+      "CAGR_pct": 17.64,
+      "MaxDD_pct": -25.82,
+      "Sharpe": 0.9524,
+      "Calmar": 0.6832
+    },
+    "engine": "close-to-close + shift(1) weights; cost_bps on QQQ+2x L1; cash IRX→BIL; QLD real after 2006-06-21 else synthetic 2x",
+    "cost_bps": 4.0
+  },
+  "disclaimer": "Backtest only. Not investment advice. Not live trading.",
+  "files": {
+    "daily_signal": "qqq_vegas_rv20_q80_daily_signal.csv",
+    "rebalances": "qqq_vegas_rv20_q80_rebalances.csv",
+    "equity": "qqq_vegas_rv20_q80_equity.csv",
+    "equity_png": "qqq_vegas_rv20_q80_equity.png",
+    "heatmap_png": "qqq_vegas_rv20_q80_heatmap.png",
+    "data_dir": "data/qqq_vegas/",
+    "report_zh": "QQQ_Vegas_RV20_Q80_说明.md",
+    "handoff": "HANDOFF_FOR_FONTES.md"
+  }
+}

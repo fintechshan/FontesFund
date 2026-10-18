@@ -74,12 +74,24 @@ class QqqVegasTabTests(unittest.TestCase):
         tab = build_qqq_vegas_tab(bundle)
         blob = '\n'.join(_texts(tab))
 
+        self.assertEqual(signal['strategy_id'], 'qqq_vegas_rv20_q80')
+        self.assertIn(signal['strategy_id'], blob)
         self.assertIn(signal['state'], blob)
         self.assertIn(signal['next_action'], blob)
         self.assertIn(signal['reason'], blob)
         self.assertIn(signal['disclaimer'], blob)
         self.assertIn('Not investment advice', blob)
         self.assertIn('不构成投资建议', blob)
+        self.assertIn('1999-01-04', blob)
+        self.assertIn('2026-10-16', blob)
+        self.assertIn('Mom189', blob)
+        self.assertIn('rv20_q80', blob)
+        for key in ('vegas', 'rv_ok', 'rv20'):
+            self.assertIn(key, blob)
+        self.assertIn('0.1856', blob)
+        self.assertIn('0.3122', blob)
+        self.assertIn('Full sample vs prior Vegas 1.3x', blob)
+        self.assertEqual(str(pd.Timestamp(bundle['equity']['date'].iloc[0]).date()), '1999-01-04')
         for block in (signal['metrics']['full'], signal['metrics']['oos']):
             for key in ('cagr_pct', 'max_dd_pct', 'sharpe'):
                 self.assertIn(str(block[key]), blob)
@@ -91,7 +103,7 @@ class QqqVegasTabTests(unittest.TestCase):
 
         equity = _find_id(tab, 'qqq-vegas-equity')
         names = [trace.name for trace in equity.figure.data]
-        self.assertEqual(names, ['QQQ Vegas', 'Buy & hold QQQ'])
+        self.assertEqual(names, ['QQQ Vegas', 'Buy & hold QQQ', 'Vegas only'])
         self.assertAlmostEqual(float(equity.figure.data[0].y.iloc[0]
                                       if hasattr(equity.figure.data[0].y, 'iloc')
                                       else equity.figure.data[0].y[0]),
@@ -100,6 +112,20 @@ class QqqVegasTabTests(unittest.TestCase):
         dd_y = drawdown.figure.data[0].y
         dd_value = float(dd_y.iloc[1] if hasattr(dd_y, 'iloc') else dd_y[1])
         self.assertAlmostEqual(dd_value, float(bundle['equity']['drawdown'].iloc[1]) * 100, places=4)
+
+        compare = _find_id(tab, 'qqq-vegas-compare')
+        self.assertIsNotNone(compare)
+        compare_blob = '\n'.join(
+            ' '.join(str(row.get(key, '')) for key in ('book', 'cagr', 'max_dd', 'sharpe', 'calmar'))
+            for row in compare.data
+        )
+        self.assertIn('qqq_vegas_1_3x', compare_blob)
+        self.assertIn('12.98%', compare_blob)
+        self.assertIn('-63.56%', compare_blob)
+        self.assertIn('14.9%', compare_blob)
+        self.assertIn('-27.81%', compare_blob)
+        self.assertIn('+1.92 pp', compare_blob)
+        self.assertIn('+35.75 pp', compare_blob)
 
         table = _find_id(tab, 'qqq-vegas-rebalances')
         self.assertEqual(len(table.data), len(bundle['rebalances']))
@@ -119,7 +145,8 @@ class QqqVegasTabTests(unittest.TestCase):
         self.assertIn('match = false', blob)
         self.assertIn('尚未接入实盘', blob)
         self.assertIn('月度收益热力图', blob)
-        self.assertIn('equity_curve.csv (equity)', blob)
+        self.assertIn('monthly_returns.csv', blob)
+        self.assertIn('yearly_returns.csv', blob)
 
         heat = _find_id(tab, 'qqq-vegas-heatmap')
         self.assertIsNotNone(heat)
@@ -138,31 +165,81 @@ class QqqVegasTabTests(unittest.TestCase):
                                           'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', '  ', 'Year'])
         self.assertEqual(heat.figure.layout.title.text, reference.layout.title.text)
         self.assertEqual(heat.figure.layout.yaxis.autorange, 'reversed')
+        self.assertIn(1999, [int(value) for value in trace.y])
+
+        monthly = pd.read_csv(QQQ_VEGAS_DIR / 'monthly_returns.csv')
+        row_2011 = monthly.loc[monthly['year'] == 2011].iloc[0]
+        expected_jan = float(row_2011['M01'])
+        yi, xi = _heat_index(trace, 2011, 'Jan')
+        self.assertAlmostEqual(float(trace.z[yi][xi]), expected_jan, places=4)
+        self.assertEqual(trace.text[yi][xi], f'{expected_jan:.1f}')
+        compound = 1.0
+        for month in range(1, 13):
+            raw = row_2011[f'M{month:02d}']
+            if pd.notna(raw):
+                compound *= 1 + float(raw) / 100
+        expected_year = (compound - 1) * 100
+        _yi, year_i = _heat_index(trace, 2011, 'Year')
+        self.assertAlmostEqual(float(trace.z[yi][year_i]), expected_year, places=4)
+        self.assertEqual(trace.text[yi][year_i], f'{expected_year:+.1f}%')
 
         equity = bundle['equity'].copy()
         equity['date'] = pd.to_datetime(equity['date'])
-        indexed = equity.set_index('date')['equity'].astype(float).sort_index()
-        jan = _month_end(indexed, 2011, 1)
-        dec = _month_end(indexed, 2010, 12)
-        expected_jan = (jan / dec - 1) * 100
-        yi, xi = _heat_index(trace, 2011, 'Jan')
-        self.assertAlmostEqual(float(trace.z[yi][xi]), expected_jan, places=6)
-        self.assertEqual(trace.text[yi][xi], f'{expected_jan:.1f}')
-
-        end_2011 = _month_end(indexed, 2011, 12)
-        expected_year = (end_2011 / dec - 1) * 100
-        _yi, year_i = _heat_index(trace, 2011, 'Year')
-        self.assertAlmostEqual(float(trace.z[yi][year_i]), expected_year, places=6)
-        self.assertEqual(trace.text[yi][year_i], f'{expected_year:+.1f}%')
-
         bh = equity.set_index('date')['qqq_bh'].astype(float).sort_index()
         bh_jan = (_month_end(bh, 2011, 1) / _month_end(bh, 2010, 12) - 1) * 100
         self.assertNotAlmostEqual(expected_jan, bh_jan, places=1)
 
-        y2010, jan_i = _heat_index(trace, 2010, 'Jan')
-        oct_i = list(trace.x).index('Oct')
-        self.assertEqual(trace.text[y2010][jan_i], '')
-        self.assertNotEqual(trace.text[y2010][oct_i], '')
+        y1999, jan_i = _heat_index(trace, 1999, 'Jan')
+        self.assertNotEqual(trace.text[y1999][jan_i], '')
+        y2026, nov_i = _heat_index(trace, 2026, 'Nov')
+        dec_i = list(trace.x).index('Dec')
+        self.assertEqual(trace.text[y2026][nov_i], '')
+        self.assertEqual(trace.text[y2026][dec_i], '')
+
+        yearly = _find_id(tab, 'qqq-vegas-yearly')
+        self.assertIsNotNone(yearly)
+        self.assertEqual([trace.name for trace in yearly.figure.data],
+                         ['QQQ Vegas', 'Vegas only', 'Buy & hold QQQ'])
+        self.assertEqual(str(yearly.figure.data[0].x[0]), '1999')
+        self.assertAlmostEqual(float(yearly.figure.data[0].y[0]), 111.3, places=2)
+
+    def test_heatmap_falls_back_to_equity_curve(self):
+        bundle = load_qqq_vegas()
+        bare = dict(bundle)
+        bare['monthly'] = pd.DataFrame()
+        tab = build_qqq_vegas_tab(bare)
+        heat = _find_id(tab, 'qqq-vegas-heatmap')
+        reference = make_monthly_heatmap(_vegas_monthly_returns(bundle['equity']))
+        self.assertEqual(len(heat.figure.data), len(reference.data))
+        self.assertAlmostEqual(
+            float(heat.figure.data[0].z[0][0]),
+            float(reference.data[0].z[0][0]),
+            places=6,
+        )
+        blob = '\n'.join(_texts(tab))
+        self.assertIn('equity_curve.csv (equity)', blob)
+
+    def test_summary_config_supplies_full_and_oos_metrics(self):
+        summary = json.loads((QQQ_VEGAS_DIR / 'summary.json').read_text(encoding='utf-8'))
+        self.assertIn('vegas_rv20_q80', summary['configs'])
+        self.assertIn('compare_to_prior_vegas', summary)
+        tab = build_qqq_vegas_tab({
+            'signal': {
+                'strategy_id': 'qqq_vegas_rv20_q80',
+                'state': 'RISK_ON',
+                'disclaimer': 'Backtest only. Not investment advice. Not live trading.',
+                'metrics': {},
+            },
+            'summary': summary,
+            'live': {},
+            'missing': [],
+        })
+        blob = '\n'.join(_texts(tab))
+        self.assertIn('14.9%', blob)
+        self.assertIn('18.63%', blob)
+        self.assertIn('-27.81%', blob)
+        self.assertIn('0.8389', blob)
+        self.assertIn('-17.4%', blob)
 
     def test_missing_directory_still_renders(self):
         bundle = load_qqq_vegas(ROOT / 'data' / 'qqq_vegas_missing')
