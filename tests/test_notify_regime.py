@@ -472,7 +472,9 @@ class AuditDecisionTests(unittest.TestCase):
         self.assertFalse(nr.issue_satisfies(pull, record, numbered=True))
 
     def test_quiet_when_nothing_should_fire(self):
-        state = json.loads((ROOT / 'data' / 'notify_state.json').read_text(encoding='utf-8'))
+        # Live data/notify_state.json keeps last_delivery after a real Issue.
+        # A quiet audit is a baseline with no last_delivery, built here.
+        state = _state('goldilocks', '0-20', '正常', 15.0)
         self.assertNotIn('last_delivery', state)
         self.assertIsNone(nr.expectation_to_verify(None, state))
         silent = {'should_fire': False, 'delivery': 'not_required', 'action': 'silent'}
