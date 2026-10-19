@@ -237,7 +237,7 @@ python scripts/notify_regime.py --refresh          # first local baseline, no Is
 python scripts/notify_regime.py --audit            # quiet when nothing should have been sent
 ```
 
-`--dry-run` prints the Issue and does not write state. Omit `--github-issue` locally unless `GITHUB_TOKEN` and `GITHUB_REPOSITORY` are set. A real change without `--github-issue` prints the Issue and does **not** advance the baseline. Unit tests do not call FRED:
+`--dry-run` prints the Issue and does not write state. Omit `--github-issue` locally unless `GITHUB_TOKEN` and `GITHUB_REPOSITORY` are set. A real change without `--github-issue` prints the Issue and does **not** advance the baseline. Unit tests do not call FRED, and they do not treat `data/notify_state.json` as a fixture. That file stays tracked, including `last_delivery` after a real Issue:
 
 ```bash
 python -m unittest tests.test_notify_regime
