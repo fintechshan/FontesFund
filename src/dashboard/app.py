@@ -4,6 +4,8 @@ src/dashboard/app.py
 ETF Regime Strategist — Live Dashboard
 Tabs: Regime Monitor, Portfolio, Backtest, CDN Portfolio, QQQ Vegas, Auditor.
 QQQ Vegas reads data/qqq_vegas only. It does not change the Merrill sleeve.
+The QQQ/QLD price chart and PE cards on that tab are a cached Yahoo pack.
+They are not inputs to the v9 signal.
 """
 import json
 import os
@@ -3643,6 +3645,12 @@ def load_qqq_vegas(directory=None):
 
     monthly = _read_optional_frame(base / 'monthly_returns.csv', missing)
     yearly = _read_optional_frame(base / 'yearly_returns.csv', missing)
+    market_prices = _read_optional_frame(base / 'market_prices.csv', missing)
+    market_snapshot = {}
+    snapshot_path = base / 'market_snapshot.json'
+    if snapshot_path.is_file():
+        payload = _read_vegas_json(snapshot_path, missing)
+        market_snapshot = payload if isinstance(payload, dict) else {}
 
     return {
         'directory': base,
@@ -3654,6 +3662,8 @@ def load_qqq_vegas(directory=None):
         'equity': equity,
         'monthly': monthly,
         'yearly': yearly,
+        'market_prices': market_prices,
+        'market_snapshot': market_snapshot,
         'missing': missing,
     }
 
@@ -4048,6 +4058,244 @@ def _vegas_yearly_figure(frame):
     return fig
 
 
+_VEGAS_MARKET_PULL = {'at': 0.0}
+_VEGAS_MARKET_PULL_SECONDS = 30 * 60
+
+
+def _pull_vegas_market_cache():
+    """Pull the QQQ/QLD pack from GCS at most once per half hour per process."""
+    import time
+    now = time.time()
+    if now - _VEGAS_MARKET_PULL['at'] < _VEGAS_MARKET_PULL_SECONDS:
+        return
+    _VEGAS_MARKET_PULL['at'] = now
+    try:
+        from src.dashboard.gcs_sync import download_vegas_market
+        download_vegas_market()
+    except Exception:
+        return
+
+
+def _vegas_optional_float(value):
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        if pd.isna(value):
+            return None
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if np.isnan(number):
+        return None
+    return number
+
+
+def _vegas_price_frame(frame):
+    frame = _vegas_frame(frame)
+    if frame.empty:
+        return pd.DataFrame()
+    rename = {}
+    for col in frame.columns:
+        key = str(col).strip()
+        if key.lower() == 'date':
+            rename[col] = 'date'
+        elif key.upper() in {'QQQ', 'QLD'}:
+            rename[col] = key.upper()
+    out = frame.rename(columns=rename)
+    if 'date' not in out.columns:
+        return pd.DataFrame()
+    out = out.copy()
+    out['date'] = pd.to_datetime(out['date'], errors='coerce')
+    for col in ('QQQ', 'QLD'):
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors='coerce')
+    return out.dropna(subset=['date']).sort_values('date')
+
+
+def _vegas_price_figure(frame):
+    """QQQ on the left axis, QLD on the right. Dollar levels are not comparable."""
+    fig = go.Figure()
+    frame = _vegas_price_frame(frame)
+    has_qqq = not frame.empty and 'QQQ' in frame.columns and frame['QQQ'].notna().any()
+    has_qld = not frame.empty and 'QLD' in frame.columns and frame['QLD'].notna().any()
+    if not has_qqq and not has_qld:
+        fig.update_layout(**PL, title='QQQ and QLD prices — no data', height=420)
+        return fig
+    if has_qqq:
+        fig.add_trace(go.Scatter(
+            x=frame['date'], y=frame['QQQ'], name='QQQ',
+            line=dict(color='#00e5ff', width=2.0),
+            connectgaps=False,
+            hovertemplate='%{x|%Y-%m-%d}: $%{y:.2f}<extra>QQQ</extra>',
+        ))
+    if has_qld:
+        kwargs = {}
+        if has_qqq:
+            kwargs['yaxis'] = 'y2'
+        fig.add_trace(go.Scatter(
+            x=frame['date'], y=frame['QLD'], name='QLD',
+            line=dict(color='#9b59b6', width=1.8),
+            connectgaps=False,
+            hovertemplate='%{x|%Y-%m-%d}: $%{y:.2f}<extra>QLD</extra>',
+            **kwargs,
+        ))
+    chrome = _multi_series_chrome(
+        'QQQ (left) and QLD (right) adjusted close', height=480, bottom=96, left=72,
+    )
+    layout = {**PL, **chrome, 'hovermode': 'x unified'}
+    layout['margin'] = {**layout['margin'], 'r': 72}
+    if has_qqq and has_qld:
+        layout['yaxis'] = dict(
+            gridcolor='#2d2d44',
+            title=dict(text='QQQ ($)', font=dict(color='#00e5ff')),
+            tickfont=dict(color='#00e5ff'),
+            automargin=True,
+            rangemode='tozero',
+        )
+        layout['yaxis2'] = dict(
+            overlaying='y', side='right', showgrid=False,
+            title=dict(text='QLD ($)', font=dict(color='#9b59b6')),
+            tickfont=dict(color='#9b59b6'),
+            automargin=True,
+            rangemode='tozero',
+        )
+    else:
+        only = 'QQQ' if has_qqq else 'QLD'
+        layout['yaxis'] = dict(
+            gridcolor='#2d2d44',
+            title=dict(text=f'{only} ($)'),
+            automargin=True,
+            rangemode='tozero',
+        )
+    fig.update_layout(**layout)
+    fig.update_xaxes(automargin=True)
+    return fig
+
+
+def _vegas_money(value):
+    number = _vegas_optional_float(value)
+    if number is None:
+        return '—'
+    return f'${number:,.2f}'
+
+
+def _vegas_change_text(value):
+    number = _vegas_optional_float(value)
+    if number is None:
+        return '—'
+    return f'{number:+.2f}%'
+
+
+def _vegas_volume_text(value):
+    number = _vegas_optional_float(value)
+    if number is None:
+        return None
+    if number >= 1_000_000_000:
+        return f'{number / 1_000_000_000:.2f}B'
+    if number >= 1_000_000:
+        return f'{number / 1_000_000:.1f}M'
+    if number >= 1_000:
+        return f'{number / 1_000:.1f}K'
+    return f'{number:.0f}'
+
+
+def _vegas_quote(snapshot, ticker):
+    if not isinstance(snapshot, dict):
+        return {}
+    tickers = snapshot.get('tickers')
+    if not isinstance(tickers, dict):
+        return {}
+    quote = tickers.get(ticker)
+    return quote if isinstance(quote, dict) else {}
+
+
+def _vegas_pe_value(quote):
+    pe = _vegas_optional_float(quote.get('pe'))
+    kind = quote.get('pe_kind')
+    if pe is None or kind not in {'trailing', 'forward'}:
+        return 'N/A', 'not published'
+    return f'{pe:.1f}x', str(kind)
+
+
+def _vegas_price_subtitle(quote):
+    parts = []
+    volume = _vegas_volume_text(quote.get('volume'))
+    if volume:
+        parts.append(f'vol {volume}')
+    low = _vegas_money(quote.get('week52_low'))
+    high = _vegas_money(quote.get('week52_high'))
+    if low != '—' or high != '—':
+        label = '52w from prices' if quote.get('week52_basis') == 'price_history' else '52w'
+        parts.append(f'{label} {low}–{high}')
+    return ' · '.join(parts)
+
+
+def _vegas_market_cards(snapshot):
+    cards = []
+    for ticker, color in (('QQQ', '#00e5ff'), ('QLD', '#9b59b6')):
+        quote = _vegas_quote(snapshot, ticker)
+        change = _vegas_optional_float(quote.get('change_pct'))
+        if change is None:
+            tone = '#c8c8d4'
+        elif change >= 0:
+            tone = '#00d97e'
+        else:
+            tone = '#e74c3c'
+        prev = _vegas_money(quote.get('previous_close'))
+        day_sub = f'prev {prev}' if prev != '—' else 'change n/a'
+        if quote.get('change_basis') == 'adjusted_close':
+            day_sub = f'{day_sub} · adjusted close'
+        pe_value, pe_kind = _vegas_pe_value(quote)
+        cards.extend([
+            dbc.Col(mc(ticker, _vegas_money(quote.get('last')), _vegas_price_subtitle(quote), tone), md=2),
+            dbc.Col(mc(f'{ticker} day', _vegas_change_text(quote.get('change_pct')), day_sub, tone), md=2),
+            dbc.Col(mc(f'{ticker} PE', pe_value, pe_kind, color), md=2),
+        ])
+    return dbc.Row(cards, className='mb-2')
+
+
+def _vegas_market_meta(snapshot, prices):
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    has_prices = not _vegas_price_frame(prices).empty
+    if not snapshot and not has_prices:
+        return (
+            'No market pack yet. python scripts/refresh_qqq_vegas_market.py writes '
+            'data/qqq_vegas/market_prices.csv and market_snapshot.json. '
+            'The page does not call Yahoo.'
+        )
+    return (
+        f"as of {_vegas_blank(snapshot.get('as_of'))} · "
+        f"fetched {_vegas_blank(snapshot.get('fetched_at'))} · source yfinance"
+    )
+
+
+def _vegas_market_view(bundle=None, *, pull_gcs=False):
+    """Price figure, snapshot cards, and the as-of line. Reads the cache only."""
+    if pull_gcs:
+        _pull_vegas_market_cache()
+        bundle = None
+    if bundle is None:
+        try:
+            bundle = load_qqq_vegas()
+        except Exception:
+            bundle = {}
+    bundle = bundle if isinstance(bundle, dict) else {}
+    prices = bundle.get('market_prices')
+    snapshot = bundle.get('market_snapshot') if isinstance(bundle.get('market_snapshot'), dict) else {}
+    try:
+        return (
+            _vegas_price_figure(prices),
+            _vegas_market_cards(snapshot),
+            _vegas_market_meta(snapshot, prices),
+        )
+    except Exception:
+        return (
+            _vegas_price_figure(None),
+            _vegas_market_cards({}),
+            'Market pack could not be read. Showing no prices.',
+        )
+
+
 def _vegas_metric_row(title, block):
     span_start = _vegas_blank(block.get('start')) if isinstance(block, dict) else '—'
     span_end = _vegas_blank(block.get('end')) if isinstance(block, dict) else '—'
@@ -4198,6 +4446,7 @@ def _build_qqq_vegas_body(bundle):
         )
     )
     compare = _vegas_compare_section(summary)
+    price_figure, market_cards, market_meta = _vegas_market_view(bundle, pull_gcs=False)
     yearly_block = []
     if len(_vegas_frame(yearly)) > 0 and 'year' in _vegas_frame(yearly).columns:
         yearly_block = [
@@ -4243,6 +4492,31 @@ def _build_qqq_vegas_body(bundle):
             id='qqq-vegas-missing',
             style={'color': '#f5a623', 'fontSize': '12px', 'marginBottom': '10px'} if missing else {'display': 'none'},
         ),
+
+        html.Div([
+            html.H5('行情 · QQQ & QLD prices',
+                    style={'color': '#00d97e', 'marginBottom': '6px', 'fontWeight': '700'}),
+            html.Div(
+                'QQQ is the left axis and QLD is the right axis, because the dollar prices '
+                'are not on the same scale. The lines are adjusted closes. The cards are the '
+                'last trade, the day change, and PE (trailing when Yahoo publishes trailingPE, '
+                'otherwise forward). N/A means Yahoo did not publish a PE. '
+                'This block is not the v9 signal.',
+                style={'color': '#8888a0', 'fontSize': '12px', 'marginBottom': '8px'},
+            ),
+            html.Div(market_meta, id='qqq-vegas-market-meta',
+                     style={'color': '#00e5ff', 'fontSize': '12px', 'marginBottom': '8px'}),
+            html.Div(market_cards, id='qqq-vegas-market-cards'),
+            dcc.Graph(id='qqq-vegas-prices', figure=price_figure, config={'displayModeBar': False}),
+            dcc.Interval(id='qqq-vegas-market-interval', interval=30 * 60 * 1000, n_intervals=0),
+            _source_line(
+                'Source: data/qqq_vegas/market_prices.csv and market_snapshot.json. '
+                'Yahoo Finance via yfinance (scripts/refresh_qqq_vegas_market.py). '
+                'Daily write: Cloud Scheduler POST /tasks/refresh uploads the pack to GCS. '
+                'The page reads that cache and re-reads it about every 30 minutes. '
+                'It does not call Yahoo on each load. A failed download keeps the previous files.'
+            ),
+        ], id='qqq-vegas-market', style={**CS, 'marginBottom': '16px'}),
 
         html.Div([
             html.H5('当前信号 · Current signal', style={'color': '#00d97e', 'marginBottom': '6px', 'fontWeight': '700'}),
@@ -4472,6 +4746,18 @@ def create_app(data):
     @app.callback(Output('refresh-ts', 'children'), Input('refresh-interval', 'n_intervals'))
     def update_ts(n):
         return f'Last: {datetime.now().strftime("%H:%M:%S")}'
+
+    @app.callback(
+        Output('qqq-vegas-prices', 'figure'),
+        Output('qqq-vegas-market-cards', 'children'),
+        Output('qqq-vegas-market-meta', 'children'),
+        Input('qqq-vegas-market-interval', 'n_intervals'),
+        prevent_initial_call=True,
+    )
+    def refresh_qqq_vegas_market_panel(_n):
+        # Cache only. The daily Yahoo fetch is /tasks/refresh, not this callback.
+        figure, cards, meta = _vegas_market_view(pull_gcs=True)
+        return figure, cards, meta
 
     @app.callback(
         Output('backtest-path-body', 'children'),

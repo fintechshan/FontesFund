@@ -16,6 +16,12 @@ logger = logging.getLogger('gcs_sync')
 ROOT = Path(__file__).resolve().parents[2]
 BUCKET = os.getenv('GCS_BUCKET', '').strip()
 
+# QQQ Vegas price/PE pack. Display only — not an input to the v9 signal.
+VEGAS_MARKET_FILES = [
+    'data/qqq_vegas/market_prices.csv',
+    'data/qqq_vegas/market_snapshot.json',
+]
+
 # Files that the daily backtest refresh regenerates and that the dashboard reads.
 SYNC_FILES = [
     'data/cache/price_data.csv',
@@ -28,6 +34,7 @@ SYNC_FILES = [
     'data/backtest_results/cdn_strategy_config.json',
     'data/backtest_results/cdn_comparison.csv',
     'data/cache/gsblbr_history.csv',
+    *VEGAS_MARKET_FILES,
 ]
 
 # IBKR account snapshot — removed for public server security
@@ -104,9 +111,44 @@ def download_ibkr():
     return got
 
 
+def download_vegas_market():
+    """GCS -> local for the QQQ/QLD price and PE cache only.
+
+    Used by the QQQ Vegas tab so a warm container picks up the daily pack
+    without a redeploy. No-op when GCS_BUCKET is unset. A failure leaves
+    the files already on disk.
+    """
+    if not BUCKET:
+        return False
+    got = False
+    try:
+        b = _bucket()
+        for rel in VEGAS_MARKET_FILES:
+            blob = b.blob(rel)
+            if not blob.exists():
+                logger.info(f"GCS: {rel} not in bucket yet")
+                continue
+            dest = ROOT / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            blob.download_to_filename(str(dest))
+            if blob.updated:
+                ts = blob.updated.timestamp()
+                os.utime(dest, (ts, ts))
+            logger.info(f"GCS down: {rel} (updated {blob.updated})")
+            got = True
+    except Exception as e:
+        logger.warning(f"GCS vegas market download failed (keeping local files): {e}")
+    return got
+
+
 def upload_data():
     """local -> GCS after a successful backtest refresh (price/macro/results)."""
     return _upload(SYNC_FILES)
+
+
+def upload_vegas_market():
+    """local -> GCS for the QQQ/QLD pack when the Merrill backtest did not upload."""
+    return _upload(VEGAS_MARKET_FILES)
 
 
 def upload_ibkr():

@@ -1,0 +1,36 @@
+{
+  "source": "yfinance",
+  "fetched_at": "2026-10-19T07:28:16Z",
+  "as_of": "2026-10-16",
+  "note": "Adjusted close curve from Yahoo Finance. Card price is the last trade when Yahoo publishes one. PE is trailingPE, else forwardPE; null means Yahoo did not publish a PE. Not an input to the v9 Vegas signal.",
+  "tickers": {
+    "QQQ": {
+      "last": 709.8,
+      "previous_close": 728.0,
+      "change_pct": -2.5,
+      "price_basis": "last_trade",
+      "change_basis": "previous_close",
+      "pe": 27.1788,
+      "pe_kind": "trailing",
+      "volume": 66926659.0,
+      "week52_high": 762.86,
+      "week52_low": 555.6,
+      "week52_basis": "yahoo",
+      "currency": "USD"
+    },
+    "QLD": {
+      "last": 87.72,
+      "previous_close": 92.36,
+      "change_pct": -5.0238,
+      "price_basis": "last_trade",
+      "change_basis": "previous_close",
+      "pe": 25.9726,
+      "pe_kind": "trailing",
+      "volume": 6539785.0,
+      "week52_high": 101.62,
+      "week52_low": 56.6,
+      "week52_basis": "yahoo",
+      "currency": "USD"
+    }
+  }
+}

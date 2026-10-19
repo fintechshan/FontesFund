@@ -46,6 +46,40 @@ def load_macro_data():
             't10y': pd.Series(dtype=float), 't2y': pd.Series(dtype=float),
             'ff_rate': pd.Series(dtype=float)}
 
+def refresh_qqq_vegas_market_cache():
+    """Best-effort QQQ/QLD price and PE cache. Never raises.
+
+    Cloud Scheduler hits ``/tasks/refresh`` once a day. This runs
+    ``scripts/refresh_qqq_vegas_market.py`` and leaves the previous files in
+    place when Yahoo does not answer. It does not recompute the v9 signal
+    and it does not change the Merrill backtest.
+    """
+    import subprocess
+    try:
+        res = subprocess.run(
+            [sys.executable, 'scripts/refresh_qqq_vegas_market.py'],
+            capture_output=True, text=True, timeout=180,
+        )
+    except Exception as exc:
+        logger.warning(f"/tasks/refresh: QQQ/QLD market pack skipped: {exc}")
+        return False
+    if res.returncode != 0:
+        detail = (res.stderr or res.stdout or '')[-300:]
+        logger.warning(f"/tasks/refresh: QQQ/QLD market pack unchanged (rc={res.returncode}): {detail}")
+        return False
+    logger.info(f"/tasks/refresh: QQQ/QLD market pack updated: {(res.stdout or '').strip()[-300:]}")
+    return True
+
+
+def _upload_qqq_vegas_market():
+    """Push the QQQ/QLD pack when the Merrill upload is not going to run."""
+    try:
+        from src.dashboard.gcs_sync import upload_vegas_market
+        upload_vegas_market()
+    except Exception as exc:
+        logger.warning(f"/tasks/refresh: QQQ/QLD market upload skipped: {exc}")
+
+
 def load_backtest_results():
     if BACKTEST_CSV.exists():
         df = pd.read_csv(BACKTEST_CSV, index_col=0)
@@ -773,7 +807,12 @@ if __name__ == '__main__':
             if res.returncode != 0:
                 logger.error(f"/tasks/refresh: run_backtest.py failed (rc={res.returncode}): "
                              f"{(res.stderr or res.stdout)[-500:]}")
+                # The QQQ/QLD board is independent of the Merrill backtest.
+                vegas_market = refresh_qqq_vegas_market_cache()
+                if vegas_market:
+                    _upload_qqq_vegas_market()
                 return jsonify({'ok': False, 'error': 'backtest_failed',
+                                'qqq_vegas_market': vegas_market,
                                 'stderr': (res.stderr or res.stdout)[-500:]}), 500
 
             # Regression tripwire: one day of new data moves the 21-yr CAGR by basis
@@ -785,9 +824,14 @@ if __name__ == '__main__':
             if prev and new and (abs(new[0] - prev[0]) > 1.0 or (new[1] - prev[1]) > 1.0):
                 logger.error(f"/tasks/refresh: headline jump {prev} -> {new}; data problem "
                              f"suspected — NOT uploading to GCS.")
+                vegas_market = refresh_qqq_vegas_market_cache()
+                if vegas_market:
+                    _upload_qqq_vegas_market()
                 return jsonify({'ok': False, 'error': 'quality_gate_headline_jump',
+                                'qqq_vegas_market': vegas_market,
                                 'previous': prev, 'new': new}), 500
 
+            vegas_market = refresh_qqq_vegas_market_cache()
             from src.dashboard.gcs_sync import upload_data, upload_ibkr
             uploaded = upload_data()
 
@@ -829,7 +873,7 @@ if __name__ == '__main__':
             ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             logger.info(f"/tasks/refresh OK at {ts}; uploaded {len(uploaded)} backtest + {len(ibkr_uploaded)} IBKR files to GCS.")
             return jsonify({'ok': True, 'refreshed_at': ts, 'uploaded': uploaded, 'ibkr_uploaded': ibkr_uploaded,
-                            'headline': headline})
+                            'qqq_vegas_market': vegas_market, 'headline': headline})
         except subprocess.TimeoutExpired:
             return jsonify({'ok': False, 'error': 'timeout'}), 504
         except Exception as e:
