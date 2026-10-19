@@ -123,6 +123,14 @@ first-release row. Without a key that row is skipped. Cached YoY series go to
 
 See [`CLAUDE.md`](CLAUDE.md). The 8-ETF v5.1 result is historical.
 
+## QQQ Vegas prices
+
+The QQQ Vegas tab still shows the locked v9 sleeve (Vegas and the expanding RV20 Q80 gate, 70% QQQ + 30% QLD, close confirm / next-open execute). It also shows QQQ and QLD adjusted-close curves and snapshot cards: last price, day change, PE, volume, and the 52-week range.
+
+The curves and cards are read from `data/qqq_vegas/market_prices.csv` and `data/qqq_vegas/market_snapshot.json`. They are not inputs to the signal. The source is Yahoo Finance through yfinance. PE is trailing when Yahoo publishes `trailingPE`, otherwise forward. If neither is published the card says N/A.
+
+Cloud Scheduler job `etf-daily-refresh` POSTs `/tasks/refresh`. After the Merrill backtest, that handler runs `python scripts/refresh_qqq_vegas_market.py` and uploads both files with the other GCS caches. A new container loads them at startup. An open tab re-reads the cache about every 30 minutes. The page does not call Yahoo itself. A failed download keeps the previous files. Locally: `python scripts/refresh_qqq_vegas_market.py`.
+
 ## Portfolio / ETF Universe
 
 **Tested universe (23 ETFs with usable history in `data/cache/price_data.csv`):**

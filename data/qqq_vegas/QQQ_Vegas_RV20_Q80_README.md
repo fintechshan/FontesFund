@@ -34,3 +34,16 @@
 ## 免责
 
 历史回测，非投资建议；合成 2× / 修订宏观等口径见 `summary.json` notes。
+
+## Market prices (display only)
+
+The signal rules above are unchanged. The tab also draws QQQ and QLD prices from two cache files that the sleeve does not read:
+
+| File | Contents |
+|---|---|
+| `market_prices.csv` | Daily adjusted close. Columns: `date`, `QQQ`, `QLD`. |
+| `market_snapshot.json` | Last trade, day change, trailing or forward PE, volume, 52-week high/low. |
+
+Source: Yahoo Finance via `yfinance` (`python scripts/refresh_qqq_vegas_market.py`). PE is `trailingPE` when Yahoo publishes it, otherwise `forwardPE`. A missing PE is stored as null and the card shows N/A. The number is Yahoo's, including for QLD; this repo does not compute an ETF PE.
+
+Daily update: Cloud Scheduler `etf-daily-refresh` POSTs `/tasks/refresh`. That run executes the script and uploads both files through `src/dashboard/gcs_sync.py` (`VEGAS_MARKET_FILES`, also on the startup download). The dashboard reads the cache. It does not call Yahoo on page load. A failed download leaves the previous files. An open tab re-reads the local cache about every 30 minutes and pulls those two GCS objects at the same cadence so a warm container does not wait for a new revision.
