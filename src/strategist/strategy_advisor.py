@@ -48,45 +48,6 @@ from src.strategist.regime_detector import RegimeDetector
 
 logger = logging.getLogger(__name__)
 
-
-def annotate_with_retail_attention(
-    rec: StrategyRecommendation,
-    payload: dict[str, Any] | None,
-) -> StrategyRecommendation:
-    """Attach the experimental Reddit stock-pick overlay.
-
-    Copies the watchlist onto the recommendation and adds a rationale line
-    plus hype risk flags. ``target_weights`` is left unchanged.
-    """
-    payload = payload or {}
-    weights_before = dict(rec.target_weights)
-    rec.retail_attention = payload
-    if not payload:
-        rec.target_weights = weights_before
-        return rec
-
-    picks = payload.get("picks") or {}
-    longs = picks.get("watch_long") or []
-    avoids = picks.get("watch_avoid") or []
-    hype = picks.get("hype_caution") or []
-    as_of = payload.get("as_of") or "unknown time"
-    n_posts = payload.get("n_posts", 0)
-    rec.rationale.append(
-        "Retail attention overlay (experimental, "
-        f"as of {as_of}, {n_posts} posts): "
-        f"watch_long {longs or ['none']}; "
-        f"watch_avoid {avoids or ['none']}; "
-        f"hype_caution {hype or ['none']}. "
-        "ETF regime weights are unchanged."
-    )
-    for ticker in hype:
-        rec.risk_flags.append(
-            f"Retail hype caution (experimental): {ticker} is a crowded long "
-            "on Reddit — attention spike, not a buy signal."
-        )
-    rec.target_weights = weights_before
-    return rec
-
 # Set of leveraged ETF tickers for quick membership checks
 _LEVERAGED_TICKERS: set[str] = {etf.ticker for etf in LEVERAGED_ETFS}
 
@@ -119,9 +80,6 @@ class StrategyRecommendation:
         Key macro indicator values at recommendation time.
     risk_flags : list[str]
         Any risk warnings that were triggered.
-    retail_attention : dict
-        Experimental Reddit stock-pick overlay. Empty when no cache exists.
-        Never used to modify ``target_weights``.
     """
 
     regime: str
@@ -132,7 +90,6 @@ class StrategyRecommendation:
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     macro_snapshot: dict[str, Any] = field(default_factory=dict)
     risk_flags: list[str] = field(default_factory=list)
-    retail_attention: dict[str, Any] = field(default_factory=dict)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -168,12 +125,7 @@ class StrategyAdvisor:
     # Primary recommendation
     # ──────────────────────────────────────────────────────────────────────
 
-    def generate_recommendation(
-        self,
-        retail_attention: dict[str, Any] | None = None,
-        *,
-        use_retail_cache: bool = True,
-    ) -> StrategyRecommendation:
+    def generate_recommendation(self) -> StrategyRecommendation:
         """Generate a full portfolio strategy recommendation.
 
         Workflow
@@ -186,9 +138,7 @@ class StrategyAdvisor:
         6. Normalise weights to sum to 1.0.
         7. Build the human-readable rationale.
         8. Detect risk flags.
-        9. Attach the experimental Reddit ``retail_attention`` overlay
-           (cache only; does not change ``target_weights``).
-        10. Return a :class:`StrategyRecommendation`.
+        9. Return a :class:`StrategyRecommendation`.
 
         Returns
         -------
@@ -248,17 +198,6 @@ class StrategyAdvisor:
             macro_snapshot=snapshot,
             risk_flags=risk_flags,
         )
-
-        # Experimental retail-attention overlay. Reads the on-disk cache only
-        # (no Reddit call here) and does not change target_weights.
-        if retail_attention is None and use_retail_cache:
-            try:
-                from src.strategist.reddit_sentiment import load_retail_attention_cache
-                retail_attention = load_retail_attention_cache()
-            except Exception:
-                logger.warning("Retail attention cache unreadable.", exc_info=True)
-                retail_attention = {}
-        rec = annotate_with_retail_attention(rec, retail_attention or {})
 
         logger.info(
             "Recommendation generated: regime=%s confidence=%.1f%% tickers=%d flags=%d",
