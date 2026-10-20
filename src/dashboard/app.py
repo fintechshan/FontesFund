@@ -273,7 +273,15 @@ def make_drawdown(equity_curve, title='Daily drawdown'):
     fig.update_layout(**PL, title=title, height=250, yaxis_title='Drawdown (%)')
     return fig
 
-def make_monthly_heatmap(monthly_returns):
+def make_monthly_heatmap(monthly_returns, benchmark_annual=None, benchmark_label='QQQ B&H'):
+    """Year × month heatmap with a compounded Year column.
+
+    ``benchmark_annual`` is an optional calendar-year total return, in percent,
+    indexed by year. When it is passed, that series is the column immediately
+    after Year (same red-to-green scale, signed percent text) so each row pairs
+    the strategy year with the benchmark. The ETF backtest heatmap leaves it
+    unset and keeps the Year-only layout.
+    """
     if len(monthly_returns) == 0:
         fig = go.Figure(); fig.update_layout(**PL, title='Monthly Returns — No Data'); return fig
     mr = monthly_returns.copy()
@@ -289,16 +297,35 @@ def make_monthly_heatmap(monthly_returns):
     annual = ((1 + mr).groupby(mr.index.year).prod() - 1) * 100
     annual = annual.reindex(pivot.index)
 
+    bench = None
+    if benchmark_annual is not None:
+        bench = pd.Series(benchmark_annual, dtype=float)
+        bench.index = pd.to_numeric(pd.Index(bench.index), errors='coerce')
+        bench = bench[bench.index.notna()]
+        bench.index = bench.index.astype(int)
+        bench = bench.groupby(level=0).first()
+        bench = bench.reindex(list(pd.Index(pivot.index).astype(int)))
+
     x_cols = month_names + ['  ', 'Year']
+    if bench is not None:
+        x_cols = x_cols + [benchmark_label]
     z_rows, text_rows = [], []
     for i in range(len(pivot.index)):
         months = list(pivot.iloc[i].values)
         a = annual.iloc[i]
-        z_rows.append(months + [np.nan, a])
+        row_z = months + [np.nan, a]
         trow = [f'{v:.1f}' if pd.notna(v) else '' for v in months]
         trow += ['', f'{a:+.1f}%' if pd.notna(a) else '']
+        if bench is not None:
+            b = bench.iloc[i]
+            row_z.append(b)
+            trow.append(f'{b:+.1f}%' if pd.notna(b) else '')
+        z_rows.append(row_z)
         text_rows.append(trow)
 
+    title = 'Monthly Returns Heatmap (%) — with compounded annual return'
+    if bench is not None:
+        title = f'Monthly Returns Heatmap (%) — Year (策略) vs {benchmark_label}'
     fig = go.Figure(go.Heatmap(
         z=z_rows, x=x_cols, y=pivot.index,
         colorscale=[[0,'#e74c3c'],[0.5,'#1a1a2e'],[1,'#00d97e']],
@@ -308,9 +335,11 @@ def make_monthly_heatmap(monthly_returns):
         hovertemplate='%{y} %{x}: %{z:.1f}%<extra></extra>',
         xgap=1, ygap=1,
     ))
-    ly = {**PL, 'title': 'Monthly Returns Heatmap (%) — with compounded annual return',
-          'height': max(300, len(pivot)*24+90)}
+    ly = {**PL, 'title': title, 'height': max(300, len(pivot)*24+90)}
     ly['yaxis'] = dict(autorange='reversed', gridcolor='#2d2d44', dtick=1)
+    if bench is not None:
+        # The extra annual label needs a little more room than the Year-only map.
+        ly['margin'] = dict(l=50, r=28, t=56, b=48)
     fig.update_layout(**ly)
     return fig
 
@@ -3584,8 +3613,10 @@ def load_qqq_vegas(directory=None):
     """Load the precomputed QQQ/QLD sleeve. Missing files stay empty.
 
     ``monthly_returns.csv`` feeds the heatmap when it is present. Otherwise
-    the heatmap is the month-end change of ``equity_curve.csv``. ``yearly_returns.csv``
-    and ``strategy.json`` are display-only and optional.
+    the heatmap is the month-end change of ``equity_curve.csv``. The Year
+    column is the strategy. ``qqq_bh`` on that curve (else ``market_prices.csv``
+    column ``QQQ``) supplies the same-year buy-and-hold column.
+    ``yearly_returns.csv`` and ``strategy.json`` are display-only and optional.
     """
     base = Path(directory) if directory is not None else QQQ_VEGAS_DIR
     missing = []
@@ -4016,12 +4047,82 @@ def _vegas_monthly_from_table(frame):
     return series[~series.index.duplicated(keep='last')]
 
 
-def _vegas_heatmap_figure(curve, monthly=None):
-    """Year × month heatmap. Prefer monthly_returns.csv; else the equity curve."""
+def _vegas_qqq_level(curve, prices=None):
+    """QQQ level already stored in the Vegas pack. No extra download.
+
+    Prefer ``equity_curve.csv`` column ``qqq_bh``. That growth index is the
+    sleeve's buy-and-hold path (NDX until 1999-03-10, QQQ after). Its daily
+    percent changes match ``daily_signal.csv`` ``qqq_close`` and, from the
+    listing date, ``market_prices.csv`` column ``QQQ``. When ``qqq_bh`` is
+    absent, use that ``QQQ`` adjusted close.
+    """
+    curve = _vegas_frame(curve)
+    if not curve.empty and {'date', 'qqq_bh'} <= set(curve.columns):
+        dates = pd.to_datetime(curve['date'], errors='coerce')
+        values = pd.to_numeric(curve['qqq_bh'], errors='coerce')
+        series = pd.Series(values.to_numpy(dtype=float), index=dates)
+        series = series[series.index.notna()].dropna().sort_index()
+        series = series[~series.index.duplicated(keep='last')]
+        if len(series):
+            return series
+    prices = _vegas_price_frame(prices)
+    if prices.empty or 'QQQ' not in prices.columns:
+        return pd.Series(dtype=float)
+    series = pd.Series(
+        pd.to_numeric(prices['QQQ'], errors='coerce').to_numpy(dtype=float),
+        index=pd.to_datetime(prices['date'], errors='coerce'),
+    )
+    series = series[series.index.notna()].dropna().sort_index()
+    return series[~series.index.duplicated(keep='last')]
+
+
+def _vegas_qqq_calendar_returns(level):
+    """Calendar-year QQQ buy-and-hold total return, in percent.
+
+    Hold from the year-start mark to the last close of the year. The series
+    is close-only, so the year-start mark is the last close of the previous
+    calendar year::
+
+        r = last_close(year) / last_close(year - 1) - 1
+
+    The first year has no prior close, so the entry is the first print and
+    the hold runs from that print to the last close of the year. A year that
+    is still in progress uses the latest close (year-to-date). This is the
+    same convention as ``yearly_returns.csv`` column ``qqq_bh_pct``.
+    """
+    level = pd.Series(level).dropna().astype(float).sort_index()
+    if len(level) == 0:
+        return pd.Series(dtype=float)
+    level = level[~level.index.duplicated(keep='last')]
+    level.index = pd.to_datetime(level.index)
+    year_end = level.groupby(level.index.year).last()
+    year_first = level.groupby(level.index.year).first()
+    years = year_end.index.astype(int)
+    prior = year_end.copy()
+    prior.index = years + 1
+    entry = prior.reindex(years)
+    entry = entry.where(entry.notna(), year_first.to_numpy())
+    last = year_end.to_numpy(dtype=float)
+    entry_values = entry.to_numpy(dtype=float)
+    ok = np.isfinite(last) & np.isfinite(entry_values) & (entry_values != 0)
+    returns = np.full(len(years), np.nan)
+    returns[ok] = (last[ok] / entry_values[ok] - 1.0) * 100.0
+    return pd.Series(returns, index=years)
+
+
+def _vegas_heatmap_figure(curve, monthly=None, prices=None):
+    """Year × month heatmap. Prefer monthly_returns.csv; else the equity curve.
+
+    The Year column is the strategy. QQQ B&H is the same calendar year's
+    buy-and-hold total return of the pack's QQQ level.
+    """
     series = _vegas_monthly_from_table(monthly)
     if len(series) == 0:
         series = _vegas_monthly_returns(curve)
-    return make_monthly_heatmap(series)
+    benchmark = _vegas_qqq_calendar_returns(_vegas_qqq_level(curve, prices))
+    if len(benchmark) == 0 or benchmark.notna().sum() == 0:
+        return make_monthly_heatmap(series)
+    return make_monthly_heatmap(series, benchmark_annual=benchmark, benchmark_label='QQQ B&H')
 
 
 def _vegas_yearly_figure(frame):
@@ -4426,14 +4527,18 @@ def _build_qqq_vegas_body(bundle):
     if heat_from_file:
         heat_source = (
             'Source: data/qqq_vegas/monthly_returns.csv (year, M01–M12, values in percent). '
-            'The Year column compounds those months. '
+            'The Year column compounds those months (strategy). '
+            'QQQ B&H is the same calendar year from equity_curve.csv qqq_bh '
+            '(else market_prices.csv QQQ): last close divided by the prior year-end close, minus one. '
             'Colors match the Backtest heatmap (red to green, zero at the midpoint).'
         )
     else:
         heat_source = (
             'Source: data/qqq_vegas/equity_curve.csv (equity). '
             'Month-end change of that growth index, with the Backtest heatmap’s '
-            'month labels, red-to-green scale, and compounded Year column.'
+            'month labels, red-to-green scale, and compounded Year column. '
+            'QQQ B&H uses qqq_bh on that file (else market_prices.csv QQQ): '
+            'last close of the year divided by the prior year-end close, minus one.'
         )
     equity_frame = _vegas_frame(bundle.get('equity'))
     has_prior_equity = 'vegas_only_equity' in equity_frame.columns
@@ -4591,12 +4696,15 @@ def _build_qqq_vegas_body(bundle):
             html.Div(
                 'Year-by-month returns of the QQQ Vegas growth index. '
                 'Green is a positive month and red is a negative month. '
-                'The Year column is that calendar year’s compounded return.',
+                'Year（策略）is that calendar year’s compounded strategy return. '
+                'QQQ B&H（买入持有）is the same year’s QQQ buy-and-hold total return.',
                 style={'color': '#8888a0', 'fontSize': '12px', 'marginBottom': '8px'},
             ),
             dcc.Graph(
                 id='qqq-vegas-heatmap',
-                figure=_vegas_heatmap_figure(bundle.get('equity'), monthly),
+                figure=_vegas_heatmap_figure(
+                    bundle.get('equity'), monthly, bundle.get('market_prices'),
+                ),
                 config={'displayModeBar': False},
             ),
             *yearly_block,

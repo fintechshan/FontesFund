@@ -13,6 +13,8 @@ from src.dashboard.app import (
     _build_qqq_vegas_body,
     _vegas_heatmap_figure,
     _vegas_monthly_returns,
+    _vegas_qqq_calendar_returns,
+    _vegas_qqq_level,
     build_qqq_vegas_tab,
     create_app,
     load_qqq_vegas,
@@ -44,6 +46,18 @@ def _texts(node):
 def _month_end(series, year, month):
     window = series[(series.index.year == year) & (series.index.month == month)]
     return float(window.iloc[-1])
+
+
+def _hold_from_year_start(level, year):
+    """Last close of the year over the prior year-end close, in percent.
+
+    The first year in the series uses its first print as the entry.
+    """
+    level = level.dropna().sort_index()
+    this = level[level.index.year == year]
+    prev = level[level.index.year == year - 1]
+    entry = float(prev.iloc[-1]) if len(prev) else float(this.iloc[0])
+    return (float(this.iloc[-1]) / entry - 1.0) * 100.0
 
 
 def _heat_index(trace, year, label):
@@ -147,6 +161,9 @@ class QqqVegasTabTests(unittest.TestCase):
         self.assertIn('月度收益热力图', blob)
         self.assertIn('monthly_returns.csv', blob)
         self.assertIn('yearly_returns.csv', blob)
+        self.assertIn('QQQ B&H', blob)
+        self.assertIn('买入持有', blob)
+        self.assertIn('策略', blob)
 
         heat = _find_id(tab, 'qqq-vegas-heatmap')
         self.assertIsNotNone(heat)
@@ -161,9 +178,12 @@ class QqqVegasTabTests(unittest.TestCase):
         self.assertEqual(trace.zmin, -12)
         self.assertEqual(trace.zmax, 12)
         self.assertEqual(trace.hovertemplate, ref.hovertemplate)
-        self.assertEqual(list(trace.x), ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                                          'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', '  ', 'Year'])
-        self.assertEqual(heat.figure.layout.title.text, reference.layout.title.text)
+        self.assertEqual(list(ref.x), ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                                        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', '  ', 'Year'])
+        self.assertEqual(list(trace.x), list(ref.x) + ['QQQ B&H'])
+        self.assertEqual(reference.layout.title.text,
+                         'Monthly Returns Heatmap (%) — with compounded annual return')
+        self.assertIn('Year (策略) vs QQQ B&H', heat.figure.layout.title.text)
         self.assertEqual(heat.figure.layout.yaxis.autorange, 'reversed')
         self.assertIn(1999, [int(value) for value in trace.y])
 
@@ -182,6 +202,25 @@ class QqqVegasTabTests(unittest.TestCase):
         _yi, year_i = _heat_index(trace, 2011, 'Year')
         self.assertAlmostEqual(float(trace.z[yi][year_i]), expected_year, places=4)
         self.assertEqual(trace.text[yi][year_i], f'{expected_year:+.1f}%')
+
+        level = _vegas_qqq_level(bundle['equity'], bundle['market_prices'])
+        for year in (1999, 2000, 2011, 2022, 2026):
+            expected_bh = _hold_from_year_start(level, year)
+            _by, bh_i = _heat_index(trace, year, 'QQQ B&H')
+            self.assertAlmostEqual(float(trace.z[_by][bh_i]), expected_bh, places=4)
+            self.assertEqual(trace.text[_by][bh_i], f'{expected_bh:+.1f}%')
+            self.assertAlmostEqual(
+                float(_vegas_qqq_calendar_returns(level).loc[year]), expected_bh, places=6,
+            )
+        # 2000's within-year first close to last close is not the calendar hold.
+        y2000 = level[level.index.year == 2000]
+        within = (float(y2000.iloc[-1]) / float(y2000.iloc[0]) - 1.0) * 100.0
+        self.assertGreater(abs(within - _hold_from_year_start(level, 2000)), 1.0)
+
+        yearly = pd.read_csv(QQQ_VEGAS_DIR / 'yearly_returns.csv')
+        published = dict(zip(yearly['year'].astype(int), yearly['qqq_bh_pct'].astype(float)))
+        for year, published_pct in published.items():
+            self.assertAlmostEqual(_hold_from_year_start(level, year), published_pct, places=2)
 
         equity = bundle['equity'].copy()
         equity['date'] = pd.to_datetime(equity['date'])
@@ -218,6 +257,37 @@ class QqqVegasTabTests(unittest.TestCase):
         )
         blob = '\n'.join(_texts(tab))
         self.assertIn('equity_curve.csv (equity)', blob)
+        self.assertIn('QQQ B&H', blob)
+        self.assertEqual(list(heat.figure.data[0].x)[-1], 'QQQ B&H')
+        level = _vegas_qqq_level(bundle['equity'])
+        yi, xi = _heat_index(heat.figure.data[0], 2011, 'QQQ B&H')
+        self.assertAlmostEqual(
+            float(heat.figure.data[0].z[yi][xi]), _hold_from_year_start(level, 2011), places=4,
+        )
+
+    def test_heatmap_buyhold_falls_back_to_market_qqq_prices(self):
+        bundle = load_qqq_vegas()
+        curve = bundle['equity'].drop(columns=['qqq_bh'])
+        level = _vegas_qqq_level(curve, bundle['market_prices'])
+        self.assertEqual(level.index.min().strftime('%Y-%m-%d'), '1999-03-10')
+        fig = _vegas_heatmap_figure(curve, bundle['monthly'], bundle['market_prices'])
+        trace = fig.data[0]
+        self.assertEqual(list(trace.x)[-1], 'QQQ B&H')
+        yi, xi = _heat_index(trace, 2011, 'QQQ B&H')
+        self.assertAlmostEqual(float(trace.z[yi][xi]), _hold_from_year_start(level, 2011), places=4)
+        # 1999 starts at the first QQQ print in the price file, not a prior close.
+        y1999, bh_i = _heat_index(trace, 1999, 'QQQ B&H')
+        self.assertAlmostEqual(float(trace.z[y1999][bh_i]), _hold_from_year_start(level, 1999), places=4)
+        packed = _vegas_qqq_level(bundle['equity'])
+        self.assertGreater(abs(_hold_from_year_start(packed, 1999) - float(trace.z[y1999][bh_i])), 1.0)
+
+    def test_heatmap_without_qqq_level_keeps_the_year_column_only(self):
+        bundle = load_qqq_vegas()
+        curve = bundle['equity'].drop(columns=['qqq_bh'])
+        fig = _vegas_heatmap_figure(curve, bundle['monthly'], prices=pd.DataFrame())
+        reference = make_monthly_heatmap(_vegas_monthly_returns(bundle['equity']))
+        self.assertEqual(list(fig.data[0].x), list(reference.data[0].x))
+        self.assertEqual(fig.layout.title.text, reference.layout.title.text)
 
     def test_summary_config_supplies_full_and_oos_metrics(self):
         summary = json.loads((QQQ_VEGAS_DIR / 'summary.json').read_text(encoding='utf-8'))
