@@ -232,6 +232,12 @@ monthly rebalance.
   drawdown shrink. CPI and GDP advance releases change the monthly sleeve. They
   do not replace the daily overlay. The scheduler does not send orders. Do not
   wait an extra Auditor month. The VIX 28→40 cut is not this script.
+- **Risk flags (notify only):** `A_vol`, `B_crowd`, and `C_put` in
+  `src/risk_flags.py` are a paper scorecard. A backtest showed that sizing the
+  live book down on them hurt returns. They lag one trading day, show on the
+  QQQ Vegas tab, and notify on the rising edge only. They must not pause, size,
+  or cash positions in `engine.py`, `daily_overlay.py`, or `ibkr_rebalance.py`.
+  See `docs/risk_flags.md`.
 - **Reproduce:** `python run_backtest.py` (full engine, ~30s). Fast parameter
   exploration: `python optimize_strategy.py` and `python extend_rp_mf.py` (vectorized
   harnesses, <2s; same data/regime logic as production). Production-faithful variant
@@ -299,7 +305,9 @@ and cannot reach the local TWS socket, the bridge is a **snapshot file**:
 | `src/backtester/daily_overlay.py` | Live notionals from the engine’s last-day overlay |
 | `scripts/ibkr_snapshot.py` | Read-only IBKR snapshot → `data/cache/ibkr_account.json` (Execution tab) |
 | `scripts/ibkr_rebalance.py` | Local paper/live rebalance to current regime weights (`--execute`) |
-| `scripts/notify_regime.py` | Weekday regime / VIX-band Issue. Silent when unchanged. See `docs/notify.md`. |
+| `scripts/notify_regime.py` | Weekday regime / VIX-band Issue. Silent when unchanged. Risk flags ride the same Issue on a rising edge only. See `docs/notify.md`. |
+| `src/risk_flags.py` | Notify-only A_vol / B_crowd / C_put. Not a weight or order input. |
+| `scripts/refresh_risk_flags.py` | Yahoo refresh of `data/risk_flags/flags.json`. |
 | `.github/workflows/notify.yml` | Cron + `workflow_dispatch` for that notifier (light FRED+SPY refresh). `test-notify.yml` is the offline unit job. |
 | `run_backtest.py` | CLI 20-yr validation; regenerates result CSVs; exits 3 if the series check fails |
 | `scripts/verify_consistency.py` | Reported CAGR/total vs heatmap compound vs equity CAGR and daily max DD |

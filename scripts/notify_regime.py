@@ -15,6 +15,9 @@ notify_regime.py — 象限 / VIX 跨档提醒（GitHub Issue → 邮件）。
 同一档内的 VIX 波动、以及象限未变，都静默退出。首次运行只写
 data/notify_state.json 基线，不开 Issue；--force 用于测试发信。
 
+风险旗 A_vol / B_crowd / C_put 只在从关到开的沿上附带通知（通知 / 不改仓）。
+粘着的 ON 不每天再发。第一次写入旗标只记基线。这不改变目标权重，也不下单。
+
 象限变了时，Issue 先写组合变化：旧→新、需要调仓（任一标的 |差额|≥1%）、
 美加风险姿态、权重表、减持/增持清单、怎么执行。只跨 VIX 档时写需要调仓：否，
 并说明防御应收紧或可放松；不改目标权重。
@@ -34,9 +37,11 @@ VIX 月均和 12 个月动量再 shift(1)。不 import run_dashboard（那会跑
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import pickle
+import re
 import sys
 import time
 import urllib.error
@@ -50,6 +55,12 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+from src.risk_flags import (  # noqa: E402 — repo root is on sys.path above
+    load_notify_block,
+    rising_flag_ids,
+    risk_flags_changed,
+)
 
 # 最新 VIX 收盘所在档。日频敞口仍由引擎按 VIX 与回撤连续计算；
 # 这里只报告跨档。30 以上与 REGIME_VIX_DEFENSIVE（月均 VIX>30 强制 deflation）同一量级。
@@ -304,6 +315,11 @@ def classify_change(prev, cur: dict, force: bool = False) -> tuple[str, dict]:
             f"**{cur['vix_band']} {cur['vix_band_name']}**"
             f"（VIX {prev.get('vix', '?')} → {cur['vix']}）"
         )
+    # First time the scorecard is stored is a baseline, not an edge.
+    if isinstance(prev.get('risk_flags'), dict) and isinstance(cur.get('risk_flags'), dict):
+        risen = rising_flag_ids(prev.get('risk_flags'), cur.get('risk_flags'))
+        if risen:
+            reasons['risk_flags'] = '+'.join(risen)
     if force and not reasons:
         reasons['forced'] = '（--force 测试，象限与 VIX 档位都没有变化）'
     if not reasons:
@@ -312,13 +328,16 @@ def classify_change(prev, cur: dict, force: bool = False) -> tuple[str, dict]:
 
 
 def delivery_kind(reasons: dict) -> str:
-    if 'regime' in reasons and 'vix' in reasons:
-        return 'regime+vix'
+    parts = []
     if 'regime' in reasons:
-        return 'regime'
+        parts.append('regime')
     if 'vix' in reasons:
-        return 'vix'
-    return 'force'
+        parts.append('vix')
+    if 'risk_flags' in reasons:
+        parts.append('flags')
+    if not parts:
+        return 'force'
+    return '+'.join(parts)
 
 
 def delivery_fingerprint(prev, cur: dict, reasons: dict) -> str:
@@ -330,7 +349,11 @@ def delivery_fingerprint(prev, cur: dict, reasons: dict) -> str:
         return f"force|{cur.get('regime')}|{cur.get('vix_band')}|{day}|{checked}"
     prev_regime = (prev or {}).get('regime') or ''
     prev_band = (prev or {}).get('vix_band') or ''
-    return f"{kind}|{prev_regime}>{cur.get('regime')}|{prev_band}>{cur.get('vix_band')}|{day}"
+    base = f"{kind}|{prev_regime}>{cur.get('regime')}|{prev_band}>{cur.get('vix_band')}|{day}"
+    if 'risk_flags' in reasons:
+        flag_day = (cur.get('risk_flags') or {}).get('as_of') or day
+        base += f"|{reasons['risk_flags']}@{flag_day}"
+    return base
 
 
 def blank_audit(action: str, cur: dict | None) -> dict:
@@ -468,6 +491,10 @@ _KIND_ZH = {
     'regime': '象限切换',
     'vix': 'VIX 跨档',
     'regime+vix': '象限切换与 VIX 跨档',
+    'flags': '风险旗',
+    'regime+flags': '象限切换与风险旗',
+    'vix+flags': 'VIX 跨档与风险旗',
+    'regime+vix+flags': '象限切换、VIX 跨档与风险旗',
     'force': '强制测试',
 }
 
@@ -713,12 +740,57 @@ def _fmt_snapshot(cur: dict) -> list[str]:
     ]
 
 
+def risk_flag_state_changed(prev, cur: dict) -> bool:
+    prev_block = prev.get('risk_flags') if isinstance(prev, dict) else None
+    cur_block = cur.get('risk_flags') if isinstance(cur, dict) else None
+    return risk_flags_changed(prev_block, cur_block)
+
+
+def _risk_flag_section(cur: dict, reasons: dict) -> list[str]:
+    block = cur.get('risk_flags') if isinstance(cur.get('risk_flags'), dict) else {}
+    names = reasons.get('risk_flags') or ''
+    lines = [
+        '',
+        '### 风险旗（通知 / 不改仓）',
+        '这些旗标不改变仓位、权重或订单。回测里按它们减仓会伤害收益；这里只做研究与纸面记分。',
+    ]
+    if 'regime' in reasons:
+        lines.append('风险旗本身不改目标权重，也不单独要求下单。上面的差额只来自象限切换。')
+    else:
+        lines.append('**需要调仓：否**')
+        lines.append('**不改仓。** 不要因为这面旗去跑再平衡，也不要为它下单。')
+    lines.append(f'本次新亮起：{names}')
+    lines.append('B_crowd 是价格代理，不是高盛对冲基金资金流。')
+    lines.append('C_put 只是卖 Put 清单提示，不是下单指令。')
+    for key in ('A_vol', 'B_crowd', 'C_put'):
+        status = (block.get('status') or {}).get(key)
+        if status == 'skipped':
+            mark = 'SKIP'
+        elif block.get(key):
+            mark = 'ON'
+        else:
+            mark = 'OFF'
+        rule = (block.get('rule_zh') or {}).get(key) or ''
+        detail = (block.get('detail') or {}).get(key) or ''
+        lines.append(f'- **{key}：{mark}** {rule}'.rstrip())
+        if detail:
+            lines.append(f'  {detail}')
+    as_of = block.get('as_of') or cur.get('price_asof')
+    signal = block.get('signal_date') or '前一交易日'
+    lines.append(f'as_of {as_of}（信号用 {signal} 收盘，滞后 1 个交易日）')
+    lines.append('仪表盘 QQQ Vegas 页的「风险旗」卡片与这里是同一份记分。')
+    return lines
+
+
 def build_message(prev, cur: dict, reasons: dict) -> tuple[str, str]:
     old_regime = (prev or {}).get('regime')
     if 'regime' in reasons:
         title = f"[调仓] {old_regime or '?'} → {cur['regime']}（{cur['price_asof']}）"
     elif 'vix' in reasons:
         title = f"[风险档位] VIX {cur['vix']} → {cur['vix_band_name']}（{cur['price_asof']}）"
+    elif 'risk_flags' in reasons:
+        as_of = (cur.get('risk_flags') or {}).get('as_of') or cur.get('price_asof')
+        title = f"[风险旗] {reasons['risk_flags']} ON（{as_of}）"
     else:
         title = f"[测试] 象限 {cur['regime']} / VIX {cur['vix']}（{cur['price_asof']}）"
 
@@ -752,12 +824,16 @@ def build_message(prev, cur: dict, reasons: dict) -> tuple[str, str]:
             '下面是当前目标权重，供对照。这不是一笔已发生的调仓差额。',
             weight_table(None, cur['regime']),
         ]
+    elif 'risk_flags' in reasons:
+        body = []
     else:
         body = [
             '### 组合变化',
             f"象限未变：**{cur['regime']}**。目标权重不变。",
             '**需要调仓：否**',
         ]
+    if 'risk_flags' in reasons:
+        body.extend(_risk_flag_section(cur, reasons))
     body.extend(_fmt_snapshot(cur))
     return title, '\n'.join(body)
 
@@ -933,6 +1009,13 @@ def ensure_audit_label(repo: str, token: str) -> None:
     )
 
 
+def ensure_risk_flag_label(repo: str, token: str) -> None:
+    ensure_label(
+        repo, token, 'risk-flag', 'FBCA04',
+        'Notify-only risk scorecard edge / 风险旗新亮起，不改仓',
+    )
+
+
 def create_github_issue(title: str, body: str, labels: list[str]) -> dict:
     repo, token = _repo_token()
     url = f'https://api.github.com/repos/{repo}/issues'
@@ -955,11 +1038,16 @@ def create_github_issue(title: str, body: str, labels: list[str]) -> dict:
 
 def open_issue(title: str, body: str) -> dict:
     repo, token = _repo_token()
+    labels = ['rebalance']
+    if str(title).startswith('[风险旗]') or '风险旗（通知 / 不改仓）' in body:
+        labels.append('risk-flag')
     try:
         ensure_rebalance_label(repo, token)
+        if 'risk-flag' in labels:
+            ensure_risk_flag_label(repo, token)
     except GitHubAPIError as exc:
-        die(f'创建或确认标签 rebalance 失败 HTTP {exc.code}: {exc.body[:400]}')
-    data = create_github_issue(title, body, ['rebalance'])
+        die(f'创建或确认标签失败 HTTP {exc.code}: {exc.body[:400]}')
+    data = create_github_issue(title, body, labels)
     issue = coerce_created_issue(data)
     if issue is None:
         die('创建 Issue 的响应缺少 number 或 html_url，视为未发出。')
@@ -1124,8 +1212,144 @@ def run_audit(finder=None, alerter=None, find_audit=None) -> str:
     die('漏报：应发的 rebalance Issue 不存在。' + detail + extra)
 
 
+_SENDKEY_RE = re.compile(r'^[A-Za-z0-9]+$')
+WECHAT_TITLE_MAX = 40
+
+
+def _warn(msg: str) -> None:
+    print(msg, file=sys.stderr)
+    if os.environ.get('GITHUB_ACTIONS') == 'true':
+        flat = ' '.join(str(msg).split())
+        print(f'::warning::{flat}', file=sys.stderr)
+
+
+def serverchan_sendkey() -> str:
+    return (os.environ.get('SERVERCHAN_SENDKEY') or '').strip()
+
+
+def serverchan_endpoint(sendkey: str) -> str | None:
+    """POST target for a Turbo SendKey. The key is a path segment and is never logged."""
+    if not sendkey or not _SENDKEY_RE.fullmatch(sendkey):
+        return None
+    return f'https://sctapi.ftqq.com/{sendkey}.send'
+
+
+def wechat_title(title: str) -> str:
+    text = ' '.join(str(title).split())
+    if len(text) <= WECHAT_TITLE_MAX:
+        return text
+    return text[: WECHAT_TITLE_MAX - 3] + '...'
+
+
+def wechat_desp(title: str, body: str) -> str:
+    full = ' '.join(str(title).split())
+    text = f'{full}\n\n{str(body).strip()}\n'
+    raw = text.encode('utf-8')
+    if len(raw) > 30000:
+        text = raw[:30000].decode('utf-8', errors='ignore')
+    return text
+
+
+def _redact(text: str, secret: str) -> str:
+    if secret and secret in text:
+        return text.replace(secret, '***')
+    return text
+
+
+def push_serverchan(title: str, body: str) -> dict:
+    """One WeChat push. A missing key warns and does not fail the GitHub Issue.
+
+    Transport errors are warnings too. The Issue already exists; rolling the
+    baseline back would open a second Issue on the next run.
+    """
+    key = serverchan_sendkey()
+    if not key:
+        _warn('未设置 SERVERCHAN_SENDKEY，跳过微信（Server酱）。GitHub Issue 仍会发送。')
+        return {'status': 'skipped', 'reason': 'missing_sendkey'}
+    url = serverchan_endpoint(key)
+    if url is None:
+        _warn('SERVERCHAN_SENDKEY 格式无法识别，跳过微信。密钥应为字母和数字，例如 SCT…。')
+        return {'status': 'skipped', 'reason': 'bad_sendkey'}
+    payload = urllib.parse.urlencode({
+        'title': wechat_title(title),
+        'desp': wechat_desp(title, body),
+    }).encode('utf-8')
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        method='POST',
+        headers={
+            'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8',
+            'User-Agent': 'notify-regime',
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            raw = resp.read().decode('utf-8', errors='replace')
+    except Exception:  # noqa: BLE001 — WeChat must not fail the Issue path
+        _warn('Server酱推送失败。GitHub Issue 已创建，不回滚基线。')
+        return {'status': 'failed', 'reason': 'transport'}
+    try:
+        data = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        _warn('Server酱返回的不是 JSON。GitHub Issue 已创建，不回滚基线。')
+        return {'status': 'failed', 'reason': 'bad_json'}
+    code = data.get('code') if isinstance(data, dict) else None
+    if code in (0, '0'):
+        print('已推送微信（Server酱）。')
+        return {'status': 'sent'}
+    _warn(f'Server酱未接受推送（code={code}）。GitHub Issue 已创建，不回滚基线。')
+    return {'status': 'failed', 'reason': f'code={code}'}
+
+
+def _deliver_wechat(title: str, body: str, wechat) -> dict:
+    try:
+        result = (wechat or push_serverchan)(title, body)
+    except Exception:  # noqa: BLE001
+        _warn('微信推送抛错。GitHub Issue 已创建，不回滚基线。')
+        return {'status': 'failed', 'reason': 'exception'}
+    if not isinstance(result, dict):
+        return {'status': 'failed', 'reason': 'bad_wechat_result'}
+    status = result.get('status') or 'failed'
+    reason = result.get('reason')
+    if reason is not None:
+        reason = _redact(str(reason), serverchan_sendkey())
+    return {'status': status, 'reason': reason}
+
+
+def attach_risk_flags(cur: dict) -> dict:
+    """Read the scorecard when the caller did not already attach one.
+
+    A stale or missing file leaves the regime state alone.
+    """
+    if isinstance(cur.get('risk_flags'), dict):
+        return cur
+    block = load_notify_block()
+    if not block:
+        return cur
+    out = dict(cur)
+    out['risk_flags'] = block
+    return out
+
+
+def refresh_risk_flag_cache() -> bool:
+    """Yahoo scorecard. Failure does not stop the regime notify."""
+    path = ROOT / 'scripts' / 'refresh_risk_flags.py'
+    spec = importlib.util.spec_from_file_location('refresh_risk_flags', path)
+    if spec is None or spec.loader is None:
+        _warn('找不到风险旗刷新脚本，本次不判断旗标。')
+        return False
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+        return bool(module.refresh())
+    except Exception as exc:  # noqa: BLE001 — scorecard is optional next to the regime mail
+        _warn(f'风险旗刷新失败（{exc.__class__.__name__}）。象限提醒继续，本次不判断旗标。')
+        return False
+
+
 def parse_args(argv=None) -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description='象限 / VIX 跨档提醒。没变化则静默退出。')
+    ap = argparse.ArgumentParser(description='象限 / VIX 跨档提醒。没变化则静默退出。风险旗只在新亮起时附带通知，不改仓。')
     ap.add_argument('--dry-run', action='store_true', help='打印邮件，不发 Issue，不写状态')
     ap.add_argument('--github-issue', action='store_true', help='有信号时开 GitHub Issue')
     ap.add_argument('--force', action='store_true', help='忽略去重，用于测试发信')
@@ -1148,19 +1372,33 @@ def _stamp_expectation(audit: dict, prev, cur: dict, reasons: dict, title: str) 
     audit['checked_at_iso'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
-def execute(args: argparse.Namespace, opener=None) -> str:
+def execute(args: argparse.Namespace, opener=None, wechat=None) -> str:
+    flags_ok = not args.refresh
     if args.refresh:
         refresh_caches()
+        flags_ok = refresh_risk_flag_cache()
     cur = current_state()
+    if flags_ok:
+        cur = attach_risk_flags(cur)
     prev = read_state()
     action, reasons = classify_change(prev, cur, force=args.force)
     audit = blank_audit(action, cur)
 
     if action == 'silent':
+        flag_note = ''
+        block = cur.get('risk_flags') if isinstance(cur.get('risk_flags'), dict) else None
+        if block:
+            ons = [key for key in ('A_vol', 'B_crowd', 'C_put') if block.get(key)]
+            flag_note = ' / 风险旗 ' + (','.join(ons) if ons else '都关闭')
         print(
             f"无变化：{cur['regime']} / VIX {cur['vix']}（{cur['vix_band']} {cur['vix_band_name']}）"
-            '—— 不发送。'
+            f'{flag_note}—— 不发送。'
         )
+        if isinstance(prev, dict) and risk_flag_state_changed(prev, cur) and not args.dry_run:
+            updated = dict(prev)
+            updated['risk_flags'] = cur['risk_flags']
+            write_state(updated)
+            print('风险旗状态已更新（没有新亮起，不发送）。')
         write_audit(audit)
         return action
 
@@ -1201,6 +1439,7 @@ def execute(args: argparse.Namespace, opener=None) -> str:
             audit['error'] = 'opener 没有返回 number 和 html_url'
             write_audit(audit)
             die('应发信，但 Issue 没有创建成功（缺少 number 或 html_url）。拒绝写入状态。')
+        audit['wechat'] = _deliver_wechat(title, body, wechat)
         audit['delivery'] = 'created'
         audit['issue_number'] = issue['number']
         audit['issue_url'] = issue['html_url']

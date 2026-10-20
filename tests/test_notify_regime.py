@@ -278,6 +278,8 @@ class ExecuteTests(unittest.TestCase):
         self._old_audit = os.environ.get('NOTIFY_AUDIT_PATH')
         os.environ['NOTIFY_STATE_PATH'] = str(self.tmp / 'notify_state.json')
         os.environ['NOTIFY_AUDIT_PATH'] = str(self.tmp / 'notify_audit.json')
+        self._old_flags = os.environ.get('RISK_FLAGS_PATH')
+        os.environ['RISK_FLAGS_PATH'] = str(self.tmp / 'no_flags.json')
 
     def tearDown(self):
         if self._old_state is None:
@@ -288,6 +290,10 @@ class ExecuteTests(unittest.TestCase):
             os.environ.pop('NOTIFY_AUDIT_PATH', None)
         else:
             os.environ['NOTIFY_AUDIT_PATH'] = self._old_audit
+        if self._old_flags is None:
+            os.environ.pop('RISK_FLAGS_PATH', None)
+        else:
+            os.environ['RISK_FLAGS_PATH'] = self._old_flags
         self._tmp.cleanup()
 
     def test_parse_args(self):
@@ -366,6 +372,7 @@ class CliDryRunTests(unittest.TestCase):
             env['NOTIFY_CACHE_DIR'] = str(cache)
             env['NOTIFY_STATE_PATH'] = str(state)
             env['NOTIFY_AUDIT_PATH'] = str(tmp / 'notify_audit.json')
+            env['RISK_FLAGS_PATH'] = str(tmp / 'no_flags.json')
             env['PYTHONIOENCODING'] = 'utf-8'
             env['PYTHONUTF8'] = '1'
             env.pop('FRED_API_KEY', None)
@@ -545,11 +552,17 @@ class AuditExecuteTests(unittest.TestCase):
         os.environ['NOTIFY_STATE_PATH'] = str(self.tmp / 'notify_state.json')
         os.environ['NOTIFY_AUDIT_PATH'] = str(self.tmp / 'notify_audit.json')
         os.environ['GITHUB_OUTPUT'] = str(self.tmp / 'github_output.txt')
+        self._old_flags = os.environ.get('RISK_FLAGS_PATH')
+        os.environ['RISK_FLAGS_PATH'] = str(self.tmp / 'no_flags.json')
         os.environ.pop('GITHUB_ACTIONS', None)
         os.environ.pop('GITHUB_REPOSITORY', None)
         os.environ.pop('GITHUB_TOKEN', None)
 
     def tearDown(self):
+        if self._old_flags is None:
+            os.environ.pop('RISK_FLAGS_PATH', None)
+        else:
+            os.environ['RISK_FLAGS_PATH'] = self._old_flags
         for key, value in self._env.items():
             if value is None:
                 os.environ.pop(key, None)

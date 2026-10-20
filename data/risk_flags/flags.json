@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "purpose": "notify_only",
+  "effect": "none",
+  "orders": false,
+  "weights": false,
+  "banner_zh": "通知 / 不改仓",
+  "banner_en": "Notify only. Does not change positions, weights, or orders.",
+  "note_zh": "回测表明按这些旗标减仓会伤害收益。此处只做研究/纸面记分和通知，不改仓位、权重或订单。",
+  "note_en": "A backtest showed that sizing the live book down on these flags hurt returns. Research and paper scorecard only. Notify does not change positions.",
+  "as_of": "2026-10-19",
+  "signal_date": "2026-10-16",
+  "lag_trading_days": 1,
+  "unavailable": false,
+  "range_basis": "high_low",
+  "inputs": {
+    "soxx": true,
+    "vxn": true,
+    "vix": true
+  },
+  "flags": {
+    "A_vol": {
+      "name": "A_vol",
+      "on": true,
+      "status": "on",
+      "mode": "full",
+      "rule_en": "SOXX RV20 > expanding Q80 (min_periods=252) OR VXN > expanding Q80 (min_periods=252). Lag 1 trading day.",
+      "rule_zh": "SOXX 的 20 日实现波动率高于扩窗 80% 分位（min_periods=252），或 VXN 高于自身扩窗 80% 分位（min_periods=252）。滞后 1 个交易日。",
+      "detail": "SOXX RV20 36.5% vs Q80 36.4%；VXN 27.13 vs Q80 27.20"
+    },
+    "B_crowd": {
+      "name": "B_crowd",
+      "on": true,
+      "status": "on",
+      "mode": "full",
+      "rule_en": "Price proxy, not GS HF flow: (SOXX 5d ≤ −8% OR 10d ≤ −12%) AND 10d range/close > expanding median (min_periods=10), OR (down-streak ≥ 4 AND 5d ≤ −5%). Lag 1 trading day.",
+      "rule_zh": "价格代理，不是高盛对冲基金资金流：（SOXX 5 日 ≤ −8% 或 10 日 ≤ −12%）且 10 日振幅/收盘 > 扩窗中位数（min_periods=10），或（连跌 ≥ 4 日且 5 日 ≤ −5%）。滞后 1 个交易日。",
+      "detail": "5日 -11.8% · 10日 -16.2% · 振幅/收盘 0.21 vs 中位数 0.07（高低价）· 连跌 9 日"
+    },
+    "C_put": {
+      "name": "C_put",
+      "on": false,
+      "status": "off",
+      "mode": "full",
+      "rule_en": "VIX ≥ 25 AND VIX rising over 5 sessions AND SOXX < SMA50 AND SOXX 10d ≤ −8%. Sell-put checklist hint only. Lag 1 trading day.",
+      "rule_zh": "VIX≥25 且 VIX 较 5 个交易日前上升，且 SOXX < SMA50，且 SOXX 10 日 ≤ −8%。只是卖 Put 清单提示，不下单。滞后 1 个交易日。",
+      "detail": "VIX 19.99 vs 5日前 14.84 · SOXX 493.39 vs SMA50 537.15 · 10日 -16.2% · 卖Put清单提示，不下单"
+    }
+  },
+  "generated_at": "2026-10-20 10:22 UTC",
+  "age_days": 1,
+  "stale": false,
+  "source": "yahoo"
+}

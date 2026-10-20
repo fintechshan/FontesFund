@@ -40,3 +40,4 @@ data/cache/semianalysis_feed.json
 data/cache/ai_extra_prices.csv
 data/cache/edgar_capex.json
 data/cache/reddit_sentiment.json
+data/risk_flags/prices.csv
