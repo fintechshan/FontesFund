@@ -80,6 +80,33 @@ def _upload_qqq_vegas_market():
         logger.warning(f"/tasks/refresh: QQQ/QLD market upload skipped: {exc}")
 
 
+def refresh_risk_flags_cache():
+    """Best-effort notify-only scorecard. Never raises and never sizes the book."""
+    import subprocess
+    try:
+        res = subprocess.run(
+            [sys.executable, 'scripts/refresh_risk_flags.py'],
+            capture_output=True, text=True, timeout=180,
+        )
+    except Exception as exc:
+        logger.warning(f"/tasks/refresh: risk flags skipped: {exc}")
+        return False
+    if res.returncode != 0:
+        detail = (res.stderr or res.stdout or '')[-300:]
+        logger.warning(f"/tasks/refresh: risk flags unchanged (rc={res.returncode}): {detail}")
+        return False
+    logger.info(f"/tasks/refresh: risk flags updated: {(res.stdout or '').strip()[-300:]}")
+    return True
+
+
+def _upload_risk_flags():
+    try:
+        from src.dashboard.gcs_sync import upload_risk_flags
+        upload_risk_flags()
+    except Exception as exc:
+        logger.warning(f"/tasks/refresh: risk-flag upload skipped: {exc}")
+
+
 def load_backtest_results():
     if BACKTEST_CSV.exists():
         df = pd.read_csv(BACKTEST_CSV, index_col=0)
@@ -811,8 +838,12 @@ if __name__ == '__main__':
                 vegas_market = refresh_qqq_vegas_market_cache()
                 if vegas_market:
                     _upload_qqq_vegas_market()
+                risk_flags = refresh_risk_flags_cache()
+                if risk_flags:
+                    _upload_risk_flags()
                 return jsonify({'ok': False, 'error': 'backtest_failed',
                                 'qqq_vegas_market': vegas_market,
+                                'risk_flags': risk_flags,
                                 'stderr': (res.stderr or res.stdout)[-500:]}), 500
 
             # Regression tripwire: one day of new data moves the 21-yr CAGR by basis
@@ -827,11 +858,16 @@ if __name__ == '__main__':
                 vegas_market = refresh_qqq_vegas_market_cache()
                 if vegas_market:
                     _upload_qqq_vegas_market()
+                risk_flags = refresh_risk_flags_cache()
+                if risk_flags:
+                    _upload_risk_flags()
                 return jsonify({'ok': False, 'error': 'quality_gate_headline_jump',
                                 'qqq_vegas_market': vegas_market,
+                                'risk_flags': risk_flags,
                                 'previous': prev, 'new': new}), 500
 
             vegas_market = refresh_qqq_vegas_market_cache()
+            risk_flags = refresh_risk_flags_cache()
             from src.dashboard.gcs_sync import upload_data, upload_ibkr
             uploaded = upload_data()
 
@@ -873,7 +909,7 @@ if __name__ == '__main__':
             ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             logger.info(f"/tasks/refresh OK at {ts}; uploaded {len(uploaded)} backtest + {len(ibkr_uploaded)} IBKR files to GCS.")
             return jsonify({'ok': True, 'refreshed_at': ts, 'uploaded': uploaded, 'ibkr_uploaded': ibkr_uploaded,
-                            'qqq_vegas_market': vegas_market, 'headline': headline})
+                            'qqq_vegas_market': vegas_market, 'risk_flags': risk_flags, 'headline': headline})
         except subprocess.TimeoutExpired:
             return jsonify({'ok': False, 'error': 'timeout'}), 504
         except Exception as e:

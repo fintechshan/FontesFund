@@ -6,6 +6,7 @@ Tabs: Regime Monitor, Portfolio, Backtest, CDN Portfolio, QQQ Vegas, Auditor.
 QQQ Vegas reads data/qqq_vegas only. It does not change the Merrill sleeve.
 The QQQ/QLD price chart and PE cards on that tab are a cached Yahoo pack.
 They are not inputs to the v9 signal.
+The risk-flag card on that tab is notify-only. It does not size positions.
 """
 import json
 import os
@@ -4171,8 +4172,9 @@ def _pull_vegas_market_cache():
         return
     _VEGAS_MARKET_PULL['at'] = now
     try:
-        from src.dashboard.gcs_sync import download_vegas_market
+        from src.dashboard.gcs_sync import download_risk_flags, download_vegas_market
         download_vegas_market()
+        download_risk_flags()
     except Exception:
         return
 
@@ -4473,6 +4475,62 @@ def _vegas_compare_section(summary):
     ])
 
 
+def _risk_flag_card(item):
+    item = item if isinstance(item, dict) else {}
+    status = item.get('status')
+    if status == 'skipped':
+        mark, color = 'SKIP', '#f5a623'
+    elif item.get('on'):
+        mark, color = 'ON', '#e74c3c'
+    else:
+        mark, color = 'OFF', '#00d97e'
+    return html.Div([
+        html.Div(item.get('name') or '—', style={
+            'color': '#8888a0', 'fontSize': '11px', 'letterSpacing': '1px',
+            'textTransform': 'uppercase', 'fontWeight': '700',
+        }),
+        html.Div(mark, style={'color': color, 'fontSize': '28px', 'fontWeight': '700', 'margin': '4px 0'}),
+        html.Div(item.get('rule_zh') or '', style={
+            'color': '#c8c8d4', 'fontSize': '12px', 'lineHeight': '1.45',
+        }),
+        html.Div(item.get('detail') or '', style={
+            'color': '#8888a0', 'fontSize': '11px', 'marginTop': '6px', 'lineHeight': '1.4',
+        }),
+    ], style={**CS, 'minHeight': '160px', 'textAlign': 'left'})
+
+
+def _risk_flags_panel_children(snapshot=None):
+    """Scorecard body. Reads the cache. Does not recompute and does not size the book."""
+    from src.risk_flags import FLAG_IDS, load_snapshot
+
+    snap = snapshot if isinstance(snapshot, dict) else load_snapshot()
+    flags = snap.get('flags') if isinstance(snap.get('flags'), dict) else {}
+    as_of = snap.get('as_of') or '—'
+    signal = snap.get('signal_date') or '—'
+    cards = []
+    for key in FLAG_IDS:
+        cards.append(dbc.Col(_risk_flag_card(flags.get(key) or {'name': key, 'status': 'skipped'}), md=4))
+    return [
+        html.H5('风险旗 · Risk flags', style={'color': '#f5a623', 'marginBottom': '4px', 'fontWeight': '700'}),
+        html.Div(snap.get('banner_zh') or '通知 / 不改仓', style={
+            'color': '#f5a623', 'fontSize': '22px', 'fontWeight': '700', 'marginBottom': '2px',
+        }),
+        html.Div(snap.get('banner_en') or 'Notify only. Does not change positions, weights, or orders.',
+                 style={'color': '#c8c8d4', 'fontSize': '12px', 'marginBottom': '6px'}),
+        html.Div(snap.get('note_zh') or '', style={'color': '#8888a0', 'fontSize': '12px', 'marginBottom': '8px'}),
+        dbc.Row(cards, className='mb-2'),
+        html.Div(
+            f"as_of {as_of} · signal_date {signal} · lag {snap.get('lag_trading_days', 1)} trading day",
+            style={'color': '#00e5ff', 'fontSize': '12px', 'marginTop': '6px'},
+        ),
+        _source_line(
+            'Source: data/risk_flags/flags.json. Yahoo Finance via scripts/refresh_risk_flags.py. '
+            'Notify on the rising edge only. 通知 / 不改仓. '
+            'This card does not change Merrill weights, QQQ Vegas v9, or live orders.'
+        ),
+    ]
+
+
 def _build_qqq_vegas_body(bundle):
     bundle = bundle if isinstance(bundle, dict) else {}
     signal = bundle.get('signal') if isinstance(bundle.get('signal'), dict) else {}
@@ -4592,6 +4650,11 @@ def _build_qqq_vegas_body(bundle):
                      style={'color': '#8888a0', 'fontSize': '11px', 'marginTop': '2px'}),
         ], style={'backgroundColor': '#16213e', 'border': '1px solid #2d2d44', 'borderRadius': '8px',
                   'padding': '8px 12px', 'marginBottom': '12px'}),
+        html.Div(
+            _risk_flags_panel_children(),
+            id='risk-flags-panel',
+            style={**CS, 'marginBottom': '16px', 'border': '1px solid #f5a623'},
+        ),
         html.Div(
             f"Missing artifacts: {', '.join(missing)}. The sleeve is not recomputed here." if missing else '',
             id='qqq-vegas-missing',
@@ -4859,13 +4922,14 @@ def create_app(data):
         Output('qqq-vegas-prices', 'figure'),
         Output('qqq-vegas-market-cards', 'children'),
         Output('qqq-vegas-market-meta', 'children'),
+        Output('risk-flags-panel', 'children'),
         Input('qqq-vegas-market-interval', 'n_intervals'),
         prevent_initial_call=True,
     )
     def refresh_qqq_vegas_market_panel(_n):
         # Cache only. The daily Yahoo fetch is /tasks/refresh, not this callback.
         figure, cards, meta = _vegas_market_view(pull_gcs=True)
-        return figure, cards, meta
+        return figure, cards, meta, _risk_flags_panel_children()
 
     @app.callback(
         Output('backtest-path-body', 'children'),

@@ -22,6 +22,11 @@ VEGAS_MARKET_FILES = [
     'data/qqq_vegas/market_snapshot.json',
 ]
 
+# Notify-only risk scorecard. Display and the weekday notifier. Not a weight input.
+RISK_FLAG_FILES = [
+    'data/risk_flags/flags.json',
+]
+
 # Files that the daily backtest refresh regenerates and that the dashboard reads.
 SYNC_FILES = [
     'data/cache/price_data.csv',
@@ -35,6 +40,7 @@ SYNC_FILES = [
     'data/backtest_results/cdn_comparison.csv',
     'data/cache/gsblbr_history.csv',
     *VEGAS_MARKET_FILES,
+    *RISK_FLAG_FILES,
 ]
 
 # IBKR account snapshot — removed for public server security
@@ -146,9 +152,39 @@ def upload_data():
     return _upload(SYNC_FILES)
 
 
+def download_risk_flags():
+    """GCS -> local for the notify-only scorecard. A failure keeps the local file."""
+    if not BUCKET:
+        return False
+    got = False
+    try:
+        b = _bucket()
+        for rel in RISK_FLAG_FILES:
+            blob = b.blob(rel)
+            if not blob.exists():
+                logger.info(f"GCS: {rel} not in bucket yet")
+                continue
+            dest = ROOT / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            blob.download_to_filename(str(dest))
+            if blob.updated:
+                ts = blob.updated.timestamp()
+                os.utime(dest, (ts, ts))
+            logger.info(f"GCS down: {rel} (updated {blob.updated})")
+            got = True
+    except Exception as e:
+        logger.warning(f"GCS risk-flag download failed (keeping local files): {e}")
+    return got
+
+
 def upload_vegas_market():
     """local -> GCS for the QQQ/QLD pack when the Merrill backtest did not upload."""
     return _upload(VEGAS_MARKET_FILES)
+
+
+def upload_risk_flags():
+    """local -> GCS for the scorecard when the Merrill backtest did not upload."""
+    return _upload(RISK_FLAG_FILES)
 
 
 def upload_ibkr():

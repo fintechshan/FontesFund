@@ -6,6 +6,8 @@
 # 还要下载整组 ETF）。轻量刷新通常一两分钟内结束（含 pip）。
 #
 # 必需：仓库 Secret FRED_API_KEY。
+# 可选：仓库 Secret SERVERCHAN_SENDKEY。有则 Server酱再推一条微信；没有只警告。
+# 风险旗（A_vol / B_crowd / C_put）只在新亮起时走同一条 Issue，不改仓。
 # 推送状态：permissions.contents: write + GITHUB_TOKEN，提交信息带 [skip ci]。
 # 若分支保护拒绝 github-actions[bot]，设置 Secret NOTIFY_PUSH_TOKEN
 # （fine-grained PAT，本仓库 Contents 读写）。见 docs/notify.md。
@@ -63,6 +65,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           NOTIFY_FORCE: ${{ github.event.inputs.force }}
+          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
         run: |
           set -euo pipefail
           if [ -z "${FRED_API_KEY}" ]; then

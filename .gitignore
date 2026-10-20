@@ -63,6 +63,10 @@ logs/
 # Notifier run log. The committed record is last_delivery inside data/notify_state.json.
 data/notify_audit.json
 
+# Risk-flag price cache. The scorecard itself (flags.json) stays tracked.
+data/risk_flags/prices.csv
+data/risk_flags/*.tmp
+
 # Jupyter
 .ipynb_checkpoints/
 
