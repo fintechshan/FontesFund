@@ -2,8 +2,9 @@
 
 The monthly Merrill sleeve is the starting book. The headline path then
 applies this overlay every day, in ``run_optimized_regime_backtest``
-(``turnover_basis='legacy'``, ``apply_equity_cut=False``) and in
-``scripts/ibkr_rebalance.py``. Both read the same last-day record.
+(``turnover_basis='legacy'``, ``apply_equity_cut=False``).
+``scripts/ibkr_rebalance.py`` and ``scripts/moomoo_rebalance.py`` both call
+``current_regime_and_weights`` and read that same last-day record.
 
 Headline order:
 
