@@ -10,14 +10,19 @@ import pandas as pd
 
 from src.dashboard.app import (
     QQQ_VEGAS_DIR,
+    VEGAS_INITIAL_CAPITAL,
     _build_qqq_vegas_body,
+    _vegas_equity_figure,
+    _vegas_equity_series,
     _vegas_heatmap_figure,
     _vegas_monthly_returns,
+    _vegas_nav_to_dollars,
     _vegas_qqq_calendar_returns,
     _vegas_qqq_level,
     build_qqq_vegas_tab,
     create_app,
     load_qqq_vegas,
+    make_equity_curves,
     make_monthly_heatmap,
 )
 
@@ -118,10 +123,25 @@ class QqqVegasTabTests(unittest.TestCase):
         equity = _find_id(tab, 'qqq-vegas-equity')
         names = [trace.name for trace in equity.figure.data]
         self.assertEqual(names, ['QQQ Vegas', 'Buy & hold QQQ', 'Vegas only'])
+        for trace in equity.figure.data:
+            y0 = trace.y.iloc[0] if hasattr(trace.y, 'iloc') else trace.y[0]
+            self.assertAlmostEqual(float(y0), VEGAS_INITIAL_CAPITAL, places=2)
+            self.assertIn('$%{y:,.0f}', trace.hovertemplate)
         self.assertAlmostEqual(float(equity.figure.data[0].y.iloc[0]
                                       if hasattr(equity.figure.data[0].y, 'iloc')
                                       else equity.figure.data[0].y[0]),
                                float(bundle['equity']['equity'].iloc[0]), places=6)
+        self.assertIn('净值 (USD)', equity.figure.layout.yaxis.title.text)
+        self.assertIn('100,000', equity.figure.layout.title.text)
+        stored = pd.read_csv(QQQ_VEGAS_DIR / 'equity_curve.csv')
+        self.assertAlmostEqual(float(stored['equity'].iloc[0]), VEGAS_INITIAL_CAPITAL, places=2)
+        self.assertAlmostEqual(float(stored['qqq_bh'].iloc[0]), VEGAS_INITIAL_CAPITAL, places=2)
+        self.assertAlmostEqual(float(stored['vegas_only_equity'].iloc[0]), VEGAS_INITIAL_CAPITAL, places=2)
+        self.assertAlmostEqual(float(stored['equity'].iloc[1]), 103361.417, places=3)
+        self.assertAlmostEqual(float(stored['drawdown'].iloc[6]), -0.03977506, places=8)
+        self.assertAlmostEqual(float(stored['rv20'].iloc[0]), 0.307838, places=6)
+        self.assertEqual(int(stored['signal'].iloc[0]), 1)
+        self.assertEqual(int(stored['pos'].iloc[0]), 0)
         drawdown = _find_id(tab, 'qqq-vegas-drawdown')
         dd_y = drawdown.figure.data[0].y
         dd_value = float(dd_y.iloc[1] if hasattr(dd_y, 'iloc') else dd_y[1])
@@ -241,6 +261,52 @@ class QqqVegasTabTests(unittest.TestCase):
                          ['QQQ Vegas', 'Vegas only', 'Buy & hold QQQ'])
         self.assertEqual(str(yearly.figure.data[0].x[0]), '1999')
         self.assertAlmostEqual(float(yearly.figure.data[0].y[0]), 111.3, places=2)
+
+    def test_nav_scale_matches_other_strategies_and_stays_idempotent(self):
+        frame = pd.DataFrame({
+            'date': pd.to_datetime(['1999-01-04', '1999-01-05']),
+            'equity': [1.0, 1.03361417],
+            'qqq_bh': [1.0, 1.02621346],
+            'vegas_only_equity': [1.0, 1.03401417],
+            'drawdown': [0.0, -0.03977506],
+            'strat_ret': [0.0, 0.03361417],
+            'rv20': [0.307838, 0.298347],
+            'signal': [1, 1],
+        })
+        once = _vegas_nav_to_dollars(frame)
+        twice = _vegas_nav_to_dollars(once)
+        self.assertAlmostEqual(float(once['equity'].iloc[0]), 100_000.0, places=2)
+        self.assertAlmostEqual(float(once['equity'].iloc[1]), 103361.417, places=3)
+        self.assertAlmostEqual(float(once['qqq_bh'].iloc[1]), 102621.346, places=3)
+        self.assertAlmostEqual(float(once['vegas_only_equity'].iloc[1]), 103401.417, places=3)
+        self.assertAlmostEqual(float(twice['equity'].iloc[1]), float(once['equity'].iloc[1]), places=6)
+        self.assertAlmostEqual(float(once['drawdown'].iloc[1]), -0.03977506, places=8)
+        self.assertAlmostEqual(float(once['strat_ret'].iloc[1]), 0.03361417, places=8)
+        self.assertAlmostEqual(float(once['rv20'].iloc[0]), 0.307838, places=6)
+        self.assertEqual(int(once['signal'].iloc[0]), 1)
+        self.assertAlmostEqual(float(frame['equity'].iloc[0]), 1.0, places=6)
+
+        fig = _vegas_equity_figure(frame)
+        for trace in fig.data:
+            y0 = trace.y.iloc[0] if hasattr(trace.y, 'iloc') else trace.y[0]
+            self.assertAlmostEqual(float(y0), 100_000.0, places=2)
+        self.assertEqual(fig.layout.yaxis.tickformat, '$,.0f')
+
+        idx = pd.to_datetime(['2005-01-04', '2005-01-05'])
+        regime = pd.DataFrame({'Optimized Regime Strategy': [1.0, 1.01]}, index=idx)
+        regime_fig = make_equity_curves(
+            regime, pd.Series(dtype=float), main_name='Optimized Regime Strategy',
+        )
+        y0 = regime_fig.data[0].y
+        self.assertAlmostEqual(float(y0.iloc[0] if hasattr(y0, 'iloc') else y0[0]), 100_000.0, places=2)
+
+        bundle = load_qqq_vegas()
+        nav = _vegas_equity_series(bundle['equity'])
+        january = nav[(nav.index.year == 1999) & (nav.index.month == 1)]
+        expected = float(january.iloc[-1]) / float(nav.iloc[0]) - 1.0
+        got = float(_vegas_monthly_returns(bundle['equity']).iloc[0])
+        self.assertAlmostEqual(got, expected, places=6)
+        self.assertLess(abs(got), 2.0)
 
     def test_heatmap_falls_back_to_equity_curve(self):
         bundle = load_qqq_vegas()
