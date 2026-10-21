@@ -3492,6 +3492,9 @@ def build_cdn_portfolio_tab(data):
 # QQQ VEGAS — read-only sleeve display (not the Merrill book)
 # ═══════════════════════════════════════════════════════════════════════════
 QQQ_VEGAS_DIR = Path(__file__).resolve().parents[2] / 'data' / 'qqq_vegas'
+# Same dollar start as make_equity_curves (* 100_000) and INITIAL_CAPITAL.
+VEGAS_INITIAL_CAPITAL = 100_000.0
+VEGAS_NAV_COLUMNS = ('equity', 'qqq_bh', 'vegas_only_equity')
 
 _VEGAS_HDR = {'backgroundColor': '#16213e', 'color': '#c8c8d4', 'fontWeight': '600',
               'border': '1px solid #2d2d44', 'fontFamily': 'Inter', 'fontSize': '11px'}
@@ -3618,6 +3621,11 @@ def load_qqq_vegas(directory=None):
     column is the strategy. ``qqq_bh`` on that curve (else ``market_prices.csv``
     column ``QQQ``) supplies the same-year buy-and-hold column.
     ``yearly_returns.csv`` and ``strategy.json`` are display-only and optional.
+
+    ``equity``, ``qqq_bh``, and ``vegas_only_equity`` are USD of
+    ``VEGAS_INITIAL_CAPITAL`` ($100,000). A handoff that is still a growth-of-1
+    index (first bar near 1) is multiplied by that capital here. Drawdown,
+    daily returns, and the RV20/Q80 columns are not levels and are not scaled.
     """
     base = Path(directory) if directory is not None else QQQ_VEGAS_DIR
     missing = []
@@ -3669,6 +3677,7 @@ def load_qqq_vegas(directory=None):
             if 'date' in equity.columns:
                 equity = equity.copy()
                 equity['date'] = pd.to_datetime(equity['date'], errors='coerce')
+            equity = _vegas_nav_to_dollars(equity)
         except (OSError, ValueError, pd.errors.ParserError):
             missing.append(equity_path.name)
             equity = pd.DataFrame()
@@ -3785,6 +3794,53 @@ _VEGAS_RULES_EN = (
 
 def _vegas_frame(value):
     return value if isinstance(value, pd.DataFrame) else pd.DataFrame()
+
+
+def _vegas_nav_to_dollars(frame, initial=VEGAS_INITIAL_CAPITAL):
+    """Scale growth-of-1 NAV columns to USD starting at ``initial``.
+
+    The handoff stores ``equity``, ``qqq_bh``, and ``vegas_only_equity`` as a
+    unit index (first bar = 1). Other strategy charts multiply that index by
+    100,000. Drawdown, daily returns, and the RV20/Q80 signal columns stay
+    as stored.
+
+    A frame whose ``equity`` already starts at dollar scale (at or above
+    ``initial / 10``) is returned unchanged, so applying this twice does not
+    compound. A missing frame becomes an empty DataFrame.
+    """
+    if not isinstance(frame, pd.DataFrame):
+        return pd.DataFrame()
+    if frame.empty or 'equity' not in frame.columns:
+        return frame
+    start = pd.to_numeric(frame['equity'], errors='coerce').dropna()
+    if start.empty:
+        return frame
+    origin = float(start.iloc[0])
+    if not np.isfinite(origin) or origin <= 0 or origin >= float(initial) / 10.0:
+        return frame
+    scaled = frame.copy()
+    factor = float(initial)
+    for column in VEGAS_NAV_COLUMNS:
+        if column not in scaled.columns:
+            continue
+        scaled[column] = pd.to_numeric(scaled[column], errors='coerce') * factor
+    return scaled
+
+
+def _vegas_unit_index(series):
+    """Growth-of-1 series for return math that pads the prior month with 1.
+
+    ``monthly_from_equity`` assumes that pad. Dollar NAV (first bar =
+    100,000) is divided by its first bar so the first month matches the
+    unit-index handoff. A series that already starts at 1 is unchanged.
+    """
+    series = pd.Series(series).dropna().astype(float)
+    if len(series) == 0:
+        return series
+    origin = float(series.iloc[0])
+    if not np.isfinite(origin) or origin == 0 or abs(origin - 1.0) <= 1e-8:
+        return series
+    return series / origin
 
 
 def _vegas_on_off(value):
@@ -3921,40 +3977,49 @@ def _vegas_sample_line(summary, signal, equity):
 
 def _vegas_equity_figure(curve):
     fig = go.Figure()
-    curve = _vegas_frame(curve)
+    curve = _vegas_nav_to_dollars(curve)
     if curve.empty or 'date' not in curve.columns:
         fig.update_layout(**PL, title='Equity curve — no data', height=420)
         return fig
     dates = curve['date']
+
+    def dollar_hover(name):
+        return '%{x|%Y-%m-%d}: $%{y:,.0f}<extra>' + name + '</extra>'
+
     if 'equity' in curve.columns:
         fig.add_trace(go.Scatter(
             x=dates, y=pd.to_numeric(curve['equity'], errors='coerce'),
             name='QQQ Vegas',
             line=dict(color='#00d97e', width=2.2),
-            hovertemplate='%{x|%Y-%m-%d}: %{y:.3f}<extra>QQQ Vegas</extra>',
+            hovertemplate=dollar_hover('QQQ Vegas'),
         ))
     if 'qqq_bh' in curve.columns:
         fig.add_trace(go.Scatter(
             x=dates, y=pd.to_numeric(curve['qqq_bh'], errors='coerce'),
             name='Buy & hold QQQ',
             line=dict(color='#00e5ff', width=1.5, dash='dot'),
-            hovertemplate='%{x|%Y-%m-%d}: %{y:.3f}<extra>Buy & hold QQQ</extra>',
+            hovertemplate=dollar_hover('Buy & hold QQQ'),
         ))
     if 'vegas_only_equity' in curve.columns:
         fig.add_trace(go.Scatter(
             x=dates, y=pd.to_numeric(curve['vegas_only_equity'], errors='coerce'),
             name='Vegas only',
             line=dict(color='#9b59b6', width=1.2, dash='dash'),
-            hovertemplate='%{x|%Y-%m-%d}: %{y:.3f}<extra>Vegas only</extra>',
+            hovertemplate=dollar_hover('Vegas only'),
         ))
     fig.update_layout(**{
         **PL,
-        **_multi_series_chrome('QQQ Vegas vs buy-and-hold QQQ', height=480, bottom=110),
-        'yaxis_title': 'Growth of $1',
+        **_multi_series_chrome(
+            '净值曲线 · Equity curve ($100,000 USD initial)',
+            height=480,
+            bottom=110,
+            left=88,
+        ),
+        'yaxis_title': '净值 (USD)',
         'hovermode': 'x unified',
     })
     fig.update_xaxes(automargin=True)
-    fig.update_yaxes(automargin=True)
+    fig.update_yaxes(automargin=True, tickformat='$,.0f')
     return fig
 
 
@@ -3984,7 +4049,7 @@ def _vegas_drawdown_figure(curve):
 
 
 def _vegas_equity_series(curve):
-    """Growth index from equity_curve.csv, indexed by date."""
+    """Equity NAV from equity_curve.csv, indexed by date (USD after scaling)."""
     curve = _vegas_frame(curve)
     if curve.empty:
         return pd.Series(dtype=float)
@@ -4002,8 +4067,10 @@ def _vegas_monthly_returns(curve):
 
     Fallback when ``monthly_returns.csv`` is absent. Same input the Backtest
     heatmap uses: ``monthly_from_equity`` on the ``equity`` column only.
+    Dollar NAV is divided by its first bar first, because that helper pads
+    the prior month with 1. The first month then matches the unit-index handoff.
     """
-    return monthly_from_equity(_vegas_equity_series(curve))
+    return monthly_from_equity(_vegas_unit_index(_vegas_equity_series(curve)))
 
 
 def _vegas_month_column(frame, month):
@@ -4601,11 +4668,12 @@ def _build_qqq_vegas_body(bundle):
     equity_frame = _vegas_frame(bundle.get('equity'))
     has_prior_equity = 'vegas_only_equity' in equity_frame.columns
     equity_caption = (
-        'Strategy equity versus buy-and-hold QQQ. '
+        '净值以美元计，起点 $100,000（增长指数 × 100,000），与其他策略相同。'
+        'Strategy equity versus buy-and-hold QQQ, in USD. '
         + (
             'The dashed line is the same engine without the RV gate (vegas_only_equity).'
             if has_prior_equity else
-            'Values are the growth index in equity_curve.csv.'
+            'Each line is that series in USD.'
         )
     )
     compare = _vegas_compare_section(summary)
@@ -4749,7 +4817,9 @@ def _build_qqq_vegas_body(bundle):
                       config={'displayModeBar': False}),
             _source_line(
                 'Source: data/qqq_vegas/equity_curve.csv (date, equity, qqq_bh, drawdown'
-                + (', vegas_only_equity).' if has_prior_equity else ').')
+                + (', vegas_only_equity). ' if has_prior_equity else '). ')
+                + 'equity, qqq_bh, and vegas_only_equity are USD '
+                + '(growth index × 100,000). Drawdown stays a fraction.'
             ),
         ], style={**CS, 'marginBottom': '16px'}),
 
