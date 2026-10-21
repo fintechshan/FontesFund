@@ -2,27 +2,58 @@
   "schema": 1,
   "clock": "targeted",
   "regime": "reflation",
-  "vix_band": "20-28",
-  "vix_band_name": "偏高",
-  "vix": 20.0,
+  "vix_band": "0-20",
+  "vix_band_name": "正常",
+  "vix": 18.4,
   "cpi_yoy": 4.02,
   "gdp": 2.2,
-  "spy_momentum": 0.1598,
-  "price_asof": "2026-10-16",
-  "checked_at": "2026-10-20 01:21 UTC",
+  "spy_momentum": 0.1727,
+  "price_asof": "2026-10-19",
+  "checked_at": "2026-10-21 01:08 UTC",
+  "risk_flags": {
+    "as_of": "2026-10-19",
+    "signal_date": "2026-10-16",
+    "status": {
+      "A_vol": "on",
+      "B_crowd": "on",
+      "C_put": "off"
+    },
+    "mode": {
+      "A_vol": "full",
+      "B_crowd": "full",
+      "C_put": "full"
+    },
+    "detail": {
+      "A_vol": "SOXX RV20 36.5% vs Q80 36.4%；VXN 27.13 vs Q80 27.20",
+      "B_crowd": "5日 -11.8% · 10日 -16.2% · 振幅/收盘 0.21 vs 中位数 0.07（高低价）· 连跌 9 日",
+      "C_put": "VIX 19.99 vs 5日前 14.84 · SOXX 493.39 vs SMA50 537.15 · 10日 -16.2% · 卖Put清单提示，不下单"
+    },
+    "rule_zh": {
+      "A_vol": "SOXX 的 20 日实现波动率高于扩窗 80% 分位（min_periods=252），或 VXN 高于自身扩窗 80% 分位（min_periods=252）。滞后 1 个交易日。",
+      "B_crowd": "价格代理，不是高盛对冲基金资金流：（SOXX 5 日 ≤ −8% 或 10 日 ≤ −12%）且 10 日振幅/收盘 > 扩窗中位数（min_periods=10），或（连跌 ≥ 4 日且 5 日 ≤ −5%）。滞后 1 个交易日。",
+      "C_put": "VIX≥25 且 VIX 较 5 个交易日前上升，且 SOXX < SMA50，且 SOXX 10 日 ≤ −8%。只是卖 Put 清单提示，不下单。滞后 1 个交易日。"
+    },
+    "A_vol": true,
+    "B_crowd": true,
+    "C_put": false
+  },
   "last_delivery": {
     "schema": 1,
     "action": "notify",
     "should_fire": true,
     "kind": "vix",
-    "title": "[风险档位] VIX 20.0 → 偏高（2026-10-16）",
-    "fingerprint": "vix|reflation>reflation|0-20>20-28|2026-10-16",
+    "title": "[风险档位] VIX 18.4 → 正常（2026-10-19）",
+    "fingerprint": "vix|reflation>reflation|20-28>0-20|2026-10-19",
     "delivery": "created",
-    "issue_number": 23,
-    "issue_url": "https://github.com/fintechshan/FontesFund/issues/23",
-    "checked_at": "2026-10-20 01:21 UTC",
-    "checked_at_iso": "2026-10-20T01:21:47Z",
-    "price_asof": "2026-10-16",
-    "error": null
+    "issue_number": 27,
+    "issue_url": "https://github.com/fintechshan/FontesFund/issues/27",
+    "checked_at": "2026-10-21 01:08 UTC",
+    "checked_at_iso": "2026-10-21T01:08:08Z",
+    "price_asof": "2026-10-19",
+    "error": null,
+    "wechat": {
+      "status": "skipped",
+      "reason": "missing_sendkey"
+    }
   }
 }
