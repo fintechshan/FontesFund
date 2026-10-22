@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import io
 import json
 import os
 import pickle
@@ -96,6 +97,19 @@ FRED_SERIES = (
     ('t10y', 'DGS10'),
     ('t2y', 'DGS2'),
 )
+
+# fredapi reads observations with ElementTree. A plain-text gateway page
+# (no leading "<") becomes "syntax error: line 1, column 0" and hides the
+# status. Ask for JSON, and keep the public CSV of the same series as a
+# fallback when that body is transiently unusable. A rejected key does not
+# fall back.
+FRED_OBSERVATIONS_URL = 'https://api.stlouisfed.org/fred/series/observations'
+FRED_CSV_URL = 'https://fred.stlouisfed.org/graph/fredgraph.csv'
+FRED_OBSERVATION_START = '2000-01-01'
+FRED_PAGE_LIMIT = 100_000
+FRED_ATTEMPTS = 3
+FRED_CSV_ATTEMPTS = 2
+FRED_TIMEOUT_SEC = 60
 
 _CLASSIFIER = None
 
@@ -856,19 +870,329 @@ def fred_api_key() -> str:
     return (os.environ.get('FRED_API_KEY') or '').strip() or _dotenv_fred()
 
 
-def _fred_get(fred, series_id: str) -> pd.Series:
-    last_err = None
-    for attempt in range(3):
+class FredResponseError(Exception):
+    def __init__(self, message: str, *, retryable: bool = True):
+        super().__init__(message)
+        self.retryable = retryable
+
+
+def _redact_transport(text: str, secret: str = '') -> str:
+    """Drop API keys from a FRED error. Does not replace the Server酱 redactor."""
+    def hide_url(match: re.Match) -> str:
+        url = match.group(0)
+        if 'api_key=' in url or (secret and secret in url):
+            return '[url]'
+        return url
+
+    cleaned = re.sub(r'https?://\S+', hide_url, str(text))
+    cleaned = re.sub(r'(api_key=)[^&\s]+', r'\1***', cleaned)
+    if secret:
+        cleaned = cleaned.replace(secret, '***')
+    return ' '.join(cleaned.split())
+
+
+def _clip(text: str, limit: int = 300) -> str:
+    text = _redact_transport(text)
+    if len(text) <= limit:
+        return text
+    return text[:limit] + '…'
+
+
+def _body_snippet(body: bytes, limit: int = 140) -> str:
+    text = body[:limit].decode('utf-8', errors='replace')
+    text = ' '.join(text.split())
+    return text or '空'
+
+
+def _header(headers, name: str) -> str:
+    if not headers:
+        return ''
+    getter = getattr(headers, 'get', None)
+    if getter is None:
+        return ''
+    value = getter(name)
+    if value is None:
+        value = getter(name.lower())
+    return '' if value is None else str(value)
+
+
+def _coerce_body(body) -> bytes:
+    if body is None:
+        return b''
+    if isinstance(body, str):
+        return body.encode('utf-8')
+    return bytes(body)
+
+
+def _body_kind(body: bytes) -> str:
+    head = body.lstrip().lstrip(b'\xef\xbb\xbf')[:80].lower()
+    if head.startswith(b'<?xml') or head.startswith(b'<error') or b'<observations' in head:
+        return 'XML'
+    if head.startswith(b'<'):
+        return 'HTML'
+    return '文本'
+
+
+def _read_http(opener, req, timeout: int) -> tuple[int, object, bytes]:
+    try:
+        ctx = opener(req, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        return int(exc.code), getattr(exc, 'headers', {}) or {}, _coerce_body(exc.read())
+    except urllib.error.URLError as exc:
+        raise FredResponseError(f'网络错误：{exc.reason}', retryable=True) from exc
+    except FredResponseError:
+        raise
+    except Exception as exc:
+        raise FredResponseError(
+            f'{exc.__class__.__name__}：{_clip(str(exc))}',
+            retryable=True,
+        ) from exc
+    with ctx as resp:
+        status = getattr(resp, 'status', None)
+        if status is None:
+            status = getattr(resp, 'code', 200)
+        headers = getattr(resp, 'headers', {}) or {}
+        return int(status), headers, _coerce_body(resp.read())
+
+
+def _non_json_message(series_id: str, status: int, headers, body: bytes) -> str:
+    ctype = _header(headers, 'Content-Type') or '未知'
+    stripped = body.lstrip().lstrip(b'\xef\xbb\xbf')
+    if not stripped:
+        return f'{series_id} HTTP {status} 空响应（Content-Type: {ctype}）'
+    kind = _body_kind(stripped)
+    return (
+        f'{series_id} HTTP {status} 返回{kind}而不是 JSON'
+        f'（Content-Type: {ctype}）。正文开头：{_body_snippet(stripped)}'
+    )
+
+
+def _decode_json_body(series_id: str, status: int, headers, body: bytes):
+    stripped = body.lstrip().lstrip(b'\xef\xbb\xbf')
+    if not stripped or stripped[:1] not in (b'{', b'['):
+        # Plain text and HTML are gateway pages, including HTTP 403 "Access Denied".
+        # A rejected FRED key is JSON and is handled below, not here.
+        raise FredResponseError(
+            _non_json_message(series_id, status, headers, body),
+            retryable=True,
+        )
+    try:
+        return json.loads(stripped.decode('utf-8'))
+    except json.JSONDecodeError as exc:
+        ctype = _header(headers, 'Content-Type') or '未知'
+        raise FredResponseError(
+            f'{series_id} HTTP {status} JSON 无法解析（{exc.msg}）。'
+            f'Content-Type: {ctype}。正文开头：{_body_snippet(stripped)}',
+            retryable=True,
+        ) from exc
+
+
+def _client_error(code) -> bool:
+    try:
+        code_i = int(code)
+    except (TypeError, ValueError):
+        return False
+    return 400 <= code_i < 500 and code_i != 429
+
+
+def _observations_from_payload(payload, series_id: str) -> tuple[list[tuple[str, float]], int, int | None]:
+    if not isinstance(payload, dict):
+        raise FredResponseError(f'{series_id} JSON 不是对象', retryable=True)
+    if payload.get('error_message'):
+        code = payload.get('error_code')
+        raise FredResponseError(
+            f'{series_id} API 错误 {code}: {payload.get("error_message")}',
+            retryable=not _client_error(code),
+        )
+    obs = payload.get('observations')
+    if not isinstance(obs, list):
+        raise FredResponseError(f'{series_id} JSON 没有 observations 数组', retryable=True)
+    rows: list[tuple[str, float]] = []
+    for item in obs:
+        if not isinstance(item, dict):
+            continue
+        raw = item.get('value')
+        date = item.get('date')
+        if date is None or raw in (None, '', '.'):
+            continue
         try:
-            series = fred.get_series(series_id, observation_start='2000-01-01').dropna()
-            series.index = pd.to_datetime(series.index)
-            if getattr(series.index, 'tz', None) is not None:
-                series.index = series.index.tz_localize(None)
-            return series.sort_index()
-        except Exception as exc:  # noqa: BLE001 — retry network/API errors
-            last_err = exc
-            time.sleep(2 * (attempt + 1))
-    die(f'FRED {series_id} 拉取失败：{last_err}', code=2)
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        rows.append((str(date), value))
+    reported = payload.get('count')
+    count = None
+    if reported is not None:
+        try:
+            count = int(reported)
+        except (TypeError, ValueError):
+            count = None
+    return rows, len(obs), count
+
+
+def _series_from_rows(rows: list[tuple[str, float]], series_id: str) -> pd.Series:
+    if not rows:
+        raise FredResponseError(f'{series_id} 没有可用观测', retryable=True)
+    series = pd.Series(
+        [value for _date, value in rows],
+        index=pd.to_datetime([date for date, _value in rows]),
+    )
+    series = series[~series.index.duplicated(keep='last')].sort_index().dropna()
+    if getattr(series.index, 'tz', None) is not None:
+        series.index = series.index.tz_localize(None)
+    if series.empty:
+        raise FredResponseError(f'{series_id} 没有可用观测', retryable=True)
+    return series
+
+
+def _fred_request(series_id: str, api_key: str, offset: int) -> urllib.request.Request:
+    query = urllib.parse.urlencode({
+        'series_id': series_id,
+        'api_key': api_key,
+        'file_type': 'json',
+        'observation_start': FRED_OBSERVATION_START,
+        'limit': str(FRED_PAGE_LIMIT),
+        'offset': str(offset),
+        'sort_order': 'asc',
+    })
+    return urllib.request.Request(
+        f'{FRED_OBSERVATIONS_URL}?{query}',
+        headers={'Accept': 'application/json'},
+    )
+
+
+def _fred_fetch_page(series_id: str, api_key: str, offset: int, opener) -> tuple[list, int, int | None]:
+    status, headers, body = _read_http(opener, _fred_request(series_id, api_key, offset), FRED_TIMEOUT_SEC)
+    payload = _decode_json_body(series_id, status, headers, body)
+    if status in (408, 429) or status >= 500:
+        if not (isinstance(payload, dict) and payload.get('observations') is not None and not payload.get('error_message')):
+            message = payload.get('error_message') if isinstance(payload, dict) else ''
+            detail = f'{series_id} HTTP {status}'
+            if message:
+                detail = f'{detail}：{message}'
+            raise FredResponseError(detail, retryable=True)
+    return _observations_from_payload(payload, series_id)
+
+
+def _fred_get_json(series_id: str, api_key: str, opener) -> pd.Series:
+    rows: list[tuple[str, float]] = []
+    offset = 0
+    for _page in range(20):
+        page_rows, n_raw, count = _fred_fetch_page(series_id, api_key, offset, opener)
+        rows.extend(page_rows)
+        offset += n_raw
+        if n_raw == 0 or count is None or offset >= count:
+            break
+    else:
+        raise FredResponseError(f'{series_id} 分页超过 20 次', retryable=True)
+    return _series_from_rows(rows, series_id)
+
+
+def _parse_fred_csv(series_id: str, status: int, headers, body: bytes) -> pd.Series:
+    stripped = body.lstrip().lstrip(b'\xef\xbb\xbf')
+    ctype = _header(headers, 'Content-Type') or '未知'
+    if not stripped or stripped[:1] in (b'<', b'{') or stripped[:1] == b'[':
+        kind = '空' if not stripped else _body_kind(stripped)
+        raise FredResponseError(
+            f'{series_id} CSV 备用源 HTTP {status} 返回{kind}而不是 CSV'
+            f'（Content-Type: {ctype}）。正文开头：{_body_snippet(stripped)}',
+            retryable=True,
+        )
+    try:
+        frame = pd.read_csv(io.BytesIO(stripped), na_values=['.'])
+    except Exception as exc:
+        raise FredResponseError(
+            f'{series_id} CSV 无法解析（{exc.__class__.__name__}）。正文开头：{_body_snippet(stripped)}',
+            retryable=True,
+        ) from exc
+    columns = [str(col) for col in frame.columns]
+    if len(columns) < 2:
+        raise FredResponseError(
+            f'{series_id} CSV 缺少数值列。正文开头：{_body_snippet(stripped)}',
+            retryable=True,
+        )
+    value_col = series_id if series_id in columns else columns[1]
+    dates = pd.to_datetime(frame[columns[0]], errors='coerce')
+    values = pd.to_numeric(frame[value_col], errors='coerce')
+    series = pd.Series(values.to_numpy(), index=dates)
+    series = series[series.index.notna()].dropna()
+    series = series[series.index >= pd.Timestamp(FRED_OBSERVATION_START)]
+    series = series[~series.index.duplicated(keep='last')].sort_index()
+    if getattr(series.index, 'tz', None) is not None:
+        series.index = series.index.tz_localize(None)
+    if series.empty:
+        raise FredResponseError(f'{series_id} CSV 没有可用观测', retryable=False)
+    return series
+
+
+def _fred_get_csv(series_id: str, opener) -> pd.Series:
+    query = urllib.parse.urlencode({'id': series_id, 'cosd': FRED_OBSERVATION_START})
+    req = urllib.request.Request(f'{FRED_CSV_URL}?{query}', headers={'Accept': 'text/csv'})
+    status, headers, body = _read_http(opener, req, FRED_TIMEOUT_SEC)
+    if status >= 400:
+        raise FredResponseError(
+            f'{series_id} CSV 备用源 HTTP {status}。正文开头：{_body_snippet(body)}',
+            retryable=status in (408, 429) or status >= 500,
+        )
+    return _parse_fred_csv(series_id, status, headers, body)
+
+
+def _fred_attempt(fetch, attempts: int, sleeper) -> tuple[pd.Series | None, FredResponseError | None]:
+    last: FredResponseError | None = None
+    for attempt in range(attempts):
+        try:
+            return fetch(), None
+        except FredResponseError as exc:
+            last = exc
+            if not exc.retryable or attempt + 1 >= attempts:
+                break
+            sleeper(2 * (attempt + 1))
+        except Exception as exc:  # noqa: BLE001 — transport bugs should retry, not hide the body
+            last = FredResponseError(f'{exc.__class__.__name__}：{_clip(str(exc))}', retryable=True)
+            if attempt + 1 >= attempts:
+                break
+            sleeper(2 * (attempt + 1))
+    return None, last
+
+
+def _fred_get(
+    series_id: str,
+    api_key: str,
+    *,
+    opener=None,
+    sleeper=None,
+    attempts: int = FRED_ATTEMPTS,
+    csv_attempts: int = FRED_CSV_ATTEMPTS,
+) -> pd.Series:
+    """Fetch one FRED series. JSON first; public CSV only after retryable API failures."""
+    opener = opener or urllib.request.urlopen
+    sleeper = sleeper or time.sleep
+    series, last = _fred_attempt(
+        lambda: _fred_get_json(series_id, api_key, opener),
+        attempts,
+        sleeper,
+    )
+    if series is not None:
+        return series
+    assert last is not None
+    if not last.retryable:
+        die(f'FRED {series_id} 拉取失败：{_redact_transport(str(last), api_key)}', code=2)
+    csv_series, csv_err = _fred_attempt(
+        lambda: _fred_get_csv(series_id, opener),
+        csv_attempts,
+        sleeper,
+    )
+    if csv_series is not None:
+        _warn(
+            f'FRED {series_id} API 连续失败（{_redact_transport(str(last), api_key)}）。'
+            '已改用公开 fredgraph.csv 的同一序列。'
+        )
+        return csv_series
+    die(
+        f'FRED {series_id} 拉取失败：{_redact_transport(str(last), api_key)}。'
+        f'CSV 备用源也失败：{_redact_transport(str(csv_err), api_key)}',
+        code=2,
+    )
     raise AssertionError('unreachable')
 
 
@@ -921,10 +1245,7 @@ def refresh_caches() -> None:
             '缺少 FRED_API_KEY。在仓库 Secrets 或本地 .env 中设置后再 --refresh。'
             '说明见 docs/notify.md。'
         )
-    from fredapi import Fred
-
-    fred = Fred(api_key=key)
-    macro = {name: _fred_get(fred, series_id) for name, series_id in FRED_SERIES}
+    macro = {name: _fred_get(series_id, key) for name, series_id in FRED_SERIES}
     spy = _download_spy()
     last_price = pd.Timestamp(spy.index.max()).normalize()
     last_vix = pd.Timestamp(macro['vix'].index.max()).normalize()

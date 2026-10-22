@@ -204,8 +204,10 @@ A local change without `--github-issue` only prints. It does not advance `notify
 
 Each run calls `python scripts/notify_regime.py --refresh`. That downloads:
 
-- FRED: `VIXCLS`, `CPIAUCSL`, `A191RL1Q225SBEA` (real GDP % change), `DGS10`, `DGS2`
+- FRED observations as JSON (`file_type=json`): `VIXCLS`, `CPIAUCSL`, `A191RL1Q225SBEA` (real GDP % change), `DGS10`, `DGS2`
 - Yahoo: `SPY` only (12-month momentum)
+
+The notifier does not use `fredapi`. That client parses the body with `ElementTree`, so a plain-text gateway page becomes `syntax error: line 1, column 0` and drops the HTTP status. A non-JSON body, an empty body, or a transient HTTP 408/429/5xx is retried. If the API still does not return observations, the same series id is read from the public `fredgraph.csv` feed. A rejected API key stays a hard failure and does not use that fallback. The failure text includes the status, content type, and a short body snippet. The API key is not printed.
 
 Runtime is typically one to two minutes including `pip`, not the full `run_backtest.py` universe download and 20-year engine. The production engine remains `python run_backtest.py` when you want the published CSV.
 
@@ -229,7 +231,7 @@ The save step does not run when the audit step sets `confirmed_miss=true`. A sho
 ## Local preview
 
 ```bash
-pip install 'pandas>=2.1,<3' numpy 'yfinance>=0.2.18' fredapi
+pip install 'pandas>=2.1,<3' numpy 'yfinance>=0.2.18'
 export FRED_API_KEY=...          # or put it in .env
 
 python scripts/notify_regime.py --refresh --dry-run

@@ -1,6 +1,8 @@
 """Offline smoke tests for the regime notifier. No FRED, no GitHub."""
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import pickle
@@ -8,6 +10,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
+import urllib.parse
 from pathlib import Path
 
 import numpy as np
@@ -428,6 +432,13 @@ class WorkflowContractTests(unittest.TestCase):
             line for line in text.splitlines() if line.startswith('        run:') or 'python ' in line
         )
         self.assertNotIn('run_backtest.py', run_steps)
+        self.assertNotIn('fredapi', run_steps)
+
+    def test_docs_describe_fred_fetch(self):
+        text = (ROOT / 'docs' / 'notify.md').read_text(encoding='utf-8')
+        self.assertIn('file_type=json', text)
+        self.assertIn('fredgraph.csv', text)
+        self.assertIn('syntax error', text)
 
     def test_unit_ci_does_not_need_fred(self):
         text = (ROOT / '.github' / 'workflows' / 'test-notify.yml').read_text(encoding='utf-8')
@@ -900,6 +911,269 @@ class AuditExecuteTests(unittest.TestCase):
             nr.time.sleep = real_sleep
         self.assertIsNone(found)
         self.assertGreaterEqual(sum(url.endswith('/issues/4') for url in calls), 3)
+
+
+_FRED_KEY = 'notify-test-fred-key'
+
+
+class _HttpBody:
+    def __init__(self, status, body, content_type='application/json'):
+        self.status = status
+        self.headers = {'Content-Type': content_type}
+        self._body = body if isinstance(body, bytes) else body.encode('utf-8')
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+
+class _ScriptedHttp:
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.urls = []
+
+    def __call__(self, req, timeout=30):
+        self.urls.append(req.full_url)
+        if not self._responses:
+            raise AssertionError(req.full_url)
+        item = self._responses.pop(0)
+        if callable(item):
+            item = item()
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+def _fred_json(rows, count=None):
+    observations = [
+        {'date': date, 'value': value}
+        for date, value in rows
+    ]
+    payload = {
+        'observations': observations,
+        'count': len(observations) if count is None else count,
+    }
+    return json.dumps(payload).encode('utf-8')
+
+
+def _http_error(status, body, content_type='text/plain'):
+    raw = body if isinstance(body, bytes) else body.encode('utf-8')
+
+    def build():
+        return urllib.error.HTTPError(
+            'https://api.stlouisfed.org/fred/series/observations',
+            status,
+            'error',
+            {'Content-Type': content_type},
+            io.BytesIO(raw),
+        )
+
+    return build
+
+
+class FredFetchTests(unittest.TestCase):
+    def _fetch(self, responses, attempts=3, csv_attempts=2):
+        script = _ScriptedHttp(responses)
+        sleeps = []
+        buf = io.StringIO()
+        series = None
+        code = None
+        with contextlib.redirect_stderr(buf):
+            try:
+                series = nr._fred_get(
+                    'VIXCLS',
+                    _FRED_KEY,
+                    opener=script,
+                    sleeper=sleeps.append,
+                    attempts=attempts,
+                    csv_attempts=csv_attempts,
+                )
+            except SystemExit as exc:
+                code = exc.code
+        return series, code, buf.getvalue(), sleeps, script
+
+    def test_json_happy_path_drops_missing_and_requests_json(self):
+        series, code, err, sleeps, script = self._fetch([
+            _HttpBody(200, _fred_json([
+                ('2026-10-20', '18.5'),
+                ('2026-10-21', '.'),
+                ('2026-10-22', '19.25'),
+            ])),
+        ])
+        self.assertIsNone(code, err)
+        self.assertEqual(sleeps, [])
+        self.assertEqual([float(v) for v in series.to_numpy()], [18.5, 19.25])
+        self.assertEqual(str(series.index[-1].date()), '2026-10-22')
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(script.urls[0]).query)
+        self.assertEqual(query['file_type'], ['json'])
+        self.assertEqual(query['series_id'], ['VIXCLS'])
+        self.assertEqual(query['observation_start'], ['2000-01-01'])
+        self.assertEqual(query['api_key'], [_FRED_KEY])
+        self.assertNotIn('syntax error', err)
+        self.assertNotIn(_FRED_KEY, err)
+
+    def test_json_pages_follow_count(self):
+        series, code, err, _sleeps, script = self._fetch([
+            _HttpBody(200, _fred_json([
+                ('2026-10-01', '15'),
+                ('2026-10-02', '.'),
+            ], count=3)),
+            _HttpBody(200, _fred_json([
+                ('2026-10-03', '16.5'),
+            ], count=3)),
+        ])
+        self.assertIsNone(code, err)
+        self.assertEqual([float(v) for v in series.to_numpy()], [15.0, 16.5])
+        offsets = [
+            urllib.parse.parse_qs(urllib.parse.urlparse(url).query)['offset'][0]
+            for url in script.urls
+        ]
+        self.assertEqual(offsets, ['0', '2'])
+
+    def test_plain_text_retries_then_json_succeeds(self):
+        series, code, err, sleeps, script = self._fetch([
+            _HttpBody(200, b'Access Denied', 'text/plain'),
+            _HttpBody(200, _fred_json([('2026-10-22', '17.0')])),
+        ])
+        self.assertIsNone(code, err)
+        self.assertEqual(sleeps, [2])
+        self.assertEqual(float(series.iloc[-1]), 17.0)
+        self.assertNotIn('syntax error', err)
+        self.assertNotIn('fredgraph.csv', err)
+        self.assertTrue(all('api.stlouisfed.org' in url for url in script.urls))
+
+    def test_gateway_text_falls_back_to_same_series_csv(self):
+        csv = (
+            'observation_date,VIXCLS\n'
+            '1999-12-31,30\n'
+            '2026-10-21,.\n'
+            '2026-10-22,19.4\n'
+        )
+        series, code, err, sleeps, script = self._fetch([
+            _http_error(403, b'Access Denied'),
+            _http_error(503, b'Site Maintenance'),
+            _HttpBody(200, b'Access Denied', 'text/plain'),
+            _HttpBody(200, csv, 'application/csv'),
+        ])
+        self.assertIsNone(code, err)
+        self.assertEqual(sleeps, [2, 4])
+        self.assertEqual([float(v) for v in series.to_numpy()], [19.4])
+        self.assertIn('Access Denied', err)
+        self.assertIn('返回文本而不是 JSON', err)
+        self.assertIn('fredgraph.csv', err)
+        self.assertNotIn('syntax error', err)
+        self.assertNotIn(_FRED_KEY, err)
+        self.assertEqual(sum('api.stlouisfed.org' in url for url in script.urls), 3)
+        self.assertEqual(sum('fredgraph.csv' in url for url in script.urls), 1)
+        self.assertIn('id=VIXCLS', script.urls[-1])
+
+    def test_rejected_api_key_does_not_use_csv(self):
+        body = json.dumps({
+            'error_code': 400,
+            'error_message': (
+                'Bad Request. Variable api_key is not set. '
+                'See https://fred.stlouisfed.org/docs/api/api_key.html '
+                f'or https://api.stlouisfed.org/fred/series/observations?api_key={_FRED_KEY}'
+            ),
+        }).encode('utf-8')
+        _series, code, err, sleeps, script = self._fetch([
+            _http_error(400, body, 'application/json'),
+            _HttpBody(200, 'observation_date,VIXCLS\n2026-10-22,19.4\n', 'application/csv'),
+        ])
+        self.assertEqual(code, 2)
+        self.assertEqual(sleeps, [])
+        self.assertEqual(len(script.urls), 1)
+        self.assertIn('API 错误 400', err)
+        self.assertIn('api_key is not set', err)
+        self.assertIn('https://fred.stlouisfed.org/docs/api/api_key.html', err)
+        self.assertNotIn('fredgraph.csv', err)
+        self.assertNotIn('syntax error', err)
+        self.assertNotIn(_FRED_KEY, err)
+
+    def test_empty_html_and_broken_json_name_the_body(self):
+        cases = [
+            (_HttpBody(200, b'', 'text/plain'), '空响应'),
+            (
+                _HttpBody(200, b'<!DOCTYPE html><title>Site Maintenance</title>', 'text/html'),
+                '返回HTML',
+            ),
+            (_HttpBody(200, b'{', 'application/json'), 'JSON 无法解析'),
+            (_HttpBody(200, b'<?xml version="1.0"?><observations></observations>', 'text/xml'), '返回XML'),
+        ]
+        for response, needle in cases:
+            with self.subTest(needle=needle):
+                _series, code, err, _sleeps, script = self._fetch([response] * 5, csv_attempts=2)
+                self.assertEqual(code, 2, err)
+                self.assertIn(needle, err)
+                self.assertIn('VIXCLS', err)
+                self.assertNotIn('syntax error', err)
+                self.assertNotIn(_FRED_KEY, err)
+                self.assertTrue(any('fredgraph.csv' in url for url in script.urls))
+
+    def test_exception_text_does_not_leak_the_key(self):
+        def boom():
+            raise RuntimeError(f'failed api_key={_FRED_KEY} host example')
+
+        _series, code, err, _sleeps, _script = self._fetch([boom] * 5)
+        self.assertEqual(code, 2)
+        self.assertNotIn(_FRED_KEY, err)
+        self.assertIn('api_key=***', err)
+        self.assertNotIn('syntax error', err)
+
+    def test_refresh_caches_requests_each_notify_series(self):
+        calls = []
+        end = pd.Timestamp.now().normalize()
+
+        def fake_get(series_id, api_key, **_kwargs):
+            calls.append((series_id, api_key))
+            if series_id == 'CPIAUCSL':
+                idx = pd.date_range(end=end, periods=180, freq='MS')
+                value = 300.0
+            elif series_id == 'A191RL1Q225SBEA':
+                idx = pd.date_range(end=end, periods=80, freq='QS')
+                value = 2.5
+            else:
+                idx = pd.bdate_range(end=end, periods=400)
+                value = 16.0 if series_id == 'VIXCLS' else 4.0
+            return pd.Series(value, index=idx)
+
+        def fake_spy():
+            idx = pd.bdate_range(end=end, periods=400)
+            return pd.Series(np.linspace(100.0, 200.0, len(idx)), index=idx, name='SPY')
+
+        real_get = nr._fred_get
+        real_spy = nr._download_spy
+        old_key = os.environ.get('FRED_API_KEY')
+        old_cache = os.environ.get('NOTIFY_CACHE_DIR')
+        os.environ['FRED_API_KEY'] = _FRED_KEY
+        nr._fred_get = fake_get
+        nr._download_spy = fake_spy
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                os.environ['NOTIFY_CACHE_DIR'] = tmp
+                nr.refresh_caches()
+                with open(Path(tmp) / 'macro_data.pkl', 'rb') as fh:
+                    macro = pickle.load(fh)
+        finally:
+            nr._fred_get = real_get
+            nr._download_spy = real_spy
+            if old_key is None:
+                os.environ.pop('FRED_API_KEY', None)
+            else:
+                os.environ['FRED_API_KEY'] = old_key
+            if old_cache is None:
+                os.environ.pop('NOTIFY_CACHE_DIR', None)
+            else:
+                os.environ['NOTIFY_CACHE_DIR'] = old_cache
+        self.assertEqual([series_id for series_id, _key in calls], [sid for _name, sid in nr.FRED_SERIES])
+        self.assertTrue(all(key == _FRED_KEY for _sid, key in calls))
+        self.assertGreaterEqual(len(macro['vix']), 100)
+        self.assertEqual(float(macro['vix'].iloc[-1]), 16.0)
 
 
 if __name__ == '__main__':
