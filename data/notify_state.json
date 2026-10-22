@@ -11,10 +11,10 @@
   "price_asof": "2026-10-19",
   "checked_at": "2026-10-21 01:08 UTC",
   "risk_flags": {
-    "as_of": "2026-10-19",
-    "signal_date": "2026-10-16",
+    "as_of": "2026-10-21",
+    "signal_date": "2026-10-20",
     "status": {
-      "A_vol": "on",
+      "A_vol": "off",
       "B_crowd": "on",
       "C_put": "off"
     },
@@ -24,16 +24,16 @@
       "C_put": "full"
     },
     "detail": {
-      "A_vol": "SOXX RV20 36.5% vs Q80 36.4%；VXN 27.13 vs Q80 27.20",
-      "B_crowd": "5日 -11.8% · 10日 -16.2% · 振幅/收盘 0.21 vs 中位数 0.07（高低价）· 连跌 9 日",
-      "C_put": "VIX 19.99 vs 5日前 14.84 · SOXX 493.39 vs SMA50 537.15 · 10日 -16.2% · 卖Put清单提示，不下单"
+      "A_vol": "SOXX RV20 30.0% vs Q80 36.4%；VXN 25.22 vs Q80 27.20",
+      "B_crowd": "5日 -8.1% · 10日 -15.2% · 振幅/收盘 0.19 vs 中位数 0.07（高低价）· 连跌 1 日",
+      "C_put": "VIX 17.31 vs 5日前 15.27 · SOXX 500.01 vs SMA50 535.75 · 10日 -15.2% · 卖Put清单提示，不下单"
     },
     "rule_zh": {
       "A_vol": "SOXX 的 20 日实现波动率高于扩窗 80% 分位（min_periods=252），或 VXN 高于自身扩窗 80% 分位（min_periods=252）。滞后 1 个交易日。",
       "B_crowd": "价格代理，不是高盛对冲基金资金流：（SOXX 5 日 ≤ −8% 或 10 日 ≤ −12%）且 10 日振幅/收盘 > 扩窗中位数（min_periods=10），或（连跌 ≥ 4 日且 5 日 ≤ −5%）。滞后 1 个交易日。",
       "C_put": "VIX≥25 且 VIX 较 5 个交易日前上升，且 SOXX < SMA50，且 SOXX 10 日 ≤ −8%。只是卖 Put 清单提示，不下单。滞后 1 个交易日。"
     },
-    "A_vol": true,
+    "A_vol": false,
     "B_crowd": true,
     "C_put": false
   },
