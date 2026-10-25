@@ -296,6 +296,22 @@ def run_independent_audit(price_data, macro, backtest_results, regime_history, a
             'desc': 'Macro cache is empty or missing.'
         })
         
+    try:
+        from src.dashboard.qqq_vegas_status import audit_qqq_vegas
+        vegas_checks = audit_qqq_vegas()
+    except Exception as exc:
+        logger.error(f'QQQ Vegas audit failed: {exc}')
+        vegas_checks = [{
+            'check': 'QQQ Vegas information accuracy',
+            'status': 'FAIL',
+            'value': 'Checks did not run',
+            'threshold': 'Three checks',
+            'location': 'data/qqq_vegas',
+            'remedy': 'Restore the QQQ Vegas pack and re-run the auditor. Do not shorten the 1999 history.',
+            'desc': f'QQQ Vegas audit failed: {exc}',
+        }]
+    data_checks.extend(vegas_checks)
+    audit['qqq_vegas_checks'] = vegas_checks
     audit['data_checks'] = data_checks
 
     # ───────────────────────────────────────────────────────────────────────

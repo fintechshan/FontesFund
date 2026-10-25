@@ -2614,6 +2614,93 @@ def build_audit_findings_panel(data_checks, errors, math_audit, bias_status, bia
         ], style={'backgroundColor': '#1a1a2e', 'border': '1px solid #f5a623', 'borderRadius': '6px', 'marginBottom': '20px'})
     ])
 
+def build_qqq_vegas_audit_panel(checks=None):
+    """Explicit QQQ Vegas rows: accuracy, freshness, and locked v9 consistency."""
+    from src.dashboard.qqq_vegas_status import audit_qqq_vegas
+
+    if not checks:
+        try:
+            checks = audit_qqq_vegas()
+        except Exception as exc:
+            checks = [{
+                'check': 'QQQ Vegas information accuracy',
+                'status': 'FAIL',
+                'value': 'Checks did not run',
+                'threshold': 'Three checks',
+                'location': 'src/dashboard/qqq_vegas_status.py',
+                'remedy': 'Restore data/qqq_vegas and re-run the auditor.',
+                'desc': str(exc),
+            }]
+
+    def fmt_status(status):
+        if status == 'PASS':
+            return '✅ PASS'
+        if status in {'WARNING', 'WARN'}:
+            return '⚠️ WARN'
+        if status in {'FAIL', 'CRITICAL'}:
+            return '❌ FAIL'
+        return status or '—'
+
+    rows = [{
+        'Check': item.get('check', '—'),
+        'Status': fmt_status(item.get('status')),
+        'Value': item.get('value', '—'),
+        'Threshold': item.get('threshold', '—'),
+        'Location': item.get('location', '—'),
+        'How to Improve': item.get('remedy', '—'),
+        'Description': item.get('desc', '—'),
+    } for item in checks]
+    locked = [
+        'Signal: Vegas ∧ expanding Q80 on the full OHLCV series since 1999 (threshold about 0.31, min_periods 252).',
+        'Allocation: 70% QQQ + 30% QLD. No mid-hold rebalance.',
+        'Signal confirmed at the close, executed at the next open.',
+        'History is 1999–present, or a preheated constant Q80 replica. A short history that drops the gate is not allowed.',
+        'These checks do not change the sleeve, Merrill REGIME_WEIGHTS, CPI+1 / GDP+4, or the GS switch.',
+    ]
+    return html.Div([
+        html.H5('🎰 QQQ Vegas · accuracy, freshness, v9 consistency',
+                style={'color': '#00e5ff', 'marginBottom': '6px', 'fontWeight': '700'}),
+        html.Div(
+            'Read-only. Each row uses the files the QQQ Vegas tab reads. '
+            'Session dates are the 16:00 America/New_York close, also shown in UTC and Asia/Shanghai. '
+            'Fetch clocks are the file’s fetched_at or generated_at. The page clock is not a data time.',
+            style={'color': '#8888a0', 'fontSize': '12px', 'marginBottom': '8px'},
+        ),
+        html.Ul(
+            [html.Li(line, style={'color': '#c8c8d4', 'fontSize': '12px', 'marginBottom': '2px'}) for line in locked],
+            style={'marginBottom': '10px'},
+        ),
+        dash_table.DataTable(
+            id='qqq-vegas-audit-table',
+            columns=[{'name': column, 'id': column} for column in (
+                'Check', 'Status', 'Value', 'Threshold', 'Location', 'How to Improve', 'Description',
+            )],
+            data=rows,
+            style_header={'backgroundColor': '#16213e', 'color': '#c8c8d4', 'fontWeight': '600',
+                          'border': '1px solid #2d2d44', 'fontFamily': 'Inter', 'fontSize': '11px'},
+            style_cell={'backgroundColor': '#1a1a2e', 'color': '#c8c8d4', 'border': '1px solid #2d2d44',
+                        'fontFamily': 'Inter', 'fontSize': '11px', 'padding': '6px', 'textAlign': 'left',
+                        'whiteSpace': 'normal', 'height': 'auto'},
+            style_cell_conditional=[
+                {'if': {'column_id': 'Status'}, 'textAlign': 'center', 'fontWeight': '600', 'minWidth': '90px'},
+                {'if': {'column_id': 'How to Improve'}, 'minWidth': '220px'},
+                {'if': {'column_id': 'Description'}, 'minWidth': '280px'},
+            ],
+            style_data_conditional=[
+                {'if': {'row_index': 'odd'}, 'backgroundColor': '#16213e'},
+                {'if': {'filter_query': '{Status} contains "PASS"'}, 'color': '#00d97e'},
+                {'if': {'filter_query': '{Status} contains "WARN"'}, 'color': '#f5a623'},
+                {'if': {'filter_query': '{Status} contains "FAIL"'}, 'color': '#e74c3c', 'fontWeight': 'bold'},
+            ],
+        ),
+        _source_line(
+            'Source: data/qqq_vegas (signal, equity, rebalances, market snapshot) and '
+            'data/risk_flags/flags.json · As of the clocks named in the table. '
+            'POST /tasks/refresh updates QQQ/QLD prices only; it does not recompute v9.'
+        ),
+    ], id='qqq-vegas-audit', style={**CS, 'marginBottom': '16px', 'border': '1px solid #00e5ff'})
+
+
 def build_auditor_tab(data):
     audit = data.get('audit', {})
     data_checks = audit.get('data_checks', [])
@@ -2775,7 +2862,9 @@ def build_auditor_tab(data):
             dbc.Col(mc('4. Look-Ahead Bias', bias_status, 'Publication lag', get_color(bias_status), '⌛'), md=True),
             dbc.Col(mc('5. Risk Assessment', risk_status, 'Limits & Stress Test', get_color(risk_status), '⚠️'), md=True),
         ], className='mb-3'),
-        
+
+        build_qqq_vegas_audit_panel(audit.get('qqq_vegas_checks')),
+
         # Detailed Anomalies & Action Items
         build_audit_findings_panel(data_checks, errors, math_audit, bias_status, bias_desc),
         
@@ -2803,7 +2892,7 @@ def build_auditor_tab(data):
                             {'if': {'filter_query': '{Status} contains "PASS"'}, 'color': '#00d97e'},
                             {'if': {'filter_query': '{Status} contains "WARN"'}, 'color': '#f5a623'}
                         ],
-                        page_size=6
+                        page_size=12
                     )
                 ], md=12, className='mb-3'),
                 dbc.Col([
@@ -4424,19 +4513,28 @@ def _vegas_market_cards(snapshot):
     return dbc.Row(cards, className='mb-2')
 
 
+_VEGAS_STAMP_STYLE = {
+    'color': '#c8c8d4', 'fontSize': '12px', 'backgroundColor': '#16213e',
+    'border': '1px solid #2d2d44', 'borderRadius': '6px', 'padding': '6px 12px',
+    'margin': '4px 0 10px', 'fontFamily': 'Inter, sans-serif', 'lineHeight': '1.45',
+}
+
+
+def _vegas_stamp(text, component_id=None):
+    """Visible last-updated strip. Same chrome as the other tabs' timestamp bar."""
+    return html.Div(text, id=component_id, style=_VEGAS_STAMP_STYLE)
+
+
+def _vegas_source(text, as_of):
+    return _source_line(f'{text} · As of {as_of}')
+
+
 def _vegas_market_meta(snapshot, prices):
-    snapshot = snapshot if isinstance(snapshot, dict) else {}
-    has_prices = not _vegas_price_frame(prices).empty
-    if not snapshot and not has_prices:
-        return (
-            'No market pack yet. python scripts/refresh_qqq_vegas_market.py writes '
-            'data/qqq_vegas/market_prices.csv and market_snapshot.json. '
-            'The page does not call Yahoo.'
-        )
-    return (
-        f"as of {_vegas_blank(snapshot.get('as_of'))} · "
-        f"fetched {_vegas_blank(snapshot.get('fetched_at'))} · source yfinance"
-    )
+    from src.dashboard.qqq_vegas_status import section_stamps
+    return section_stamps({
+        'market_snapshot': snapshot if isinstance(snapshot, dict) else {},
+        'market_prices': prices,
+    })['market']
 
 
 def _vegas_market_view(bundle=None, *, pull_gcs=False):
@@ -4572,13 +4670,14 @@ def _risk_flags_panel_children(snapshot=None):
 
     snap = snapshot if isinstance(snapshot, dict) else load_snapshot()
     flags = snap.get('flags') if isinstance(snap.get('flags'), dict) else {}
-    as_of = snap.get('as_of') or '—'
-    signal = snap.get('signal_date') or '—'
     cards = []
     for key in FLAG_IDS:
         cards.append(dbc.Col(_risk_flag_card(flags.get(key) or {'name': key, 'status': 'skipped'}), md=4))
+    from src.dashboard.qqq_vegas_status import section_stamps
+    flag_stamps = section_stamps({}, flags=snap)
     return [
         html.H5('风险旗 · Risk flags', style={'color': '#f5a623', 'marginBottom': '4px', 'fontWeight': '700'}),
+        _vegas_stamp(flag_stamps['flags'], 'qqq-vegas-stamp-flags'),
         html.Div(snap.get('banner_zh') or '通知 / 不改仓', style={
             'color': '#f5a623', 'fontSize': '22px', 'fontWeight': '700', 'marginBottom': '2px',
         }),
@@ -4586,14 +4685,11 @@ def _risk_flags_panel_children(snapshot=None):
                  style={'color': '#c8c8d4', 'fontSize': '12px', 'marginBottom': '6px'}),
         html.Div(snap.get('note_zh') or '', style={'color': '#8888a0', 'fontSize': '12px', 'marginBottom': '8px'}),
         dbc.Row(cards, className='mb-2'),
-        html.Div(
-            f"as_of {as_of} · signal_date {signal} · lag {snap.get('lag_trading_days', 1)} trading day",
-            style={'color': '#00e5ff', 'fontSize': '12px', 'marginTop': '6px'},
-        ),
-        _source_line(
+        _vegas_source(
             'Source: data/risk_flags/flags.json. Yahoo Finance via scripts/refresh_risk_flags.py. '
             'Notify on the rising edge only. 通知 / 不改仓. '
-            'This card does not change Merrill weights, QQQ Vegas v9, or live orders.'
+            'This card does not change Merrill weights, QQQ Vegas v9, or live orders.',
+            flag_stamps['as_of_flags'],
         ),
     ]
 
@@ -4677,10 +4773,14 @@ def _build_qqq_vegas_body(bundle):
         )
     )
     compare = _vegas_compare_section(summary)
+    from src.dashboard.qqq_vegas_status import section_stamps
+    stamps = section_stamps(bundle)
     price_figure, market_cards, market_meta = _vegas_market_view(bundle, pull_gcs=False)
-    yearly_block = []
+    yearly_block = [
+        _vegas_stamp(stamps['yearly'], 'qqq-vegas-stamp-yearly'),
+    ]
     if len(_vegas_frame(yearly)) > 0 and 'year' in _vegas_frame(yearly).columns:
-        yearly_block = [
+        yearly_block.extend([
             html.Div(
                 'Calendar-year returns from yearly_returns.csv. '
                 'QQQ Vegas is this sleeve. Vegas only is the same engine without the RV gate.',
@@ -4691,10 +4791,14 @@ def _build_qqq_vegas_body(bundle):
                 figure=_vegas_yearly_figure(yearly),
                 config={'displayModeBar': False},
             ),
-            _source_line('Source: data/qqq_vegas/yearly_returns.csv (strategy_pct, vegas_only_pct, qqq_bh_pct).'),
-        ]
+            _vegas_source(
+                'Source: data/qqq_vegas/yearly_returns.csv (strategy_pct, vegas_only_pct, qqq_bh_pct).',
+                stamps['as_of_signal'],
+            ),
+        ])
 
     return html.Div([
+        _vegas_stamp(stamps['tab'], 'qqq-vegas-updated'),
         html.H4('QQQ Vegas', style={'color': '#e6e6f0', 'fontWeight': '700', 'marginBottom': '4px'}),
         html.Div(headline, style={'color': '#c8c8d4', 'fontSize': '14px', 'fontWeight': '600', 'marginBottom': '4px'}),
         html.Div(sample_line, style={'color': '#00e5ff', 'fontSize': '12px', 'marginBottom': '6px'}),
@@ -4706,6 +4810,7 @@ def _build_qqq_vegas_body(bundle):
         html.Div([
             html.Div('规则 · Vegas ∧ RV20 ≤ expanding Q80',
                      style={'color': '#00d97e', 'fontSize': '12px', 'fontWeight': '700', 'marginBottom': '4px'}),
+            _vegas_stamp(stamps['rules'], 'qqq-vegas-stamp-rules'),
             html.Ul([html.Li(line) for line in rules_zh],
                     style={'color': '#c8c8d4', 'fontSize': '12px', 'marginBottom': '4px', 'paddingLeft': '18px'}),
             html.Ul([html.Li(line) for line in rules_en],
@@ -4713,6 +4818,7 @@ def _build_qqq_vegas_body(bundle):
         ], id='qqq-vegas-rules', style={'backgroundColor': '#16213e', 'border': '1px solid #2d2d44',
                                        'borderRadius': '8px', 'padding': '8px 12px', 'marginBottom': '12px'}),
         html.Div([
+            _vegas_stamp(stamps['disclaimer'], 'qqq-vegas-stamp-disclaimer'),
             html.Div(disclaimer, style={'color': '#f5a623', 'fontSize': '12px', 'fontWeight': '600'}),
             html.Div('回测展示，不构成投资建议。此页不接入下单。',
                      style={'color': '#8888a0', 'fontSize': '11px', 'marginTop': '2px'}),
@@ -4732,6 +4838,7 @@ def _build_qqq_vegas_body(bundle):
         html.Div([
             html.H5('行情 · QQQ & QLD prices',
                     style={'color': '#00d97e', 'marginBottom': '6px', 'fontWeight': '700'}),
+            html.Div(market_meta, id='qqq-vegas-market-meta', style=_VEGAS_STAMP_STYLE),
             html.Div(
                 'QQQ is the left axis and QLD is the right axis, because the dollar prices '
                 'are not on the same scale. The lines are adjusted closes. The cards are the '
@@ -4740,22 +4847,23 @@ def _build_qqq_vegas_body(bundle):
                 'This block is not the v9 signal.',
                 style={'color': '#8888a0', 'fontSize': '12px', 'marginBottom': '8px'},
             ),
-            html.Div(market_meta, id='qqq-vegas-market-meta',
-                     style={'color': '#00e5ff', 'fontSize': '12px', 'marginBottom': '8px'}),
             html.Div(market_cards, id='qqq-vegas-market-cards'),
             dcc.Graph(id='qqq-vegas-prices', figure=price_figure, config={'displayModeBar': False}),
             dcc.Interval(id='qqq-vegas-market-interval', interval=30 * 60 * 1000, n_intervals=0),
-            _source_line(
+            _vegas_source(
                 'Source: data/qqq_vegas/market_prices.csv and market_snapshot.json. '
                 'Yahoo Finance via yfinance (scripts/refresh_qqq_vegas_market.py). '
                 'Daily write: Cloud Scheduler POST /tasks/refresh uploads the pack to GCS. '
                 'The page reads that cache and re-reads it about every 30 minutes. '
-                'It does not call Yahoo on each load. A failed download keeps the previous files.'
+                'It does not call Yahoo on each load. A failed download keeps the previous files. '
+                'The stamp above is fetched_at and the price bar, not the page clock.',
+                stamps['as_of_market'],
             ),
         ], id='qqq-vegas-market', style={**CS, 'marginBottom': '16px'}),
 
         html.Div([
             html.H5('当前信号 · Current signal', style={'color': '#00d97e', 'marginBottom': '6px', 'fontWeight': '700'}),
+            _vegas_stamp(stamps['signal'], 'qqq-vegas-stamp-signal'),
             html.Div(
                 ' · '.join(part for part in (
                     _vegas_blank(signal.get('signal_name')),
@@ -4800,32 +4908,36 @@ def _build_qqq_vegas_body(bundle):
             _vegas_metric_row('2010–2026 window · metrics.p2010_2026', window_2010)
             if _vegas_block_has_numbers(window_2010) else html.Div(),
             compare if compare is not None else html.Div(),
-            _source_line(
+            _vegas_source(
                 'Source: data/qqq_vegas/signal_current.json'
                 + (' and summary.json (configs.vegas_rv20_q80, compare_to_prior_vegas).' if summary else '')
-                + (f' {engine_line}' if engine_line else '')
+                + (f' {engine_line}' if engine_line else ''),
+                stamps['as_of_signal'],
             ),
         ], style={**CS, 'marginBottom': '16px'}),
 
         html.Div([
             html.H5('净值曲线 · Equity curve', style={'color': '#00d97e', 'marginBottom': '6px', 'fontWeight': '700'}),
+            _vegas_stamp(stamps['equity'], 'qqq-vegas-stamp-equity'),
             html.Div(equity_caption,
                      style={'color': '#8888a0', 'fontSize': '12px', 'marginBottom': '8px'}),
             dcc.Graph(id='qqq-vegas-equity', figure=_vegas_equity_figure(bundle.get('equity')),
                       config={'displayModeBar': False}),
             dcc.Graph(id='qqq-vegas-drawdown', figure=_vegas_drawdown_figure(bundle.get('equity')),
                       config={'displayModeBar': False}),
-            _source_line(
+            _vegas_source(
                 'Source: data/qqq_vegas/equity_curve.csv (date, equity, qqq_bh, drawdown'
                 + (', vegas_only_equity). ' if has_prior_equity else '). ')
                 + 'equity, qqq_bh, and vegas_only_equity are USD '
-                + '(growth index × 100,000). Drawdown stays a fraction.'
+                + '(growth index × 100,000). Drawdown stays a fraction.',
+                stamps['as_of_equity'],
             ),
         ], style={**CS, 'marginBottom': '16px'}),
 
         html.Div([
             html.H5('月度收益热力图 · Monthly returns',
                     style={'color': '#00d97e', 'marginBottom': '6px', 'fontWeight': '700'}),
+            _vegas_stamp(stamps['heatmap'], 'qqq-vegas-stamp-heatmap'),
             html.Div(
                 'Year-by-month returns of the QQQ Vegas growth index. '
                 'Green is a positive month and red is a negative month. '
@@ -4841,11 +4953,12 @@ def _build_qqq_vegas_body(bundle):
                 config={'displayModeBar': False},
             ),
             *yearly_block,
-            _source_line(heat_source),
+            _vegas_source(heat_source, stamps['as_of_heatmap']),
         ], style={**CS, 'marginBottom': '16px'}),
 
         html.Div([
             html.H5('调仓记录 · Rebalance history', style={'color': '#00d97e', 'marginBottom': '6px', 'fontWeight': '700'}),
+            _vegas_stamp(stamps['rebalances'], 'qqq-vegas-stamp-rebalances'),
             html.Div(f'{len(rebalance_rows)} ENTER/EXIT rows. Newest first. Click a column to sort.',
                      style={'color': '#8888a0', 'fontSize': '12px', 'marginBottom': '8px'}),
             dash_table.DataTable(
@@ -4879,11 +4992,12 @@ def _build_qqq_vegas_body(bundle):
                     {'if': {'filter_query': '{action} = "EXIT"', 'column_id': 'action'}, 'color': '#e74c3c'},
                 ],
             ),
-            _source_line('Source: data/qqq_vegas/rebalances.csv. Display only.'),
+            _vegas_source('Source: data/qqq_vegas/rebalances.csv. Display only.', stamps['as_of_rebalances']),
         ], style={**CS, 'marginBottom': '16px'}),
 
         html.Div([
             html.H5('实盘对照 · Live vs target', style={'color': '#00d97e', 'marginBottom': '6px', 'fontWeight': '700'}),
+            _vegas_stamp(stamps['live'], 'qqq-vegas-stamp-live'),
             html.Div([
                 html.Span(f'Broker {broker}', style={'color': '#c8c8d4', 'fontWeight': '700', 'marginRight': '12px'}),
                 html.Span(match_label, style={'color': match_color, 'fontWeight': '700'}),
@@ -4918,10 +5032,11 @@ def _build_qqq_vegas_body(bundle):
                     {'if': {'filter_query': '{status} = "unknown"', 'column_id': 'status'}, 'color': '#f5a623'},
                 ],
             ),
-            _source_line(
+            _vegas_source(
                 'Source: data/qqq_vegas/live_snapshot.json. '
                 'match = false means the broker book is not connected (尚未接入实盘). '
-                'Target weights are the Vegas sleeve, not Merrill REGIME_WEIGHTS.'
+                'Target weights are the Vegas sleeve, not Merrill REGIME_WEIGHTS.',
+                stamps['as_of_live'],
             ),
         ], style={**CS, 'marginBottom': '16px', 'border': f'1px solid {match_color}'}),
     ], id='qqq-vegas-root', style={'padding': '0 4px'})
@@ -4993,13 +5108,35 @@ def create_app(data):
         Output('qqq-vegas-market-cards', 'children'),
         Output('qqq-vegas-market-meta', 'children'),
         Output('risk-flags-panel', 'children'),
+        Output('qqq-vegas-updated', 'children'),
+        Output('qqq-vegas-stamp-rules', 'children'),
+        Output('qqq-vegas-stamp-disclaimer', 'children'),
+        Output('qqq-vegas-stamp-signal', 'children'),
+        Output('qqq-vegas-stamp-equity', 'children'),
+        Output('qqq-vegas-stamp-heatmap', 'children'),
+        Output('qqq-vegas-stamp-yearly', 'children'),
+        Output('qqq-vegas-stamp-rebalances', 'children'),
+        Output('qqq-vegas-stamp-live', 'children'),
         Input('qqq-vegas-market-interval', 'n_intervals'),
         prevent_initial_call=True,
     )
     def refresh_qqq_vegas_market_panel(_n):
         # Cache only. The daily Yahoo fetch is /tasks/refresh, not this callback.
-        figure, cards, meta = _vegas_market_view(pull_gcs=True)
-        return figure, cards, meta, _risk_flags_panel_children()
+        # Stamps are re-read from the files just pulled, not from the page clock.
+        from src.dashboard.qqq_vegas_status import section_stamps
+        _pull_vegas_market_cache()
+        try:
+            bundle = load_qqq_vegas()
+        except Exception:
+            bundle = {}
+        figure, cards, meta = _vegas_market_view(bundle, pull_gcs=False)
+        stamps = section_stamps(bundle)
+        return (
+            figure, cards, meta, _risk_flags_panel_children(),
+            stamps['tab'], stamps['rules'], stamps['disclaimer'], stamps['signal'],
+            stamps['equity'], stamps['heatmap'], stamps['yearly'],
+            stamps['rebalances'], stamps['live'],
+        )
 
     @app.callback(
         Output('backtest-path-body', 'children'),
