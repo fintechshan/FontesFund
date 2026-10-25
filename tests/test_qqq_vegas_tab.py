@@ -17,8 +17,11 @@ from src.dashboard.app import (
     _vegas_heatmap_figure,
     _vegas_monthly_returns,
     _vegas_nav_to_dollars,
+    _vegas_pct_points,
     _vegas_qqq_calendar_returns,
     _vegas_qqq_level,
+    _vegas_ratio,
+    _vegas_signed,
     build_qqq_vegas_tab,
     create_app,
     load_qqq_vegas,
@@ -102,13 +105,13 @@ class QqqVegasTabTests(unittest.TestCase):
         self.assertIn('Not investment advice', blob)
         self.assertIn('不构成投资建议', blob)
         self.assertIn('1999-01-04', blob)
-        self.assertIn('2026-10-16', blob)
+        self.assertIn(signal['as_of'], blob)
         self.assertIn('Mom189', blob)
         self.assertIn('rv20_q80', blob)
         for key in ('vegas', 'rv_ok', 'rv20'):
             self.assertIn(key, blob)
-        self.assertIn('0.1856', blob)
-        self.assertIn('0.3122', blob)
+        self.assertIn(f"{float(signal['rv20']):.4f}", blob)
+        self.assertIn(f"{float(signal['rv20_q80']):.4f}", blob)
         self.assertIn('Full sample vs prior Vegas 1.3x', blob)
         self.assertEqual(str(pd.Timestamp(bundle['equity']['date'].iloc[0]).date()), '1999-01-04')
         for block in (signal['metrics']['full'], signal['metrics']['oos']):
@@ -153,13 +156,17 @@ class QqqVegasTabTests(unittest.TestCase):
             ' '.join(str(row.get(key, '')) for key in ('book', 'cagr', 'max_dd', 'sharpe', 'calmar'))
             for row in compare.data
         )
+        summary = json.loads((QQQ_VEGAS_DIR / 'summary.json').read_text(encoding='utf-8'))
+        prior = summary['configs']['vegas_1_3x_same_engine']['full']
+        current = summary['configs']['vegas_rv20_q80']['full']
+        delta = summary['compare_to_prior_vegas']['delta_full']
         self.assertIn('qqq_vegas_1_3x', compare_blob)
-        self.assertIn('12.98%', compare_blob)
-        self.assertIn('-63.56%', compare_blob)
-        self.assertIn('14.9%', compare_blob)
-        self.assertIn('-27.81%', compare_blob)
-        self.assertIn('+1.92 pp', compare_blob)
-        self.assertIn('+35.75 pp', compare_blob)
+        self.assertIn(_vegas_pct_points(prior['CAGR_pct']), compare_blob)
+        self.assertIn(_vegas_pct_points(prior['MaxDD_pct']), compare_blob)
+        self.assertIn(_vegas_pct_points(current['CAGR_pct']), compare_blob)
+        self.assertIn(_vegas_pct_points(current['MaxDD_pct']), compare_blob)
+        self.assertIn(_vegas_signed(delta['dCAGR_pp'], 2, ' pp'), compare_blob)
+        self.assertIn(_vegas_signed(delta['dMaxDD_pp'], 2, ' pp'), compare_blob)
 
         table = _find_id(tab, 'qqq-vegas-rebalances')
         self.assertEqual(len(table.data), len(bundle['rebalances']))
@@ -371,11 +378,13 @@ class QqqVegasTabTests(unittest.TestCase):
             'missing': [],
         })
         blob = '\n'.join(_texts(tab))
-        self.assertIn('14.9%', blob)
-        self.assertIn('18.63%', blob)
-        self.assertIn('-27.81%', blob)
-        self.assertIn('0.8389', blob)
-        self.assertIn('-17.4%', blob)
+        full = summary['configs']['vegas_rv20_q80']['full']
+        oos = summary['configs']['vegas_rv20_q80']['oos']
+        self.assertIn(_vegas_pct_points(full['CAGR_pct']), blob)
+        self.assertIn(_vegas_pct_points(oos['CAGR_pct']), blob)
+        self.assertIn(_vegas_pct_points(full['MaxDD_pct']), blob)
+        self.assertIn(_vegas_ratio(full['Sharpe']), blob)
+        self.assertIn(_vegas_pct_points(oos['MaxDD_pct']), blob)
 
     def test_missing_directory_still_renders(self):
         bundle = load_qqq_vegas(ROOT / 'data' / 'qqq_vegas_missing')

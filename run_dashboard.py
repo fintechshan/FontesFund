@@ -80,6 +80,41 @@ def _upload_qqq_vegas_market():
         logger.warning(f"/tasks/refresh: QQQ/QLD market upload skipped: {exc}")
 
 
+def refresh_qqq_vegas_signal_cache():
+    """Best-effort extension of the locked v9 sleeve. Never raises.
+
+    Same scheduler hit as the price cache. Runs
+    ``scripts/refresh_qqq_vegas_signal.py``, which appends sessions only when
+    the recomputed Vegas and expanding-Q80 gate matches the stored series.
+    A download failure or a gate mismatch leaves the previous pack in place.
+    It does not change the Merrill backtest.
+    """
+    import subprocess
+    try:
+        res = subprocess.run(
+            [sys.executable, 'scripts/refresh_qqq_vegas_signal.py'],
+            capture_output=True, text=True, timeout=180,
+        )
+    except Exception as exc:
+        logger.warning(f"/tasks/refresh: QQQ Vegas signal pack skipped: {exc}")
+        return False
+    if res.returncode != 0:
+        detail = (res.stderr or res.stdout or '')[-300:]
+        logger.warning(f"/tasks/refresh: QQQ Vegas signal pack unchanged (rc={res.returncode}): {detail}")
+        return False
+    logger.info(f"/tasks/refresh: QQQ Vegas signal pack updated: {(res.stdout or '').strip()[-300:]}")
+    return True
+
+
+def _upload_qqq_vegas_signal():
+    """Push the v9 sleeve when the Merrill upload is not going to run."""
+    try:
+        from src.dashboard.gcs_sync import upload_vegas_signal
+        upload_vegas_signal()
+    except Exception as exc:
+        logger.warning(f"/tasks/refresh: QQQ Vegas signal upload skipped: {exc}")
+
+
 def refresh_risk_flags_cache():
     """Best-effort notify-only scorecard. Never raises and never sizes the book."""
     import subprocess
@@ -838,11 +873,15 @@ if __name__ == '__main__':
                 vegas_market = refresh_qqq_vegas_market_cache()
                 if vegas_market:
                     _upload_qqq_vegas_market()
+                vegas_signal = refresh_qqq_vegas_signal_cache()
+                if vegas_signal:
+                    _upload_qqq_vegas_signal()
                 risk_flags = refresh_risk_flags_cache()
                 if risk_flags:
                     _upload_risk_flags()
                 return jsonify({'ok': False, 'error': 'backtest_failed',
                                 'qqq_vegas_market': vegas_market,
+                                'qqq_vegas_signal': vegas_signal,
                                 'risk_flags': risk_flags,
                                 'stderr': (res.stderr or res.stdout)[-500:]}), 500
 
@@ -858,15 +897,20 @@ if __name__ == '__main__':
                 vegas_market = refresh_qqq_vegas_market_cache()
                 if vegas_market:
                     _upload_qqq_vegas_market()
+                vegas_signal = refresh_qqq_vegas_signal_cache()
+                if vegas_signal:
+                    _upload_qqq_vegas_signal()
                 risk_flags = refresh_risk_flags_cache()
                 if risk_flags:
                     _upload_risk_flags()
                 return jsonify({'ok': False, 'error': 'quality_gate_headline_jump',
                                 'qqq_vegas_market': vegas_market,
+                                'qqq_vegas_signal': vegas_signal,
                                 'risk_flags': risk_flags,
                                 'previous': prev, 'new': new}), 500
 
             vegas_market = refresh_qqq_vegas_market_cache()
+            vegas_signal = refresh_qqq_vegas_signal_cache()
             risk_flags = refresh_risk_flags_cache()
             from src.dashboard.gcs_sync import upload_data, upload_ibkr
             uploaded = upload_data()
@@ -909,7 +953,8 @@ if __name__ == '__main__':
             ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             logger.info(f"/tasks/refresh OK at {ts}; uploaded {len(uploaded)} backtest + {len(ibkr_uploaded)} IBKR files to GCS.")
             return jsonify({'ok': True, 'refreshed_at': ts, 'uploaded': uploaded, 'ibkr_uploaded': ibkr_uploaded,
-                            'qqq_vegas_market': vegas_market, 'risk_flags': risk_flags, 'headline': headline})
+                            'qqq_vegas_market': vegas_market, 'qqq_vegas_signal': vegas_signal,
+                            'risk_flags': risk_flags, 'headline': headline})
         except subprocess.TimeoutExpired:
             return jsonify({'ok': False, 'error': 'timeout'}), 504
         except Exception as e:

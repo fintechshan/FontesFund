@@ -846,9 +846,11 @@ def audit_qqq_vegas(directory=None, bundle=None, flags=None, today=None, now=Non
             threshold=f'Session or fetch age ≤{FRESH_WARN_DAYS}d vs the last weekday; >{FRESH_FAIL_DAYS}d fails; fetch clocks must carry a timezone',
             location='data/qqq_vegas/signal_current.json, market_snapshot.json, data/risk_flags/flags.json',
             remedy=(
-                'POST /tasks/refresh runs scripts/refresh_qqq_vegas_market.py and writes fetched_at. '
-                'That path does not recompute the v9 sleeve. Refresh the 1999–present pack to move '
-                'the signal session. Do not substitute a short history that drops Q80. '
+                'POST /tasks/refresh runs scripts/refresh_qqq_vegas_signal.py, which extends the '
+                'locked v9 sleeve and moves the signal session. The script keeps the 1999 history '
+                'and the preheated expanding Q80, and it does not write when that gate disagrees '
+                'with the stored series. scripts/refresh_qqq_vegas_market.py still updates prices only. '
+                'Do not substitute a short history that drops Q80. '
                 'Weekends use the prior weekday; exchange holidays are not a separate calendar.'
             ),
         ),

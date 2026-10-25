@@ -4328,8 +4328,9 @@ def _pull_vegas_market_cache():
         return
     _VEGAS_MARKET_PULL['at'] = now
     try:
-        from src.dashboard.gcs_sync import download_risk_flags, download_vegas_market
+        from src.dashboard.gcs_sync import download_risk_flags, download_vegas_market, download_vegas_signal
         download_vegas_market()
+        download_vegas_signal()
         download_risk_flags()
     except Exception:
         return

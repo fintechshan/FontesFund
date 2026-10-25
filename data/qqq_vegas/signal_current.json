@@ -2,9 +2,9 @@
   "strategy_id": "qqq_vegas_rv20_q80",
   "backtest_tag": "v9_rv20_q80",
   "signal_name": "Vegas Tunnel ∧ RV20≤expanding Q80 (v5)",
-  "as_of": "2026-10-16",
-  "signal_date": "2026-10-16",
-  "exec_date": "2026-10-16",
+  "as_of": "2026-10-23",
+  "signal_date": "2026-10-23",
+  "exec_date": "2026-10-23",
   "state": "RISK_ON",
   "weights": {
     "QQQ": 0.7,
@@ -19,14 +19,14 @@
   "current_pos": 1,
   "vegas": 1,
   "rv_ok": 1,
-  "rv20": 0.185569,
-  "rv20_q80": 0.312228,
-  "mom189": 0.145449,
-  "qqq_close": 41.2746,
-  "sma150": 40.3827,
-  "vegas_low": 40.1412,
+  "rv20": 0.183841,
+  "rv20_q80": 0.312128,
+  "mom189": 0.135019,
+  "qqq_close": 40.9606,
+  "sma150": 40.6178,
+  "vegas_low": 40.2201,
   "next_action": "HOLD",
-  "reason": "Mom189=OK (0.1454); Close>SMA150=OK; Close>=VegasLow=OK; RV20<=Q80=OK (rv20=0.1856, q80=0.3122) → RISK_ON",
+  "reason": "Mom189=OK (0.1350); Close>SMA150=OK; Close>=VegasLow=OK; RV20<=Q80=OK (rv20=0.1838, q80=0.3121) → RISK_ON",
   "last_rebalance": {
     "date": "2026-07-08",
     "action": "ENTER",
@@ -36,32 +36,32 @@
   "filter_version": "v5_rv20_q80",
   "metrics": {
     "full": {
-      "cagr": 0.149014,
+      "cagr": 0.148464,
       "max_dd": -0.278079,
-      "sharpe": 0.8389,
-      "cagr_pct": 14.9,
+      "sharpe": 0.8359,
+      "cagr_pct": 14.85,
       "max_dd_pct": -27.81,
       "max_dd_date": "2005-10-28",
-      "calmar": 0.5359,
+      "calmar": 0.5339,
       "start": "1999-01-05",
-      "end": "2026-10-16"
+      "end": "2026-10-23"
     },
     "oos": {
-      "cagr": 0.186268,
+      "cagr": 0.183424,
       "max_dd": -0.174044,
-      "sharpe": 0.9605,
-      "cagr_pct": 18.63,
+      "sharpe": 0.9466,
+      "cagr_pct": 18.34,
       "max_dd_pct": -17.4,
       "max_dd_date": "2024-09-09",
-      "calmar": 1.0702,
+      "calmar": 1.0539,
       "start": "2021-01-04",
-      "end": "2026-10-16"
+      "end": "2026-10-23"
     },
     "p2010_2026": {
-      "cagr_pct": 17.64,
+      "cagr_pct": 17.54,
       "max_dd_pct": -25.82,
-      "sharpe": 0.9524,
-      "calmar": 0.6832
+      "sharpe": 0.9474,
+      "calmar": 0.6795
     }
   },
   "disclaimer": "Backtest only. Not investment advice. Not live trading."
