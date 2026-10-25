@@ -22,6 +22,20 @@ VEGAS_MARKET_FILES = [
     'data/qqq_vegas/market_snapshot.json',
 ]
 
+# Locked v9 sleeve. scripts/refresh_qqq_vegas_signal.py extends it.
+# It is not the Merrill book and it does not read REGIME_WEIGHTS.
+VEGAS_SIGNAL_FILES = [
+    'data/qqq_vegas/daily_signal.csv',
+    'data/qqq_vegas/equity_curve.csv',
+    'data/qqq_vegas/rebalances.csv',
+    'data/qqq_vegas/monthly_returns.csv',
+    'data/qqq_vegas/yearly_returns.csv',
+    'data/qqq_vegas/signal_current.json',
+    'data/qqq_vegas/summary.json',
+    'data/qqq_vegas/strategy.json',
+    'data/qqq_vegas/live_snapshot.json',
+]
+
 # Notify-only risk scorecard. Display and the weekday notifier. Not a weight input.
 RISK_FLAG_FILES = [
     'data/risk_flags/flags.json',
@@ -40,6 +54,7 @@ SYNC_FILES = [
     'data/backtest_results/cdn_comparison.csv',
     'data/cache/gsblbr_history.csv',
     *VEGAS_MARKET_FILES,
+    *VEGAS_SIGNAL_FILES,
     *RISK_FLAG_FILES,
 ]
 
@@ -180,6 +195,36 @@ def download_risk_flags():
 def upload_vegas_market():
     """local -> GCS for the QQQ/QLD pack when the Merrill backtest did not upload."""
     return _upload(VEGAS_MARKET_FILES)
+
+
+def download_vegas_signal():
+    """GCS -> local for the v9 signal pack. A failure keeps the files on disk."""
+    if not BUCKET:
+        return False
+    got = False
+    try:
+        b = _bucket()
+        for rel in VEGAS_SIGNAL_FILES:
+            blob = b.blob(rel)
+            if not blob.exists():
+                logger.info(f"GCS: {rel} not in bucket yet")
+                continue
+            dest = ROOT / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            blob.download_to_filename(str(dest))
+            if blob.updated:
+                ts = blob.updated.timestamp()
+                os.utime(dest, (ts, ts))
+            logger.info(f"GCS down: {rel} (updated {blob.updated})")
+            got = True
+    except Exception as e:
+        logger.warning(f"GCS vegas signal download failed (keeping local files): {e}")
+    return got
+
+
+def upload_vegas_signal():
+    """local -> GCS for the v9 sleeve when the Merrill backtest did not upload."""
+    return _upload(VEGAS_SIGNAL_FILES)
 
 
 def upload_risk_flags():

@@ -2,8 +2,8 @@
 
 **策略 ID：** `qqq_vegas_rv20_q80`  
 **回测标签：** `v9_rv20_q80` / filter `v5_rv20_q80`  
-**as_of：** 2026-10-16  
-**样本：** 1999-01-04 → 2026-10-16（覆盖互联网泡沫；UI 若以前从 ~2010 起，现改为全样本）
+**as_of：** 2026-10-23  
+**样本：** 1999-01-04 → 2026-10-23（覆盖互联网泡沫；UI 若以前从 ~2010 起，现改为全样本）
 
 ## 相对定案的变化
 
@@ -12,10 +12,10 @@
 
 | | 纯 Vegas 1.3x（同引擎全样本） | **本策略 Vegas∧RV门** |
 |---|--:|--:|
-| CAGR | 12.98% | **14.9%** |
+| CAGR | 12.93% | **14.85%** |
 | MaxDD | -63.56% | **-27.81%** |
-| Sharpe | 0.6793 | **0.8389** |
-| Calmar | 0.2042 | **0.5359** |
+| Sharpe | 0.677 | **0.8359** |
+| Calmar | 0.2034 | **0.5339** |
 
 ## 信号规则（严格无前视）
 
@@ -46,4 +46,4 @@ The signal rules above are unchanged. The tab also draws QQQ and QLD prices from
 
 Source: Yahoo Finance via `yfinance` (`python scripts/refresh_qqq_vegas_market.py`). PE is `trailingPE` when Yahoo publishes it, otherwise `forwardPE`. A missing PE is stored as null and the card shows N/A. The number is Yahoo's, including for QLD; this repo does not compute an ETF PE.
 
-Daily update: Cloud Scheduler `etf-daily-refresh` POSTs `/tasks/refresh`. That run executes the script and uploads both files through `src/dashboard/gcs_sync.py` (`VEGAS_MARKET_FILES`, also on the startup download). The dashboard reads the cache. It does not call Yahoo on page load. A failed download leaves the previous files. An open tab re-reads the local cache about every 30 minutes and pulls those two GCS objects at the same cadence so a warm container does not wait for a new revision.
+Daily update: Cloud Scheduler `etf-daily-refresh` POSTs `/tasks/refresh`. That run executes the price script and `scripts/refresh_qqq_vegas_signal.py`. The signal script appends sessions only when the recomputed Vegas and expanding-Q80 gate matches the stored 1999 series (Nasdaq-100 preheat from 1996-12-31, 70/30, close then next open). A mismatch or a failed download leaves the previous pack. Both packs upload through `src/dashboard/gcs_sync.py` (`VEGAS_MARKET_FILES` and `VEGAS_SIGNAL_FILES`, also on the startup download). The dashboard reads the cache. It does not call Yahoo on page load. An open tab re-reads the local cache about every 30 minutes and pulls those GCS objects at the same cadence so a warm container does not wait for a new revision. The price script does not compute the signal.
