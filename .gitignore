@@ -64,8 +64,13 @@ logs/
 data/notify_audit.json
 
 # Risk-flag price cache. The scorecard itself (flags.json) stays tracked.
+# Live CapEx / OAS / SPY-weight caches are downloaded, not committed.
 data/risk_flags/prices.csv
 data/risk_flags/*.tmp
+data/risk_flags/capex_official.csv
+data/risk_flags/credit_oas.csv
+data/risk_flags/spy_mag7_weight.csv
+data/risk_flags/spy_holdings.xlsx
 
 # Jupyter
 .ipynb_checkpoints/

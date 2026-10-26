@@ -7,6 +7,7 @@ QQQ Vegas reads data/qqq_vegas only. It does not change the Merrill sleeve.
 The QQQ/QLD price chart and PE cards on that tab are a cached Yahoo pack.
 They are not inputs to the v9 signal.
 The risk-flag card on that tab is notify-only. It does not size positions.
+Structural flags D/E/F are Auditor section 6 and are also notify-only.
 """
 import json
 import os
@@ -2849,6 +2850,13 @@ def build_auditor_tab(data):
         lagged_metrics.get('targeted_curve'),
         lagged_metrics.get('standard_curve'),
     )
+    try:
+        from src.risk_flags import load_snapshot
+        officer_snap = load_snapshot()
+    except Exception:
+        officer_snap = {}
+    bubble = officer_snap.get('bubble_pressure_score') if isinstance(officer_snap, dict) else None
+    bubble_txt = f'{float(bubble):.2f}' if isinstance(bubble, (int, float)) and not isinstance(bubble, bool) else '—'
 
     return html.Div([
         # Audit update time
@@ -2861,6 +2869,7 @@ def build_auditor_tab(data):
             dbc.Col(mc('3. Regime Corr', corr_status, 'Strategy Alignment', get_color(corr_status), '📊'), md=True),
             dbc.Col(mc('4. Look-Ahead Bias', bias_status, 'Publication lag', get_color(bias_status), '⌛'), md=True),
             dbc.Col(mc('5. Risk Assessment', risk_status, 'Limits & Stress Test', get_color(risk_status), '⚠️'), md=True),
+            dbc.Col(mc('6. Risk Officer', bubble_txt, '结构旗 · 不改仓', '#f5a623', '🚩'), md=True),
         ], className='mb-3'),
 
         build_qqq_vegas_audit_panel(audit.get('qqq_vegas_checks')),
@@ -3011,7 +3020,7 @@ def build_auditor_tab(data):
             ])
         ], style={**CS, 'marginBottom': '16px', 'border': '1px solid #b55fe6'}),
         
-        # Panel 5: Risk Assessment & Stress Test
+        # Panel 5: Risk Assessment & Stress Test. Structural flags are section 6, not this sleeve stress.
         html.Div([
             html.H5('⚠️ 5. Risk Assessment & Stress Testing', style={'color': '#e74c3c', 'marginBottom': '6px', 'fontWeight': '700'}),
             html.Div('Checks compliance with position concentration limits, leverage ceilings, and runs portfolio stress testing.',
@@ -3057,7 +3066,10 @@ def build_auditor_tab(data):
                              style={'color': '#6c757d', 'fontSize': '11px', 'marginTop': '8px', 'fontStyle': 'italic'})
                 ], md=6)
             ])
-        ], style={**CS, 'marginBottom': '16px', 'border': '1px solid #e74c3c'}),
+        ], id='auditor-panel-5', style={**CS, 'marginBottom': '16px', 'border': '1px solid #e74c3c'}),
+
+        # Section 6: Risk Officer structural flags. Not part of the sleeve stress above.
+        _auditor_risk_officer_section(officer_snap),
     ])
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -4665,14 +4677,19 @@ def _risk_flag_card(item):
     ], style={**CS, 'minHeight': '160px', 'textAlign': 'left'})
 
 
+def _auditor_risk_officer_section(snapshot=None):
+    from src.dashboard.auditor import build_risk_officer_section
+    return build_risk_officer_section(snapshot)
+
+
 def _risk_flags_panel_children(snapshot=None):
-    """Scorecard body. Reads the cache. Does not recompute and does not size the book."""
-    from src.risk_flags import FLAG_IDS, load_snapshot
+    """Tactical scorecard only. Structural D/E/F stay on Auditor section 6."""
+    from src.risk_flags import TACTICAL_FLAG_IDS, load_snapshot
 
     snap = snapshot if isinstance(snapshot, dict) else load_snapshot()
     flags = snap.get('flags') if isinstance(snap.get('flags'), dict) else {}
     cards = []
-    for key in FLAG_IDS:
+    for key in TACTICAL_FLAG_IDS:
         cards.append(dbc.Col(_risk_flag_card(flags.get(key) or {'name': key, 'status': 'skipped'}), md=4))
     from src.dashboard.qqq_vegas_status import section_stamps
     flag_stamps = section_stamps({}, flags=snap)
@@ -4685,6 +4702,10 @@ def _risk_flags_panel_children(snapshot=None):
         html.Div(snap.get('banner_en') or 'Notify only. Does not change positions, weights, or orders.',
                  style={'color': '#c8c8d4', 'fontSize': '12px', 'marginBottom': '6px'}),
         html.Div(snap.get('note_zh') or '', style={'color': '#8888a0', 'fontSize': '12px', 'marginBottom': '8px'}),
+        html.Div(
+            '结构旗 D_capex / E_credit / F_conc 在 Auditor 第 6 节，只读，不在本页改仓。',
+            style={'color': '#8888a0', 'fontSize': '12px', 'marginBottom': '8px'},
+        ),
         dbc.Row(cards, className='mb-2'),
         _vegas_source(
             'Source: data/risk_flags/flags.json. Yahoo Finance via scripts/refresh_risk_flags.py. '

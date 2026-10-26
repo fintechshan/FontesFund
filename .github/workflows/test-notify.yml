@@ -16,12 +16,20 @@ on:
       - '.github/workflows/test-notify.yml'
       - 'docs/notify.md'
       - 'docs/risk_flags.md'
+      - 'docs/risk_officer.md'
       - 'src/risk_flags.py'
+      - 'src/risk_officer/__init__.py'
+      - 'src/risk_officer/capex_analyzer.py'
+      - 'src/risk_officer/credit_analyzer.py'
+      - 'src/risk_officer/concentration_analyzer.py'
       - 'scripts/refresh_risk_flags.py'
       - 'tests/test_risk_flags.py'
+      - 'tests/test_risk_officer.py'
       - 'src/dashboard/app.py'
+      - 'src/dashboard/auditor.py'
       - 'src/dashboard/gcs_sync.py'
       - 'data/risk_flags/flags.json'
+      - 'data/risk_flags/raw_capex_hyperscalers.csv'
   push:
     branches: [main]
     paths:
@@ -35,12 +43,20 @@ on:
       - '.github/workflows/test-notify.yml'
       - 'docs/notify.md'
       - 'docs/risk_flags.md'
+      - 'docs/risk_officer.md'
       - 'src/risk_flags.py'
+      - 'src/risk_officer/__init__.py'
+      - 'src/risk_officer/capex_analyzer.py'
+      - 'src/risk_officer/credit_analyzer.py'
+      - 'src/risk_officer/concentration_analyzer.py'
       - 'scripts/refresh_risk_flags.py'
       - 'tests/test_risk_flags.py'
+      - 'tests/test_risk_officer.py'
       - 'src/dashboard/app.py'
+      - 'src/dashboard/auditor.py'
       - 'src/dashboard/gcs_sync.py'
       - 'data/risk_flags/flags.json'
+      - 'data/risk_flags/raw_capex_hyperscalers.csv'
 
 permissions:
   contents: read
@@ -63,4 +79,4 @@ jobs:
         env:
           PYTHONUTF8: '1'
           PYTHONIOENCODING: utf-8
-        run: python -m unittest tests.test_notify_regime tests.test_risk_flags tests.test_qqq_vegas_tab tests.test_qqq_vegas_market -v
+        run: python -m unittest tests.test_notify_regime tests.test_risk_flags tests.test_risk_officer tests.test_qqq_vegas_tab tests.test_qqq_vegas_market -v
