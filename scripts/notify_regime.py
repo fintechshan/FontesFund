@@ -15,7 +15,7 @@ notify_regime.py — 象限 / VIX 跨档提醒（GitHub Issue → 邮件）。
 同一档内的 VIX 波动、以及象限未变，都静默退出。首次运行只写
 data/notify_state.json 基线，不开 Issue；--force 用于测试发信。
 
-风险旗 A_vol / B_crowd / C_put 只在从关到开的沿上附带通知（通知 / 不改仓）。
+风险旗 A/B/C 与结构旗 D/E/F 只在从关到开的沿上附带通知（通知 / 不改仓，NOTIFY-ONLY）。
 粘着的 ON 不每天再发。第一次写入旗标只记基线。这不改变目标权重，也不下单。
 
 象限变了时，Issue 先写组合变化：旧→新、需要调仓（任一标的 |差额|≥1%）、
@@ -58,6 +58,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.risk_flags import (  # noqa: E402 — repo root is on sys.path above
+    FLAG_IDS,
+    HARD_CONSTRAINT_NOTICE,
+    RULES,
     load_notify_block,
     rising_flag_ids,
     risk_flags_changed,
@@ -773,18 +776,32 @@ def _risk_flag_section(cur: dict, reasons: dict) -> list[str]:
     else:
         lines.append('**需要调仓：否**')
         lines.append('**不改仓。** 不要因为这面旗去跑再平衡，也不要为它下单。')
+    lines.append(
+        '**NOTIFY-ONLY。** 结构旗 D_capex / E_credit / F_conc 同样不改 Merrill 权重，'
+        '不改 QQQ Vegas 进出场或仓位，不向 IBKR / Moomoo 下单。'
+    )
+    notice = block.get('hard_constraint_notice')
+    if not isinstance(notice, dict):
+        notice = HARD_CONSTRAINT_NOTICE
+    if notice.get('zh'):
+        lines.append(notice['zh'])
+    score = block.get('bubble_pressure_score')
+    if isinstance(score, (int, float)) and not isinstance(score, bool):
+        lines.append(f'结构压力分（bubble）{float(score):.2f} = 0.40·D + 0.35·E + 0.25·F，ON=1 否则 0。')
     lines.append(f'本次新亮起：{names}')
     lines.append('B_crowd 是价格代理，不是高盛对冲基金资金流。')
     lines.append('C_put 只是卖 Put 清单提示，不是下单指令。')
-    for key in ('A_vol', 'B_crowd', 'C_put'):
+    for key in FLAG_IDS:
         status = (block.get('status') or {}).get(key)
         if status == 'skipped':
             mark = 'SKIP'
+        elif status == 'pending':
+            mark = 'PENDING'
         elif block.get(key):
             mark = 'ON'
         else:
             mark = 'OFF'
-        rule = (block.get('rule_zh') or {}).get(key) or ''
+        rule = (block.get('rule_zh') or {}).get(key) or RULES.get(key, {}).get('rule_zh') or ''
         detail = (block.get('detail') or {}).get(key) or ''
         lines.append(f'- **{key}：{mark}** {rule}'.rstrip())
         if detail:
@@ -1709,7 +1726,7 @@ def execute(args: argparse.Namespace, opener=None, wechat=None) -> str:
         flag_note = ''
         block = cur.get('risk_flags') if isinstance(cur.get('risk_flags'), dict) else None
         if block:
-            ons = [key for key in ('A_vol', 'B_crowd', 'C_put') if block.get(key)]
+            ons = [key for key in FLAG_IDS if block.get(key)]
             flag_note = ' / 风险旗 ' + (','.join(ons) if ons else '都关闭')
         print(
             f"无变化：{cur['regime']} / VIX {cur['vix']}（{cur['vix_band']} {cur['vix_band_name']}）"

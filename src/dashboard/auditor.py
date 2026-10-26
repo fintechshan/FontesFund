@@ -828,3 +828,125 @@ def run_independent_audit(price_data, macro, backtest_results, regime_history, a
     audit['risk'] = risk
     
     return audit
+
+
+def build_risk_officer_section(snapshot=None):
+    """Auditor section 6. Read-only structural flags. Not sleeve stress."""
+    try:
+        return _build_risk_officer_section(snapshot)
+    except Exception as exc:
+        logger.exception('risk officer section failed')
+        from dash import html
+        return html.Div([
+            html.H5('6. Risk Officer · 结构旗', style={'color': '#f5a623', 'fontWeight': '700'}),
+            html.Div(
+                f'结构旗面板无法渲染（{exc.__class__.__name__}）。通知 / 不改仓。NOTIFY-ONLY。',
+                style={'color': '#f5a623', 'fontSize': '12px'},
+            ),
+        ], id='auditor-section-6', style={
+            'backgroundColor': '#1a1a2e', 'border': '1px solid #f5a623',
+            'borderRadius': '12px', 'padding': '20px', 'marginBottom': '16px',
+        })
+
+
+def _build_risk_officer_section(snapshot=None):
+    from dash import html
+    import dash_bootstrap_components as dbc
+
+    from src.risk_flags import (
+        HARD_CONSTRAINT_NOTICE,
+        STRUCTURAL_FLAG_IDS,
+        TACTICAL_FLAG_IDS,
+        load_snapshot,
+    )
+
+    snap = snapshot if isinstance(snapshot, dict) else load_snapshot()
+    flags = snap.get('flags') if isinstance(snap.get('flags'), dict) else {}
+    notice = snap.get('hard_constraint_notice') if isinstance(snap.get('hard_constraint_notice'), dict) else {}
+    notice_zh = notice.get('zh') or HARD_CONSTRAINT_NOTICE['zh']
+    notice_en = notice.get('en') or HARD_CONSTRAINT_NOTICE['en']
+    score = snap.get('bubble_pressure_score')
+    score_txt = f'{float(score):.2f}' if isinstance(score, (int, float)) and not isinstance(score, bool) else '—'
+    card = {
+        'backgroundColor': '#16213e', 'border': '1px solid #2d2d44',
+        'borderRadius': '12px', 'padding': '14px', 'minHeight': '150px', 'textAlign': 'left',
+    }
+
+    def one(key):
+        item = flags.get(key) if isinstance(flags.get(key), dict) else {'name': key, 'status': 'skipped'}
+        status = item.get('status')
+        if status == 'on' and item.get('on'):
+            mark, color = 'ON', '#e74c3c'
+        elif status == 'pending':
+            mark, color = 'PENDING', '#f5a623'
+        elif status == 'skipped':
+            mark, color = 'SKIP', '#f5a623'
+        else:
+            mark, color = 'OFF', '#00d97e'
+        bits = [item.get('rule_zh') or '']
+        if item.get('pending_notice'):
+            bits.append(item['pending_notice'])
+        if item.get('detail'):
+            bits.append(item['detail'])
+        return html.Div([
+            html.Div(item.get('name') or key, style={
+                'color': '#8888a0', 'fontSize': '11px', 'letterSpacing': '1px',
+                'textTransform': 'uppercase', 'fontWeight': '700',
+            }),
+            html.Div(mark, style={'color': color, 'fontSize': '28px', 'fontWeight': '700', 'margin': '4px 0'}),
+            html.Div(' '.join(bit for bit in bits if bit), style={
+                'color': '#c8c8d4', 'fontSize': '12px', 'lineHeight': '1.45',
+            }),
+        ], style=card)
+
+    structural = [dbc.Col(one(key), md=4) for key in STRUCTURAL_FLAG_IDS]
+    tactical = [html.Div(one(key), style={'marginBottom': '8px'}) for key in TACTICAL_FLAG_IDS]
+    mirror_body = html.Div(tactical)
+    if hasattr(html, 'Details') and hasattr(html, 'Summary'):
+        mirror = html.Details([
+            html.Summary('A/B/C 战术旗 · 只读镜像（默认折叠）', style={
+                'color': '#c8c8d4', 'cursor': 'pointer', 'fontWeight': '600',
+            }),
+            html.Div(mirror_body, style={'marginTop': '10px'}),
+        ])
+    else:
+        mirror = html.Div([
+            html.Div('A/B/C 战术旗 · 只读镜像', style={'color': '#c8c8d4', 'fontWeight': '600'}),
+            mirror_body,
+        ])
+    as_of = snap.get('as_of') or 'n/a'
+    generated = snap.get('generated_at') or 'n/a'
+    return html.Div([
+        html.H5('6. Risk Officer · 结构旗', style={
+            'color': '#f5a623', 'marginBottom': '6px', 'fontWeight': '700',
+        }),
+        html.Div('通知 / 不改仓', style={
+            'color': '#f5a623', 'fontSize': '22px', 'fontWeight': '700', 'marginBottom': '2px',
+        }),
+        html.Div(notice_en, style={'color': '#c8c8d4', 'fontSize': '12px', 'marginBottom': '6px'}),
+        html.Div(notice_zh, style={'color': '#8888a0', 'fontSize': '12px', 'marginBottom': '10px'}),
+        html.Div(
+            '这一节不是第 5 节的持仓压力测试。它不改 Merrill 权重，不改 QQQ Vegas 进出场或仓位，也不下单。',
+            style={'color': '#8888a0', 'fontSize': '12px', 'marginBottom': '12px'},
+        ),
+        html.Div([
+            html.Span('Bubble pressure ', style={'color': '#8888a0'}),
+            html.Span(score_txt, style={'color': '#f5a623', 'fontWeight': '700', 'fontSize': '20px'}),
+            html.Span(
+                '  = 0.40·D + 0.35·E + 0.25·F，S=1 当 ON，否则 0。',
+                style={'color': '#8888a0', 'fontSize': '12px'},
+            ),
+        ], style={'marginBottom': '12px'}),
+        dbc.Row(structural, className='mb-3'),
+        mirror,
+        html.Div(
+            f'Source: data/risk_flags/flags.json · as of {as_of} · generated {generated}. '
+            'CapEx template: data/risk_flags/raw_capex_hyperscalers.csv '
+            '(EXAMPLE is not live; SpaceX has no OFFICIAL figure). '
+            'E_credit uses FRED BAMLH0A0HYM2. F_conc is Mag7 weight in SPY only.',
+            style={'color': '#6c757d', 'fontSize': '11px', 'marginTop': '10px'},
+        ),
+    ], id='auditor-section-6', style={
+        'backgroundColor': '#1a1a2e', 'border': '1px solid #f5a623',
+        'borderRadius': '12px', 'padding': '20px', 'marginBottom': '16px',
+    })

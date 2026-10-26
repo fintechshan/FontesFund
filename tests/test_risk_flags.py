@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 
 from src.risk_flags import (  # noqa: E402
     FLAG_IDS,
+    TACTICAL_FLAG_IDS,
     compute_flag_frame,
     compute_snapshot,
     load_notify_block,
@@ -82,7 +83,7 @@ class LagAndLookaheadTests(unittest.TestCase):
         vxn = pd.Series(18.0, index=soxx.index)
         full, _meta = compute_flag_frame(soxx, vix, vxn)
         trunc, _meta_t = compute_flag_frame(soxx.iloc[:-1], vix.iloc[:-1], vxn.iloc[:-1])
-        for key in FLAG_IDS:
+        for key in TACTICAL_FLAG_IDS:
             pd.testing.assert_series_equal(
                 full[key].iloc[:-1],
                 trunc[key],
@@ -92,7 +93,7 @@ class LagAndLookaheadTests(unittest.TestCase):
         spiked = soxx.copy()
         spiked.iloc[-1] = spiked.iloc[-1] * 1.8
         spiked_frame, _meta_s = compute_flag_frame(spiked, vix, vxn)
-        for key in FLAG_IDS:
+        for key in TACTICAL_FLAG_IDS:
             pd.testing.assert_series_equal(
                 full[key].iloc[:-1],
                 spiked_frame[key].iloc[:-1],

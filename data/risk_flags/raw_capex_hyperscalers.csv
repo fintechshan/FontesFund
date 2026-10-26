@@ -1,0 +1,4 @@
+calendar_q,msft_musd,googl_musd,amzn_musd,meta_musd,tsm_musd,nvda_musd,spacex_musd,total_musd,status,source_notes
+2020Q1,1,1,1,1,1,1,1,7,EXAMPLE,"EXAMPLE — fake ones for the column template. Not SEC, not live, not an official SpaceX figure."
+2020Q2,1,1,1,1,1,1,1,7,EXAMPLE,"EXAMPLE — fake ones for the column template. Not SEC, not live, not an official SpaceX figure."
+2026Q4,,,,,,,,PENDING_EARNINGS,"PENDING_EARNINGS placeholder. All amounts blank. SpaceX is private — do not invent an OFFICIAL figure or an estimate in this file."

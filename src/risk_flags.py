@@ -1,12 +1,16 @@
-"""Notify-only risk scorecard: A_vol, B_crowd, C_put.
+"""Notify-only risk scorecard.
+
+Tactical flags (QQQ Vegas card): A_vol, B_crowd, C_put.
+Structural flags (Auditor section 6): D_capex, E_credit, F_conc.
 
 Paper, dashboard, and notify only. These flags do not size, pause, or cash
 any position. This module does not read the regime weight table, the QQQ
 Vegas sleeve, or the rebalance script, and those paths do not read it.
 
-Lag is one trading day: each published flag is the raw condition from the
-previous session (``shift(1)``). Expanding windows use only observations up
-to that session.
+Tactical lag is one trading day: each published A/B/C flag is the raw
+condition from the previous session (``shift(1)``). Expanding windows use
+only observations up to that session. Structural formulas live in
+``src/risk_officer`` and are merged onto this same snapshot.
 """
 from __future__ import annotations
 
@@ -22,7 +26,11 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DIR = ROOT / 'data' / 'risk_flags'
 SNAPSHOT_NAME = 'flags.json'
 
-FLAG_IDS = ('A_vol', 'B_crowd', 'C_put')
+TACTICAL_FLAG_IDS = ('A_vol', 'B_crowd', 'C_put')
+STRUCTURAL_FLAG_IDS = ('D_capex', 'E_credit', 'F_conc')
+FLAG_IDS = TACTICAL_FLAG_IDS + STRUCTURAL_FLAG_IDS
+# Bubble pressure uses integer weights so 0.40/0.35/0.25 does not drift.
+SCORE_WEIGHTS = {'D_capex': 40, 'E_credit': 35, 'F_conc': 25}
 RV_WINDOW = 20
 Q80_MIN_PERIODS = 252
 Q80 = 0.80
@@ -81,7 +89,135 @@ RULES = {
             '且 SOXX 10 日 ≤ −8%。只是卖 Put 清单提示，不下单。滞后 1 个交易日。'
         ),
     },
+    'D_capex': {
+        'rule_en': (
+            'Hyperscaler CapEx sum (MSFT, GOOGL, AMZN, META, TSM, NVDA; SpaceX stays blank). '
+            'YoY% = (total_t / total_t-4 − 1) × 100. ΔYoY is this YoY minus the prior YoY, in percentage points. '
+            'ON if (ΔYoY ≤ −5 AND YoY < 15) OR (two consecutive negative ΔYoY AND their sum ≤ −4). '
+            'EXAMPLE rows are not live. A latest PENDING_EARNINGS row with any amount inherits the previous flag.'
+        ),
+        'rule_zh': (
+            '资本开支合计（MSFT、GOOGL、AMZN、META、TSM、NVDA；SpaceX 私人公司，不填官方数）。'
+            'YoY% =（本期 / 四季前 − 1）× 100，ΔYoY 为相邻同比之差（百分点）。'
+            '（ΔYoY≤−5 且 YoY<15）或（连续两季 ΔYoY 为负且两者之和≤−4）则 ON。'
+            'EXAMPLE 不当实盘。最新一行若是带数字的 PENDING_EARNINGS，继承上一份旗标，不抢跑。'
+        ),
+    },
+    'E_credit': {
+        'rule_en': (
+            'ICE BofA US High Yield OAS, FRED BAMLH0A0HYM2 (percent × 100 = bps). '
+            'Expanding z-score, min_periods=252, sample standard deviation. '
+            'ON if spread ≥ 450 bps OR z ≥ 2. Stay ON until spread < 380 bps AND z < 1. '
+            'The published flag is the prior observation.'
+        ),
+        'rule_zh': (
+            '美银美国高收益债 OAS（FRED BAMLH0A0HYM2，百分数×100 为基点）。'
+            '扩窗 Z 分（min_periods=252，样本标准差）。'
+            '利差≥450bp 或 Z≥2 则 ON；保持 ON，直到利差<380bp 且 Z<1。'
+            '公布值用上一期观测。'
+        ),
+    },
+    'F_conc': {
+        'rule_en': (
+            'Mag7 weight inside SPY only: AAPL, MSFT, AMZN, NVDA, META, TSLA, and Alphabet as GOOGL+GOOG. '
+            'ON if the weight ≥ 32%. Stay ON until the weight ≤ 29%. '
+            'Uses the latest published SPY holdings file. A partial basket is skipped.'
+        ),
+        'rule_zh': (
+            '只看 SPY 里的 Mag7 权重：AAPL、MSFT、AMZN、NVDA、META、TSLA，以及 Alphabet 的 GOOGL+GOOG。'
+            '合计≥32% 则 ON；保持 ON，直到≤29%。'
+            '用最新已公布的 SPY 持仓。成分不全则跳过。'
+        ),
+    },
 }
+
+HARD_CONSTRAINT_NOTICE = {
+    'zh': (
+        '结构旗（D_capex / E_credit / F_conc）只通知、不改仓。'
+        '不修改 Merrill REGIME_WEIGHTS，不改变 QQQ Vegas 进出场或仓位，'
+        '不向 IBKR 或 Moomoo 下单。'
+    ),
+    'en': (
+        'NOTIFY-ONLY. Structural flags do not change Merrill REGIME_WEIGHTS, '
+        'QQQ Vegas entry or size, or IBKR/Moomoo orders.'
+    ),
+}
+
+
+def bubble_pressure_score(flags: dict | None) -> float:
+    """0.40·D + 0.35·E + 0.25·F. S is 1 only when that flag is status on."""
+    flags = flags or {}
+    points = 0
+    for key, weight in SCORE_WEIGHTS.items():
+        item = flags.get(key) if isinstance(flags.get(key), dict) else {}
+        if item.get('on') and item.get('status') == 'on':
+            points += weight
+    return points / 100.0
+
+
+def _blank_flag(key: str, detail: str = '尚未计算。') -> dict:
+    spec = RULES[key]
+    tier = 'structural' if key in STRUCTURAL_FLAG_IDS else 'tactical'
+    return {
+        'name': key,
+        'on': False,
+        'status': 'skipped',
+        'mode': 'skipped',
+        'tier': tier,
+        'rule_en': spec['rule_en'],
+        'rule_zh': spec['rule_zh'],
+        'detail': detail,
+    }
+
+
+def _finish(snapshot: dict) -> dict:
+    """Fill structural placeholders and force the notify-only contract."""
+    flags = snapshot.setdefault('flags', {})
+    for key in FLAG_IDS:
+        if not isinstance(flags.get(key), dict):
+            flags[key] = _blank_flag(key)
+    snapshot['bubble_pressure_score'] = bubble_pressure_score(flags)
+    snapshot['hard_constraint_notice'] = dict(
+        snapshot.get('hard_constraint_notice') or HARD_CONSTRAINT_NOTICE
+    )
+    if not snapshot['hard_constraint_notice'].get('zh'):
+        snapshot['hard_constraint_notice'] = dict(HARD_CONSTRAINT_NOTICE)
+    snapshot['flag_groups'] = {
+        'tactical': list(TACTICAL_FLAG_IDS),
+        'structural': list(STRUCTURAL_FLAG_IDS),
+    }
+    snapshot['banner_zh'] = snapshot.get('banner_zh') or BANNER_ZH
+    snapshot['banner_en'] = snapshot.get('banner_en') or BANNER_EN
+    snapshot['purpose'] = 'notify_only'
+    snapshot['effect'] = 'none'
+    snapshot['orders'] = False
+    snapshot['weights'] = False
+    return snapshot
+
+
+def attach_structural(snapshot: dict, payloads: dict | None, previous: dict | None = None) -> dict:
+    """Merge D/E/F onto a tactical snapshot.
+
+    A payload with ``inherit_previous`` keeps the stored flag when the new
+    source failed. Otherwise the payload replaces that flag.
+    """
+    out = dict(snapshot or {})
+    out['flags'] = dict((snapshot or {}).get('flags') or {})
+    prev_flags = {}
+    if isinstance(previous, dict) and isinstance(previous.get('flags'), dict):
+        prev_flags = previous['flags']
+    payloads = payloads or {}
+    for key in STRUCTURAL_FLAG_IDS:
+        item = dict(payloads.get(key) or _blank_flag(key))
+        inherit = bool(item.pop('inherit_previous', False))
+        prev_item = prev_flags.get(key)
+        if inherit and isinstance(prev_item, dict):
+            kept = dict(prev_item)
+            kept.pop('inherit_previous', None)
+            out['flags'][key] = kept
+        else:
+            out['flags'][key] = item
+    return _finish(out)
 
 
 def flags_path() -> Path:
@@ -193,7 +329,7 @@ def compute_flag_frame(soxx, vix, vxn=None, soxx_high=None, soxx_low=None):
         'modes': {},
     }
     if soxx_s is None and vxn_s is None and vix_s is None:
-        meta['modes'] = {key: 'skipped' for key in FLAG_IDS}
+        meta['modes'] = {key: 'skipped' for key in TACTICAL_FLAG_IDS}
         return _blank_frame(pd.DatetimeIndex([])), meta
 
     if soxx_s is not None:
@@ -283,7 +419,7 @@ def compute_flag_frame(soxx, vix, vxn=None, soxx_high=None, soxx_low=None):
     meta['modes']['A_vol'] = a_mode
     frame['A_vol_raw'] = a_raw.astype(float)
 
-    for key in FLAG_IDS:
+    for key in TACTICAL_FLAG_IDS:
         raw = frame[f'{key}_raw'].fillna(0.0)
         if meta['modes'].get(key) == 'skipped':
             frame[key] = np.nan
@@ -397,6 +533,7 @@ def _flag_payload(key: str, mode: str, lagged, signal_row, basis: str | None) ->
         'on': on,
         'status': status,
         'mode': mode,
+        'tier': 'tactical',
         'rule_en': rule_en,
         'rule_zh': rule_zh,
         'detail': detail,
@@ -406,7 +543,7 @@ def _flag_payload(key: str, mode: str, lagged, signal_row, basis: str | None) ->
 def snapshot_from_frame(frame: pd.DataFrame, meta: dict | None = None, today=None) -> dict:
     """Latest lagged scorecard. ``today`` is only used for the stale check."""
     meta = meta or {}
-    modes = meta.get('modes') or {key: 'skipped' for key in FLAG_IDS}
+    modes = meta.get('modes') or {key: 'skipped' for key in TACTICAL_FLAG_IDS}
     basis = meta.get('range_basis')
     if frame is None or frame.empty:
         snap = unavailable_snapshot('没有价格，跳过三面旗。')
@@ -417,7 +554,7 @@ def snapshot_from_frame(frame: pd.DataFrame, meta: dict | None = None, today=Non
     signal_row = frame.iloc[-2] if signal_label is not None else pd.Series(dtype=float)
     last = frame.iloc[-1]
     flags = {}
-    for key in FLAG_IDS:
+    for key in TACTICAL_FLAG_IDS:
         flags[key] = _flag_payload(key, modes.get(key, 'skipped'), last.get(key), signal_row, basis)
     snap = {
         'schema': 1,
@@ -442,23 +579,12 @@ def snapshot_from_frame(frame: pd.DataFrame, meta: dict | None = None, today=Non
         'flags': flags,
         'generated_at': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC'),
     }
-    return mark_freshness(snap, today=today)
+    return mark_freshness(_finish(snap), today=today)
 
 
 def unavailable_snapshot(reason: str = '尚未刷新') -> dict:
-    flags = {}
-    for key in FLAG_IDS:
-        rule_en, rule_zh = _rule_pair(key, 'skipped')
-        flags[key] = {
-            'name': key,
-            'on': False,
-            'status': 'skipped',
-            'mode': 'skipped',
-            'rule_en': rule_en,
-            'rule_zh': rule_zh,
-            'detail': reason,
-        }
-    return {
+    flags = {key: _blank_flag(key, reason) for key in FLAG_IDS}
+    return _finish({
         'schema': 1,
         'purpose': 'notify_only',
         'effect': 'none',
@@ -477,7 +603,7 @@ def unavailable_snapshot(reason: str = '尚未刷新') -> dict:
         'inputs': {'soxx': False, 'vxn': False, 'vix': False},
         'flags': flags,
         'generated_at': None,
-    }
+    })
 
 
 def mark_freshness(snapshot: dict, today=None, max_age_days: int = FRESH_MAX_AGE_DAYS) -> dict:
@@ -509,12 +635,8 @@ def load_snapshot(path=None) -> dict:
     if not isinstance(data, dict) or not isinstance(data.get('flags'), dict):
         return unavailable_snapshot('flags.json 格式不对')
     for key in FLAG_IDS:
-        data['flags'].setdefault(key, unavailable_snapshot()['flags'][key])
-    data.setdefault('banner_zh', BANNER_ZH)
-    data.setdefault('purpose', 'notify_only')
-    data.setdefault('orders', False)
-    data.setdefault('weights', False)
-    return data
+        data['flags'].setdefault(key, _blank_flag(key, 'flags.json 里还没有这面旗。'))
+    return _finish(data)
 
 
 def notify_block(snapshot: dict) -> dict | None:
@@ -541,6 +663,15 @@ def notify_block(snapshot: dict) -> dict | None:
         block['mode'][key] = item.get('mode') or 'skipped'
         block['detail'][key] = item.get('detail') or ''
         block['rule_zh'][key] = item.get('rule_zh') or RULES[key]['rule_zh']
+    notice = snapshot.get('hard_constraint_notice')
+    if isinstance(notice, dict):
+        block['hard_constraint_notice'] = {
+            'zh': notice.get('zh') or HARD_CONSTRAINT_NOTICE['zh'],
+            'en': notice.get('en') or HARD_CONSTRAINT_NOTICE['en'],
+        }
+    score = snapshot.get('bubble_pressure_score')
+    if isinstance(score, (int, float)) and not isinstance(score, bool):
+        block['bubble_pressure_score'] = float(score)
     return block
 
 
@@ -548,12 +679,26 @@ def load_notify_block(path=None) -> dict | None:
     return notify_block(load_snapshot(path))
 
 
+def to_notify_block(snapshot: dict) -> dict | None:
+    """Alias used by the Risk Officer spec. Same object as ``notify_block``."""
+    return notify_block(snapshot)
+
+
 def rising_flag_ids(prev_block, cur_block) -> list[str]:
-    """Flags that moved to ON. A missing previous block is a baseline, not an edge."""
+    """Flags that moved to ON.
+
+    A missing previous block is a baseline, not an edge. A flag id that was
+    not stored on the previous block is also a baseline, so the first time
+    D/E/F appear they do not notify.
+    """
     if not isinstance(prev_block, dict) or not isinstance(cur_block, dict):
         return []
+    prev_status = prev_block.get('status') if isinstance(prev_block.get('status'), dict) else {}
     risen = []
     for key in FLAG_IDS:
+        known = key in prev_block or key in prev_status
+        if not known:
+            continue
         if bool(cur_block.get(key)) and not bool(prev_block.get(key)):
             risen.append(key)
     return risen

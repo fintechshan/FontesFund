@@ -45,10 +45,57 @@
       "rule_en": "VIX ≥ 25 AND VIX rising over 5 sessions AND SOXX < SMA50 AND SOXX 10d ≤ −8%. Sell-put checklist hint only. Lag 1 trading day.",
       "rule_zh": "VIX≥25 且 VIX 较 5 个交易日前上升，且 SOXX < SMA50，且 SOXX 10 日 ≤ −8%。只是卖 Put 清单提示，不下单。滞后 1 个交易日。",
       "detail": "VIX 19.99 vs 5日前 14.84 · SOXX 493.39 vs SMA50 537.15 · 10日 -16.2% · 卖Put清单提示，不下单"
+    },
+    "D_capex": {
+      "name": "D_capex",
+      "on": false,
+      "status": "skipped",
+      "mode": "skipped",
+      "tier": "structural",
+      "rule_en": "Hyperscaler CapEx sum (MSFT, GOOGL, AMZN, META, TSM, NVDA; SpaceX stays blank). YoY% = (total_t / total_t-4 − 1) × 100. ΔYoY is this YoY minus the prior YoY, in percentage points. ON if (ΔYoY ≤ −5 AND YoY < 15) OR (two consecutive negative ΔYoY AND their sum ≤ −4). EXAMPLE rows are not live. A latest PENDING_EARNINGS row with any amount inherits the previous flag.",
+      "rule_zh": "资本开支合计（MSFT、GOOGL、AMZN、META、TSM、NVDA；SpaceX 私人公司，不填官方数）。YoY% =（本期 / 四季前 − 1）× 100，ΔYoY 为相邻同比之差（百分点）。（ΔYoY≤−5 且 YoY<15）或（连续两季 ΔYoY 为负且两者之和≤−4）则 ON。EXAMPLE 不当实盘。最新一行若是带数字的 PENDING_EARNINGS，继承上一份旗标，不抢跑。",
+      "detail": "尚未用实盘数据计算。模板里的 EXAMPLE 行不是官方 CapEx。SpaceX 为私人公司，不填 OFFICIAL 数字。刷新 scripts/refresh_risk_flags.py 后更新。"
+    },
+    "E_credit": {
+      "name": "E_credit",
+      "on": false,
+      "status": "skipped",
+      "mode": "skipped",
+      "tier": "structural",
+      "rule_en": "ICE BofA US High Yield OAS, FRED BAMLH0A0HYM2 (percent × 100 = bps). Expanding z-score, min_periods=252, sample standard deviation. ON if spread ≥ 450 bps OR z ≥ 2. Stay ON until spread < 380 bps AND z < 1. The published flag is the prior observation.",
+      "rule_zh": "美银美国高收益债 OAS（FRED BAMLH0A0HYM2，百分数×100 为基点）。扩窗 Z 分（min_periods=252，样本标准差）。利差≥450bp 或 Z≥2 则 ON；保持 ON，直到利差<380bp 且 Z<1。公布值用上一期观测。",
+      "detail": "尚未下载 FRED BAMLH0A0HYM2。刷新 scripts/refresh_risk_flags.py 后更新。下载失败则保留上一份。"
+    },
+    "F_conc": {
+      "name": "F_conc",
+      "on": false,
+      "status": "skipped",
+      "mode": "skipped",
+      "tier": "structural",
+      "rule_en": "Mag7 weight inside SPY only: AAPL, MSFT, AMZN, NVDA, META, TSLA, and Alphabet as GOOGL+GOOG. ON if the weight ≥ 32%. Stay ON until the weight ≤ 29%. Uses the latest published SPY holdings file. A partial basket is skipped.",
+      "rule_zh": "只看 SPY 里的 Mag7 权重：AAPL、MSFT、AMZN、NVDA、META、TSLA，以及 Alphabet 的 GOOGL+GOOG。合计≥32% 则 ON；保持 ON，直到≤29%。用最新已公布的 SPY 持仓。成分不全则跳过。",
+      "detail": "尚未下载 SPY 持仓里的 Mag7 权重。刷新 scripts/refresh_risk_flags.py 后更新。成分不全则跳过。"
     }
   },
   "generated_at": "2026-10-20 10:22 UTC",
   "age_days": 1,
   "stale": false,
-  "source": "yahoo"
+  "source": "yahoo",
+  "bubble_pressure_score": 0.0,
+  "hard_constraint_notice": {
+    "zh": "结构旗（D_capex / E_credit / F_conc）只通知、不改仓。不修改 Merrill REGIME_WEIGHTS，不改变 QQQ Vegas 进出场或仓位，不向 IBKR 或 Moomoo 下单。",
+    "en": "NOTIFY-ONLY. Structural flags do not change Merrill REGIME_WEIGHTS, QQQ Vegas entry or size, or IBKR/Moomoo orders."
+  },
+  "flag_groups": {
+    "tactical": [
+      "A_vol",
+      "B_crowd",
+      "C_put"
+    ],
+    "structural": [
+      "D_capex",
+      "E_credit",
+      "F_conc"
+    ]
+  }
 }

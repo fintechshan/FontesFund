@@ -249,11 +249,11 @@ python -m unittest tests.test_notify_regime
 
 ## Risk flags (notify only)
 
-`A_vol`, `B_crowd`, and `C_put` are a paper scorecard. See [docs/risk_flags.md](risk_flags.md).
+`A_vol`, `B_crowd`, and `C_put` are a paper scorecard. `D_capex`, `E_credit`, and `F_conc` are the structural scorecard on Auditor section 6. See [docs/risk_flags.md](risk_flags.md) and [docs/risk_officer.md](risk_officer.md).
 
-The same weekday job loads `data/risk_flags/flags.json` after `--refresh` (Yahoo SOXX, VIX, VXN). A flag notifies only when it turns **on**. A flag that stays on does not send again. The first time the three flags are stored is a baseline, same as the first regime run. Turning a flag off updates `data/notify_state.json` and does not open an Issue.
+The same weekday job loads `data/risk_flags/flags.json` after `--refresh` (Yahoo SOXX, VIX, VXN, then CapEx / HY OAS / SPY holdings when those sources answer). A flag notifies only when it turns **on**. A flag that stays on does not send again. The first time the block is stored is a baseline, same as the first regime run. A flag id that was absent from the previous block is also a baseline, so the first store of D/E/F does not notify. Turning a flag off updates `data/notify_state.json` and does not open an Issue.
 
-The Issue says **通知 / 不改仓**. It does not change `REGIME_WEIGHTS` and it is not an instruction to run `ibkr_rebalance.py --execute`. When the regime or the VIX band also changes, that still follows the rules above; the flag block is an extra section in the same Issue.
+The Issue says **通知 / 不改仓** and **NOTIFY-ONLY**. It does not change `REGIME_WEIGHTS`, QQQ Vegas entry or size, or IBKR/Moomoo orders. It is not an instruction to run `ibkr_rebalance.py --execute`. When the regime or the VIX band also changes, that still follows the rules above; the flag block is an extra section in the same Issue. The structural bubble score in that section is `0.40·D + 0.35·E + 0.25·F` with S = 1 only when that flag is on.
 
 Optional WeChat: repository secret `SERVERCHAN_SENDKEY`. When it is set, the script POSTs the same title and body to Server酱 (`https://sctapi.ftqq.com/{SENDKEY}.send`, form fields `title` and `desp`). Success is JSON `code == 0`. A missing or rejected key logs a warning and does not fail the Issue, and it does not roll the baseline back. The key is not printed. Leave the secret unset and only the GitHub Issue is sent.
 
@@ -263,8 +263,9 @@ Optional WeChat: repository secret `SERVERCHAN_SENDKEY`. When it is set, the scr
 |---|---|
 | `.github/workflows/notify.yml` | Weekday cron, manual force, then `--audit` |
 | `scripts/notify_regime.py` | Classify, dedupe, open Issue, audit a miss. Risk flags notify on the rising edge only |
-| `src/risk_flags.py` | A_vol / B_crowd / C_put. Notify and dashboard only |
-| `scripts/refresh_risk_flags.py` | Yahoo download for that scorecard |
-| `data/risk_flags/flags.json` | Latest lagged scorecard. Price cache next to it is gitignored |
+| `src/risk_flags.py` | A–F scorecard. Notify and dashboard only |
+| `src/risk_officer/` | D_capex / E_credit / F_conc formulas. Notify only |
+| `scripts/refresh_risk_flags.py` | Yahoo download plus structural sources for that scorecard |
+| `data/risk_flags/flags.json` | Latest scorecard. Price, CapEx, OAS, and SPY-weight caches next to it are gitignored |
 | `data/notify_state.json` | Baseline plus `last_delivery` after a successful Issue. Keep it tracked |
 | `data/notify_audit.json` | Gitignored run log for the audit step in the same job |

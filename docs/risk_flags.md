@@ -2,7 +2,9 @@
 
 `A_vol`, `B_crowd`, and `C_put` are a research scorecard. They are shown on the QQQ Vegas tab and, when one turns **on**, the weekday notifier opens one GitHub Issue (and Server酱, if `SERVERCHAN_SENDKEY` is set).
 
-**通知 / 不改仓.** These flags do not change Merrill `REGIME_WEIGHTS`, the CPI+1 / GDP+4 clock, QQQ Vegas v9 (Vegas and expanding Q80, 70/30, close to next open), or any live rebalance size. A backtest of using them to cut live exposure hurt returns. Do not wire them into `src/backtester/engine.py`, `src/backtester/daily_overlay.py`, or `scripts/ibkr_rebalance.py`.
+Structural flags `D_capex`, `E_credit`, and `F_conc` share that contract. They render on Auditor section 6, not on the sleeve-stress panel and not as Vegas entry or size. The formula, the CapEx template, and the hysteresis are in [docs/risk_officer.md](risk_officer.md).
+
+**通知 / 不改仓. NOTIFY-ONLY.** These flags do not change Merrill `REGIME_WEIGHTS`, the CPI+1 / GDP+4 clock, QQQ Vegas v9 (Vegas and expanding Q80, 70/30, close to next open), or any live rebalance size. A backtest of using the tactical flags to cut live exposure hurt returns. Do not wire any of A–F into `src/backtester/engine.py`, `src/backtester/daily_overlay.py`, or `scripts/ibkr_rebalance.py`.
 
 ## Rules
 
@@ -20,12 +22,15 @@ If SOXX and VXN are both missing, **A_vol** degrades to **VIX ≥ 30** and the c
 
 | Path | Role |
 |---|---|
-| `src/risk_flags.py` | Flag math and the JSON scorecard. |
-| `scripts/refresh_risk_flags.py` | Yahoo download. Failure keeps the previous `flags.json`. |
-| `data/risk_flags/flags.json` | What the dashboard reads. ASCII path. |
+| `src/risk_flags.py` | Flag ids, the JSON scorecard, bubble score, rising edge. |
+| `src/risk_officer/` | D/E/F formulas. Not imported by the engine or the brokers. |
+| `scripts/refresh_risk_flags.py` | Yahoo download, then D/E/F. A price failure keeps the previous `flags.json`. |
+| `data/risk_flags/flags.json` | What the dashboard reads. ASCII path. A–F plus `bubble_pressure_score`. |
+| `data/risk_flags/raw_capex_hyperscalers.csv` | CapEx template. EXAMPLE rows are fake. No committed OFFICIAL print. |
 | `data/risk_flags/prices.csv` | Price cache. Gitignored. |
-| QQQ Vegas tab | Card: name, on/off/skip, rule, as-of. |
-| `scripts/notify_regime.py` | Rising edge only. Sticky ON does not send every day. First sight of the block is a baseline. |
+| QQQ Vegas tab | Tactical card only: A/B/C. |
+| Auditor section 6 | Structural card: D/E/F, bubble score, collapsed A/B/C mirror. |
+| `scripts/notify_regime.py` | Rising edge only, A–F. Sticky ON does not send every day. First sight of a flag id is a baseline. |
 | `/tasks/refresh` | Refreshes the scorecard after the backtest step and uploads `flags.json`. A backtest failure still attempts this refresh. |
 
 The notifier’s regime and VIX-band rules are unchanged. A flag edge on a quiet regime day is its own Issue, titled `[风险旗]`, labeled `rebalance` and `risk-flag`. The body says not to rebalance because of the flag.
