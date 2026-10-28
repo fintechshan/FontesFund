@@ -11,11 +11,11 @@
   "price_asof": "2026-10-26",
   "checked_at": "2026-10-27 01:43 UTC",
   "risk_flags": {
-    "as_of": "2026-10-26",
-    "signal_date": "2026-10-23",
+    "as_of": "2026-10-27",
+    "signal_date": "2026-10-26",
     "status": {
       "A_vol": "on",
-      "B_crowd": "on",
+      "B_crowd": "off",
       "C_put": "off",
       "D_capex": "skipped",
       "E_credit": "skipped",
@@ -30,9 +30,9 @@
       "F_conc": "skipped"
     },
     "detail": {
-      "A_vol": "SOXX RV20 38.0% vs Q80 36.4%；VXN 28.30 vs Q80 27.20",
-      "B_crowd": "5日 -3.1% · 10日 -14.5% · 振幅/收盘 0.17 vs 中位数 0.07（高低价）· 连跌 0 日",
-      "C_put": "VIX 19.45 vs 5日前 19.99 · SOXX 478.20 vs SMA50 532.43 · 10日 -14.5% · 卖Put清单提示，不下单",
+      "A_vol": "SOXX RV20 39.9% vs Q80 36.4%；VXN 26.40 vs Q80 27.20",
+      "B_crowd": "5日 -2.0% · 10日 -9.7% · 振幅/收盘 0.15 vs 中位数 0.07（高低价）· 连跌 0 日",
+      "C_put": "VIX 18.39 vs 5日前 18.44 · SOXX 491.83 vs SMA50 531.26 · 10日 -9.7% · 卖Put清单提示，不下单",
       "D_capex": "没有可用的 OFFICIAL 行。EXAMPLE 已忽略。",
       "E_credit": "尚未下载 FRED BAMLH0A0HYM2。刷新 scripts/refresh_risk_flags.py 后更新。下载失败则保留上一份。",
       "F_conc": "尚未下载 SPY 持仓里的 Mag7 权重。刷新 scripts/refresh_risk_flags.py 后更新。成分不全则跳过。"
@@ -46,7 +46,7 @@
       "F_conc": "只看 SPY 里的 Mag7 权重：AAPL、MSFT、AMZN、NVDA、META、TSLA，以及 Alphabet 的 GOOGL+GOOG。合计≥32% 则 ON；保持 ON，直到≤29%。用最新已公布的 SPY 持仓。成分不全则跳过。"
     },
     "A_vol": true,
-    "B_crowd": true,
+    "B_crowd": false,
     "C_put": false,
     "D_capex": false,
     "E_credit": false,
