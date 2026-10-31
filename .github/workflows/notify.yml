@@ -15,19 +15,32 @@
 # 审计：应发信却没有 rebalance Issue 时，notify_regime.py 非零退出且不推进基线。
 # 下一步 --audit 再核对；确认漏报会开一张 [审计] Issue（标签 notify-audit），
 # 并把 confirmed_miss=true，避免把这次失败的基线推上去。见 docs/notify.md。
+#
+# 周六周度审计（Auditor 第 7 节）：01:00 UTC（香港/北京周六 09:00）仍先跑上面的
+# 象限检查，再跑 scripts/weekly_audit_snapshot.py --refresh，写入
+# data/weekly_audit_snapshot.json。workflow_dispatch 的 weekly_audit 默认为 true，
+# 手动跑也会生成快照。提交同时暂存 notify_state.json 与周度快照（文件存在时）；
+# 只有两者相对 HEAD 都没变才跳过提交。快照脚本在回测对账 FAIL 时退出 3（本步变红），
+# 但文件已经写好，保存步仍会把它推上去。
 
-name: 象限切换提醒
+name: 象限切换提醒与周度审计
 
 on:
   schedule:
     # 23:00 UTC 工作日。美东夏令 19:00 / 冬令 18:00，都在美股收盘之后。
     - cron: '0 23 * * 1-5'
+    # 01:00 UTC 每周六。香港/北京周六 09:00。先跑象限检查，再写周度审计快照。
+    - cron: '0 1 * * 6'
   workflow_dispatch:
     inputs:
       force:
         description: '忽略去重，强制发一封（测试用）'
         type: boolean
         default: false
+      weekly_audit:
+        description: '立即生成并提交周度数据与回测审计快照 (data/weekly_audit_snapshot.json)'
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -90,8 +103,15 @@ jobs:
           set -euo pipefail
           python scripts/notify_regime.py --audit
 
-      - name: 保存状态（用于去重）
-        if: steps.notify.outcome == 'success' && steps.audit.outputs.confirmed_miss != 'true'
+      - name: 生成周六数据与回测准确性审计快照 (Auditor Section 7)
+        id: weekly_audit
+        if: always() && (github.event.schedule == '0 1 * * 6' || github.event.inputs.weekly_audit == 'true')
+        run: |
+          set -euo pipefail
+          python scripts/weekly_audit_snapshot.py --refresh --output data/weekly_audit_snapshot.json
+
+      - name: 保存状态与周度审计快照
+        if: always() && steps.notify.outcome == 'success' && steps.audit.outputs.confirmed_miss != 'true'
         env:
           NOTIFY_PUSH_TOKEN: ${{ secrets.NOTIFY_PUSH_TOKEN }}
         run: |
@@ -103,13 +123,17 @@ jobs:
           # checkout 在 schedule 上有时是 detached HEAD。钉到事件分支再提交。
           git checkout -B "${GITHUB_REF_NAME}"
           git add -- data/notify_state.json
-          if git diff --cached --quiet -- data/notify_state.json; then
-            echo "状态未变，无需提交"
+          if [ -f data/weekly_audit_snapshot.json ]; then
+            git add -- data/weekly_audit_snapshot.json
+          fi
+          # 周度快照变了也要提交，不能只因为 notify_state.json 没变就退出。
+          if git diff --cached --quiet; then
+            echo "状态与周度审计快照均未变，无需提交"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898+github-actions[bot]@users.noreply.github.com"
-          git commit -m "象限状态更新 $(date -u +%F) [skip ci]"
+          git commit -m "象限状态与周度审计更新 $(date -u +%F) [skip ci]"
           if git push origin "HEAD:${GITHUB_REF_NAME}"; then
             exit 0
           fi

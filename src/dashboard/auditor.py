@@ -3,10 +3,14 @@ src/dashboard/auditor.py
 ========================
 Gemini Independent Auditor helper module for quantitative and qualitative checks.
 """
-import pandas as pd
-import numpy as np
+import json
 import logging
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+import numpy as np
+import pandas as pd
 
 logger = logging.getLogger('auditor')
 
@@ -861,23 +865,157 @@ def run_independent_audit(
     return audit
 
 
-def build_risk_officer_section(snapshot=None):
-    """Auditor section 6. Read-only structural flags. Not sleeve stress."""
+WEEKLY_AUDIT_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "weekly_audit_snapshot.json"
+
+
+def load_weekly_audit_snapshot(path: Optional[Path] = None) -> Dict[str, Any]:
+    target = path or WEEKLY_AUDIT_PATH
+    if not target.exists():
+        return {}
     try:
-        return _build_risk_officer_section(snapshot)
+        return json.loads(target.read_text(encoding="utf-8"))
     except Exception as exc:
-        logger.exception('risk officer section failed')
+        logger.warning("Failed to read weekly_audit_snapshot.json: %s", exc)
+        return {}
+
+
+def build_risk_officer_section(snapshot=None, weekly_snapshot: Optional[Dict[str, Any]] = None):
+    """Auditor section 6 + section 7 wrapper. Automatically renders both sections in the Auditors tab."""
+    from dash import html
+    try:
+        sec6 = _build_risk_officer_section(snapshot)
+    except Exception as exc:
+        logger.exception("risk officer section failed")
+        sec6 = html.Div([
+            html.H5("6. Risk Officer · 结构旗", style={"color": "#f5a623", "fontWeight": "700"}),
+            html.Div(
+                f"结构旗面板无法渲染（{exc.__class__.__name__}）。通知 / 不改仓。NOTIFY-ONLY。",
+                style={"color": "#f5a623", "fontSize": "12px"},
+            ),
+        ], id="auditor-section-6", style={
+            "backgroundColor": "#1a1a2e", "border": "1px solid #f5a623",
+            "borderRadius": "12px", "padding": "20px", "marginBottom": "16px",
+        })
+    sec7 = build_weekly_audit_section(weekly_snapshot)
+    return html.Div([sec6, sec7], id="auditor-sections-6-7")
+
+
+def build_weekly_audit_section(weekly_snapshot: Optional[Dict[str, Any]] = None):
+    """Auditor section 7. Renders weekly Saturday data accuracy & backtest consistency snapshot."""
+    try:
+        return _build_weekly_audit_section(weekly_snapshot)
+    except Exception as exc:
+        logger.exception("weekly audit section failed")
         from dash import html
         return html.Div([
-            html.H5('6. Risk Officer · 结构旗', style={'color': '#f5a623', 'fontWeight': '700'}),
+            html.H5("7. Weekly Data & Backtest Audit · 周度数据与回测审计", style={"color": "#f5a623", "fontWeight": "700"}),
             html.Div(
-                f'结构旗面板无法渲染（{exc.__class__.__name__}）。通知 / 不改仓。NOTIFY-ONLY。',
-                style={'color': '#f5a623', 'fontSize': '12px'},
+                f"周度审计面板无法渲染 ({exc.__class__.__name__})。",
+                style={"color": "#f5a623", "fontSize": "12px"},
             ),
-        ], id='auditor-section-6', style={
-            'backgroundColor': '#1a1a2e', 'border': '1px solid #f5a623',
-            'borderRadius': '12px', 'padding': '20px', 'marginBottom': '16px',
+        ], id="auditor-section-7", style={
+            "backgroundColor": "#1a1a2e", "border": "1px solid #f5a623",
+            "borderRadius": "12px", "padding": "20px", "marginBottom": "16px",
         })
+
+
+def _build_weekly_audit_section(weekly_snapshot: Optional[Dict[str, Any]] = None):
+    from dash import html
+    import dash_bootstrap_components as dbc
+
+    snap = weekly_snapshot if isinstance(weekly_snapshot, dict) else load_weekly_audit_snapshot()
+    if not snap:
+        return html.Div([
+            html.H5("7. Weekly Data & Backtest Audit · 周度数据与回测审计", style={
+                "color": "#f5a623", "marginBottom": "6px", "fontWeight": "700",
+            }),
+            html.Div(
+                "尚未生成 data/weekly_audit_snapshot.json。可运行 `python scripts/weekly_audit_snapshot.py --refresh` 或等待周六 GitHub Action 自动推送。",
+                style={"color": "#c8c8d4", "fontSize": "12px"},
+            ),
+        ], id="auditor-section-7", style={
+            "backgroundColor": "#1a1a2e", "border": "1px solid #2d2d44",
+            "borderRadius": "12px", "padding": "20px", "marginBottom": "16px",
+        })
+
+    overall = snap.get("overall_status", "WARNING")
+    status_color = "#00d97e" if overall == "PASS" else ("#e74c3c" if overall == "FAIL" else "#f5a623")
+
+    fresh = snap.get("freshness", {})
+    bt = snap.get("backtest_consistency", {})
+    live = snap.get("live_market_check", {})
+    tickers = live.get("tickers", {}) if isinstance(live, dict) else {}
+
+    card_style = {
+        "backgroundColor": "#16213e", "border": "1px solid #2d2d44",
+        "borderRadius": "12px", "padding": "14px", "minHeight": "140px", "textAlign": "left",
+    }
+
+    def metric_card(title: str, badge: str, color: str, detail: str):
+        return html.Div([
+            html.Div(title, style={
+                "color": "#8888a0", "fontSize": "11px", "letterSpacing": "1px",
+                "textTransform": "uppercase", "fontWeight": "700",
+            }),
+            html.Div(badge, style={"color": color, "fontSize": "24px", "fontWeight": "700", "margin": "4px 0"}),
+            html.Div(detail, style={"color": "#c8c8d4", "fontSize": "12px", "lineHeight": "1.45"}),
+        ], style=card_style)
+
+    bt_status = bt.get("status", "WARNING")
+    bt_color = "#00d97e" if bt_status == "PASS" else ("#e74c3c" if bt_status == "FAIL" else "#f5a623")
+    bt_detail = (
+        f"CAGR: {bt.get('reported_cagr', 0)*100:.2f}% (diff {bt.get('cagr_diff_bps', 0):.2f} bps) · "
+        f"Total: {bt.get('reported_total_return', 0)*100:.2f}% (diff {bt.get('total_diff_bps', 0):.2f} bps) · "
+        f"Max DD: {bt.get('reported_max_dd', 0)*100:.2f}%"
+    )
+
+    fr_status = fresh.get("status", "WARNING")
+    fr_color = "#00d97e" if fr_status == "PASS" else "#f5a623"
+    lag_days = fresh.get("backtest_lag_calendar_days")
+    lag_txt = f"{lag_days}d lag" if lag_days is not None else "n/a"
+    fr_detail = (
+        f"Backtest end: {fresh.get('backtest_end', 'n/a')} ({lag_txt}) · "
+        f"Notify as-of: {fresh.get('notify_price_asof', 'n/a')} · "
+        f"Flags as-of: {fresh.get('risk_flags_asof', 'n/a')}"
+    )
+
+    live_summary_bits = []
+    for tk in ["SPY", "QQQ", "SOXX", "IEF", "GLD", "DBMF", "AIPO", "VIX"]:
+        if tk in tickers:
+            info = tickers[tk]
+            live_summary_bits.append(f"{tk} {info.get('close')} ({info.get('weekly_change_pct', 0):+.2f}% wk)")
+    live_detail = " · ".join(live_summary_bits) if live_summary_bits else "Run with --refresh to record live weekly ETF closes."
+
+    cards = [
+        dbc.Col(metric_card("Backtest Math Consistency", bt_status, bt_color, bt_detail), md=4),
+        dbc.Col(metric_card("Data & Signal Freshness", fr_status, fr_color, fr_detail), md=4),
+        dbc.Col(metric_card("7-ETF Sleeve + VIX Weekly Close", live.get("latest_market_date", "SNAPSHOT"), "#00d97e", live_detail), md=4),
+    ]
+
+    notes = bt.get("benchmark_normalization_notes") or []
+    notes_div = html.Ul(
+        [html.Li(n, style={"color": "#c8c8d4", "fontSize": "12px"}) for n in notes],
+        style={"marginTop": "8px", "marginBottom": "4px"},
+    ) if notes else html.Div()
+
+    return html.Div([
+        html.H5("7. Weekly Data & Backtest Accuracy Audit · 周度数据与回测审计", style={
+            "color": status_color, "marginBottom": "6px", "fontWeight": "700",
+        }),
+        html.Div(
+            f"Overall Status: {overall} · Generated {snap.get('generated_at', 'n/a')}",
+            style={"color": status_color, "fontSize": "16px", "fontWeight": "700", "marginBottom": "10px"},
+        ),
+        dbc.Row(cards, className="mb-3"),
+        notes_div,
+        html.Div(
+            f"Source: data/weekly_audit_snapshot.json · Tolerances: CAGR ±5 bps, Total ±10 bps, Daily MaxDD ±5 bps.",
+            style={"color": "#6c757d", "fontSize": "11px", "marginTop": "8px"},
+        ),
+    ], id="auditor-section-7", style={
+        "backgroundColor": "#1a1a2e", "border": f"1px solid {status_color}",
+        "borderRadius": "12px", "padding": "20px", "marginBottom": "16px",
+    })
 
 
 def _build_risk_officer_section(snapshot=None):
