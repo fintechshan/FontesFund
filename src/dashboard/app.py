@@ -275,14 +275,40 @@ def make_drawdown(equity_curve, title='Daily drawdown'):
     fig.update_layout(**PL, title=title, height=250, yaxis_title='Drawdown (%)')
     return fig
 
-def make_monthly_heatmap(monthly_returns, benchmark_annual=None, benchmark_label='QQQ B&H'):
-    """Year × month heatmap with a compounded Year column.
+# Backtest heatmap column headers. QQQ Vegas keeps the default Year label.
+BACKTEST_YEAR_COLUMN = 'Strategy'
+BACKTEST_SPX_COLUMN = 'S&P500'
+SPX_EQUITY_COLUMN = 'S&P 500'
+SPX_PRICE_COLUMN = 'SPY'
+
+
+def compounded_year_returns(monthly_returns):
+    """Calendar-year total return, in percent, from monthly simple returns.
+
+    Each year is ``(prod(1 + r) - 1) * 100`` over the months present in that
+    year. A sample that starts mid-year, and a year still in progress, use
+    only those months. This is the heatmap strategy-year cell.
+    """
+    if monthly_returns is None or len(monthly_returns) == 0:
+        return pd.Series(dtype=float)
+    mr = monthly_returns.copy()
+    mr.index = pd.to_datetime(mr.index)
+    annual = ((1 + mr).groupby(mr.index.year).prod() - 1) * 100
+    annual.index = pd.Index(annual.index).astype(int)
+    return annual
+
+
+def make_monthly_heatmap(monthly_returns, benchmark_annual=None, benchmark_label='QQQ B&H',
+                         year_label='Year'):
+    """Year × month heatmap with a compounded year column.
 
     ``benchmark_annual`` is an optional calendar-year total return, in percent,
     indexed by year. When it is passed, that series is the column immediately
-    after Year (same red-to-green scale, signed percent text) so each row pairs
-    the strategy year with the benchmark. The ETF backtest heatmap leaves it
-    unset and keeps the Year-only layout.
+    after the strategy year (same red-to-green scale, signed percent text) so
+    each row pairs the strategy year with the benchmark. ``year_label`` stays
+    ``Year`` for QQQ Vegas (title ``Year (策略) vs …``). The Backtest tab
+    passes ``Strategy`` and ``S&P500``. The CDN heatmap leaves the benchmark
+    unset.
     """
     if len(monthly_returns) == 0:
         fig = go.Figure(); fig.update_layout(**PL, title='Monthly Returns — No Data'); return fig
@@ -296,7 +322,7 @@ def make_monthly_heatmap(monthly_returns, benchmark_annual=None, benchmark_label
 
     # Annual return per year — COMPOUNDED (1+r) product, which reconciles exactly
     # with the backtest's total return. A spacer column separates it from the months.
-    annual = ((1 + mr).groupby(mr.index.year).prod() - 1) * 100
+    annual = compounded_year_returns(mr)
     annual = annual.reindex(pivot.index)
 
     bench = None
@@ -308,7 +334,7 @@ def make_monthly_heatmap(monthly_returns, benchmark_annual=None, benchmark_label
         bench = bench.groupby(level=0).first()
         bench = bench.reindex(list(pd.Index(pivot.index).astype(int)))
 
-    x_cols = month_names + ['  ', 'Year']
+    x_cols = month_names + ['  ', year_label]
     if bench is not None:
         x_cols = x_cols + [benchmark_label]
     z_rows, text_rows = [], []
@@ -327,7 +353,10 @@ def make_monthly_heatmap(monthly_returns, benchmark_annual=None, benchmark_label
 
     title = 'Monthly Returns Heatmap (%) — with compounded annual return'
     if bench is not None:
-        title = f'Monthly Returns Heatmap (%) — Year (策略) vs {benchmark_label}'
+        if year_label == 'Year':
+            title = f'Monthly Returns Heatmap (%) — Year (策略) vs {benchmark_label}'
+        else:
+            title = f'Monthly Returns Heatmap (%) — {year_label} vs {benchmark_label}'
     fig = go.Figure(go.Heatmap(
         z=z_rows, x=x_cols, y=pivot.index,
         colorscale=[[0,'#e74c3c'],[0.5,'#1a1a2e'],[1,'#00d97e']],
@@ -339,7 +368,10 @@ def make_monthly_heatmap(monthly_returns, benchmark_annual=None, benchmark_label
     ))
     ly = {**PL, 'title': title, 'height': max(300, len(pivot)*24+90)}
     ly['yaxis'] = dict(autorange='reversed', gridcolor='#2d2d44', dtick=1)
-    if bench is not None:
+    if bench is not None and year_label != 'Year':
+        ly['margin'] = dict(l=50, r=36, t=56, b=56)
+        ly['xaxis'] = dict(gridcolor='#2d2d44', automargin=True)
+    elif bench is not None:
         # The extra annual label needs a little more room than the Year-only map.
         ly['margin'] = dict(l=50, r=28, t=56, b=48)
     fig.update_layout(**ly)
@@ -1663,6 +1695,90 @@ def monthly_from_equity(curve):
     return monthly[monthly.index.to_period('M') >= first_month]
 
 
+def _prepared_level(obj):
+    """Dated numeric level. Empty when the object is not a usable series."""
+    series = _as_series(obj)
+    if len(series) == 0:
+        return pd.Series(dtype=float)
+    values = pd.to_numeric(series, errors='coerce')
+    idx = pd.to_datetime(series.index, errors='coerce')
+    out = pd.Series(values.to_numpy(dtype=float), index=idx)
+    out = out[out.index.notna()].dropna().sort_index()
+    if len(out) == 0:
+        return pd.Series(dtype=float)
+    return out[~out.index.duplicated(keep='last')]
+
+
+def growth_of_adj_close(prices):
+    """Growth index of adjusted-close total return. The first print is the anchor."""
+    px = _prepared_level(prices)
+    if len(px) < 2:
+        return pd.Series(dtype=float)
+    rets = px.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
+    if len(rets) == 0:
+        return pd.Series(dtype=float)
+    return (1.0 + rets).cumprod()
+
+
+def spx_calendar_year_returns(level, *, equity_curve=False):
+    """Calendar-year S&P total return in percent.
+
+    ``equity_curve=True`` means ``level`` is already the backtest growth index
+    (``all_equity_curves`` column ``S&P 500``, the static 100% SPY book).
+    Otherwise ``level`` is SPY adjusted close and is converted to that growth
+    index first. The year figure is ``compounded_year_returns`` of
+    ``monthly_from_equity`` — the same product as the strategy year cell. A
+    partial year is the compound of the months present in the sample.
+    """
+    if equity_curve:
+        equity = _prepared_level(level)
+    else:
+        equity = growth_of_adj_close(level)
+    if len(equity) == 0:
+        return pd.Series(dtype=float)
+    return compounded_year_returns(monthly_from_equity(equity))
+
+
+def _frame_column(frame, name):
+    if not isinstance(frame, pd.DataFrame) or name not in frame.columns:
+        return pd.Series(dtype=float)
+    return frame[name]
+
+
+def backtest_spx_year_returns(data):
+    """S&P 500 calendar-year total return (%) already loaded for the backtest.
+
+    Prefer the ``S&P 500`` equity curve. When that column is absent, use
+    ``price_data['SPY']`` adjusted close. Both share the strategy year compound.
+    """
+    if not isinstance(data, dict):
+        return pd.Series(dtype=float)
+    equity = _prepared_level(_frame_column(data.get('all_equity_curves'), SPX_EQUITY_COLUMN))
+    if len(equity):
+        return spx_calendar_year_returns(equity, equity_curve=True)
+    prices = _frame_column(data.get('price_data'), SPX_PRICE_COLUMN)
+    if len(_prepared_level(prices)) == 0:
+        return pd.Series(dtype=float)
+    return spx_calendar_year_returns(prices, equity_curve=False)
+
+
+def backtest_monthly_heatmap(monthly_returns, data):
+    """Backtest heatmap with the strategy year and the S&P 500 year side by side."""
+    spx = backtest_spx_year_returns(data)
+    if len(monthly_returns) and len(spx):
+        years = pd.Index(pd.to_datetime(monthly_returns.index).year).astype(int).unique()
+        if not spx.reindex(years).notna().any():
+            spx = pd.Series(dtype=float)
+    if len(spx) == 0 or not spx.notna().any():
+        return make_monthly_heatmap(monthly_returns)
+    return make_monthly_heatmap(
+        monthly_returns,
+        benchmark_annual=spx,
+        benchmark_label=BACKTEST_SPX_COLUMN,
+        year_label=BACKTEST_YEAR_COLUMN,
+    )
+
+
 def curve_for_path(data, path):
     """Equity curve of the selected path. Never another path's curve."""
     path = path or BACKTEST_PATH_TARGETED
@@ -1913,6 +2029,17 @@ def build_backtest_path_body(data, path):
     table_data = [row for _k, row in path_rows] + bench_rows
 
     frame = _chart_frame(all_eq, curve, series_name)
+    heat = backtest_monthly_heatmap(monthly, data)
+    heat_x = list(heat.data[0].x) if getattr(heat, 'data', None) else []
+    if BACKTEST_SPX_COLUMN in heat_x:
+        heat_note = (
+            'Monthly returns of the equity curve above. '
+            'Strategy is that calendar year’s compounded return. '
+            'S&P500 is the S&P 500 (SPY) compounded total return for the same year, '
+            'including a partial year. '
+        )
+    else:
+        heat_note = 'Monthly returns of the equity curve above. '
     return html.Div([
         dbc.Row([
             dbc.Col(mc('Annual Return', str(ann_ret), us_cagr_lbl, '#00d97e', '📈'), md=2),
@@ -1930,10 +2057,11 @@ def build_backtest_path_body(data, path):
         )], style={**CS, 'marginBottom': '16px'}),
         html.Div([dcc.Graph(figure=make_drawdown(curve, title=dd_title), config={'displayModeBar': False})],
                  style={**CS, 'marginBottom': '16px'}),
-        html.Div([dcc.Graph(figure=make_monthly_heatmap(monthly), config={'displayModeBar': False})],
+        html.Div([dcc.Graph(figure=heat, config={'displayModeBar': False})],
                  style={**CS, 'marginBottom': '4px'}),
         html.Div(
-            'Monthly returns of the equity curve above. A calendar-year CAGR of that same total return '
+            heat_note
+            + 'A calendar-year CAGR of that same total return '
             'can differ by a few basis points from the 252-day CAGR on the cards. '
             'Max drawdown on this page is the daily peak-to-trough. A month-end snapshot is shallower and is not shown.',
             style={'color': '#6c757d', 'fontSize': '11px', 'marginBottom': '16px'},
