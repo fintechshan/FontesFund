@@ -121,6 +121,7 @@ def audit_cdn_book(
     cdn_equity: pd.Series | None = None,
     monthly: pd.Series | None = None,
     benchmark: pd.Series | None = None,
+    spx: pd.Series | None = None,
     honesty: pd.DataFrame | None = None,
     clock_config: dict | None = None,
     today=None,
@@ -135,7 +136,7 @@ def audit_cdn_book(
         _price_check(prices, us_prices, today, load_defaults),
         _artifact_check(us_equity, cdn_equity, load_defaults),
         _consistency_check(),
-        _heatmap_check(monthly, benchmark, cdn_equity, load_defaults),
+        _heatmap_check(monthly, benchmark, cdn_equity, spx, load_defaults),
         _clock_check(clock_config, load_defaults),
         _path_check(honesty, load_defaults),
     ]
@@ -268,9 +269,22 @@ def _consistency_check() -> dict:
     )
 
 
-def _heatmap_check(monthly, benchmark, equity, load_defaults) -> dict:
-    location = "data/backtest_results/cdn_benchmark_xiu.csv"
+def _uncovered_years(strategy_years, bench_years) -> list[str]:
+    missing = []
+    for year in strategy_years.index:
+        value = bench_years.reindex([int(year)])
+        if len(value) == 0 or pd.isna(value.iloc[0]):
+            missing.append(str(int(year)))
+    return missing
+
+
+def _heatmap_check(monthly, benchmark, equity, spx, load_defaults) -> dict:
+    location = (
+        "data/backtest_results/cdn_benchmark_xiu.csv; "
+        "data/backtest_results/all_equity_curves.csv (S&P 500)"
+    )
     from src.dashboard.app import (
+        BACKTEST_SPX_COLUMN,
         CDN_BENCH_COLUMN,
         cdn_benchmark_year_returns,
         compounded_year_returns,
@@ -294,36 +308,59 @@ def _heatmap_check(monthly, benchmark, equity, load_defaults) -> dict:
         missing = "monthly heatmap" if len(monthly) == 0 else "XIU.TO benchmark"
         return _row(
             CHECK_HEATMAP, "FAIL", "Missing",
-            f"Strategy year and {CDN_BENCH_COLUMN} year for every heatmap year",
+            f"Strategy, {CDN_BENCH_COLUMN}, and {BACKTEST_SPX_COLUMN} for every heatmap year",
             location,
-            "Keep cdn_monthly_returns.csv and cdn_benchmark_xiu.csv (XIU.TO adjusted close).",
+            "Keep cdn_monthly_returns.csv, cdn_benchmark_xiu.csv (XIU.TO), and the S&P 500 column of all_equity_curves.csv.",
             f"CDN heatmap benchmark check failed: {missing} is missing.",
         )
-    strategy_years = compounded_year_returns(monthly)
-    bench_years = cdn_benchmark_year_returns(bench_px, equity if len(equity) else None)
-    uncovered = []
-    for year in strategy_years.index:
-        value = bench_years.reindex([int(year)])
-        if len(value) == 0 or pd.isna(value.iloc[0]):
-            uncovered.append(str(int(year)))
-    if uncovered:
+    if spx is None and load_defaults:
+        from src.dashboard.app import _load_disk_spx_level
+        spx_px = _load_disk_spx_level()
+    else:
+        spx_px = spx if spx is not None else pd.Series(dtype=float)
+        if len(spx_px):
+            spx_px = spx_px.dropna().copy()
+            spx_px.index = pd.to_datetime(spx_px.index)
+    if len(spx_px) == 0:
         return _row(
-            CHECK_HEATMAP, "FAIL", f"{len(uncovered)} years",
-            f"{CDN_BENCH_COLUMN} (XIU.TO) covers every strategy year",
+            CHECK_HEATMAP, "FAIL", "Missing S&P 500",
+            f"{BACKTEST_SPX_COLUMN} covers every CDN strategy year",
             location,
-            "Extend the XIU.TO series through the CDN equity sample.",
-            "TSX60 year is missing for: " + ", ".join(uncovered[:8]) + ".",
+            "Keep the S&P 500 column in data/backtest_results/all_equity_curves.csv. That is the US heatmap series.",
+            "CDN heatmap benchmark check failed: S&P 500 series is missing.",
+        )
+    strategy_years = compounded_year_returns(monthly)
+    sample = equity if len(equity) else None
+    bench_years = cdn_benchmark_year_returns(bench_px, sample)
+    spx_years = cdn_benchmark_year_returns(spx_px, sample)
+    uncovered = _uncovered_years(strategy_years, bench_years)
+    uncovered_spx = _uncovered_years(strategy_years, spx_years)
+    if uncovered or uncovered_spx:
+        parts = []
+        if uncovered:
+            parts.append("TSX60 year is missing for: " + ", ".join(uncovered[:8]) + ".")
+        if uncovered_spx:
+            parts.append("S&P500 year is missing for: " + ", ".join(uncovered_spx[:8]) + ".")
+        return _row(
+            CHECK_HEATMAP, "FAIL", f"{len(uncovered) + len(uncovered_spx)} gaps",
+            f"{CDN_BENCH_COLUMN} (XIU.TO) and {BACKTEST_SPX_COLUMN} cover every strategy year",
+            location,
+            "Extend XIU.TO and the S&P 500 equity curve through the CDN sample.",
+            " ".join(parts),
         )
     last = int(strategy_years.index.max())
     strat = float(strategy_years.loc[last])
     bench = float(bench_years.loc[last])
+    spx_last = float(spx_years.loc[last])
     return _row(
-        CHECK_HEATMAP, "PASS", f"{last}: {strat:+.1f}% vs {bench:+.1f}%",
-        f"Strategy and {CDN_BENCH_COLUMN} (S&P/TSX 60, XIU.TO) on every year",
+        CHECK_HEATMAP, "PASS", f"{last}: {strat:+.1f}% | {bench:+.1f}% | {spx_last:+.1f}%",
+        f"Strategy, {CDN_BENCH_COLUMN} (XIU.TO), and {BACKTEST_SPX_COLUMN} on every CDN year",
         location,
-        "None required. The heatmap can pair Strategy with TSX60.",
+        "None required. The heatmap can show Strategy, TSX60, and S&P500.",
         f"Last overlapping year {last}: strategy {strat:+.1f}%, "
-        f"{CDN_BENCH_COLUMN} {bench:+.1f}% (XIU.TO compounded on the CDN sample).",
+        f"{CDN_BENCH_COLUMN} {bench:+.1f}% (XIU.TO), "
+        f"{BACKTEST_SPX_COLUMN} {spx_last:+.1f}% "
+        "(S&P 500 column of all_equity_curves.csv, clipped to the CDN sample).",
     )
 
 
@@ -519,7 +556,8 @@ def build_cdn_audit_panel(checks=None):
             "Same pass/fail contract as the US book. Path B (targeted CPI+1 / GDP+4, "
             "VFV.TO lagged one month) is the published CDN curve. "
             "Path A is month-end look-ahead. Path C is the first-release vintage. "
-            "TSX60 on the heatmap is XIU.TO. These rows do not change US sleeve weights.",
+            "TSX60 on the heatmap is XIU.TO. S&P500 is the US heatmap’s S&P 500 column in all_equity_curves.csv. "
+            "These rows do not change US sleeve weights.",
             style={"color": "#8888a0", "fontSize": "12px", "marginBottom": "10px"},
         ),
         dash_table.DataTable(

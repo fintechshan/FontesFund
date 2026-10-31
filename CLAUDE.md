@@ -144,8 +144,9 @@ month — the same publication rule as US path B, not a more optimistic calendar
 `scripts/run_cdn_backtest.py` also writes path A (lookahead), unlagged, the extra month,
 and path C (vintage, when the release table loads) to `cdn_lag_honesty.csv`. Those rows
 are auditor comparisons. They are not the CDN cards. The monthly heatmap pairs
-**Strategy** with **TSX60** (S&P/TSX 60, XIU.TO) the way the US heatmap pairs Strategy
-with S&P500. Auditor checks CDN price and curve freshness, backtest consistency, that
+**Strategy | TSX60 | S&P500**. TSX60 is XIU.TO. S&P500 is the same ``S&P 500``
+column the US heatmap reads from ``all_equity_curves.csv`` (SPY total return),
+clipped to the CDN sample. Auditor checks CDN price and curve freshness, backtest consistency, that
 heatmap, the targeted clock, and paths A/B/C. A missing CDN series fails the check. It
 is not skipped. The US column and the bold US curve on the CDN tab follow the targeted
 fix when the US series is loaded. The dotted curve is the old month-end look-ahead path.

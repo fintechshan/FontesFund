@@ -6,12 +6,14 @@ import unittest
 import pandas as pd
 
 from src.dashboard.app import (
+    BACKTEST_SPX_COLUMN,
     CDN_BENCH_COLUMN,
     CDN_YEAR_COLUMN,
     build_auditor_tab,
     build_cdn_portfolio_tab,
     cdn_benchmark_year_returns,
     cdn_monthly_heatmap,
+    cdn_spx_year_returns,
     compounded_year_returns,
 )
 from src.dashboard.auditor import run_independent_audit
@@ -60,6 +62,8 @@ class CdnAuditTests(unittest.TestCase):
         self.assertEqual(checks[CHECK_CLOCK]["status"], "PASS", checks[CHECK_CLOCK]["desc"])
         self.assertEqual(checks[CHECK_ARTIFACT]["status"], "PASS", checks[CHECK_ARTIFACT]["desc"])
         self.assertIn("TSX60", checks[CHECK_HEATMAP]["desc"])
+        self.assertIn("S&P500", checks[CHECK_HEATMAP]["desc"])
+        self.assertIn("all_equity_curves.csv", checks[CHECK_HEATMAP]["desc"])
         # No TSX cache in git. The row is present and failing, not omitted.
         self.assertEqual(checks[CHECK_PRICE]["status"], "FAIL")
         self.assertIn("missing", checks[CHECK_PRICE]["desc"].lower())
@@ -124,6 +128,20 @@ class CdnAuditTests(unittest.TestCase):
         }))
         self.assertEqual(checks[CHECK_CLOCK]["status"], "FAIL")
 
+    def test_missing_spx_fails_even_when_tsx60_is_present(self):
+        monthly = pd.Series([0.01], index=pd.to_datetime(["2019-01-31"]))
+        equity = pd.Series([1.0, 1.02], index=pd.to_datetime(["2019-01-02", "2019-01-31"]))
+        xiu = pd.Series([40.0, 42.0], index=equity.index)
+        checks = _by_name(audit_cdn_book(
+            monthly=monthly,
+            benchmark=xiu,
+            cdn_equity=equity,
+            spx=pd.Series(dtype=float),
+            load_defaults=False,
+        ))
+        self.assertEqual(checks[CHECK_HEATMAP]["status"], "FAIL")
+        self.assertIn("S&P 500", checks[CHECK_HEATMAP]["desc"])
+
     def test_missing_benchmark_fails_the_heatmap_check(self):
         monthly = pd.Series([0.01, 0.02], index=pd.to_datetime(["2019-01-31", "2019-02-28"]))
         checks = _by_name(audit_cdn_book(
@@ -161,11 +179,19 @@ class CdnHeatmapTests(unittest.TestCase):
             [1.0, 1.1, 1.045],
             index=pd.to_datetime(["2019-01-02", "2019-01-31", "2019-06-28"]),
         )
-        data = {"cdn_benchmark": prices, "cdn_equity_curve": equity}
+        spx = pd.Series(
+            [200.0, 220.0, 150.0],
+            index=pd.to_datetime(["2019-01-02", "2019-06-28", "2019-12-31"]),
+        )
+        data = {
+            "cdn_benchmark": prices,
+            "cdn_equity_curve": equity,
+            "all_equity_curves": pd.DataFrame({"S&P 500": spx}),
+        }
         fig = cdn_monthly_heatmap(monthly, data)
         trace = fig.data[0]
-        self.assertEqual(list(trace.x)[-2:], [CDN_YEAR_COLUMN, CDN_BENCH_COLUMN])
-        self.assertEqual(fig.layout.title.text, "Monthly Returns Heatmap (%) — Strategy vs TSX60")
+        self.assertEqual(list(trace.x)[-3:], [CDN_YEAR_COLUMN, CDN_BENCH_COLUMN, BACKTEST_SPX_COLUMN])
+        self.assertEqual(fig.layout.title.text, "Monthly Returns Heatmap (%) — Strategy vs TSX60 | S&P500")
         strat_z, strat_text = _cell(trace, 2019, CDN_YEAR_COLUMN)
         expected = float(compounded_year_returns(monthly).loc[2019])
         self.assertAlmostEqual(strat_z, expected, places=6)
@@ -176,6 +202,11 @@ class CdnHeatmapTests(unittest.TestCase):
         self.assertAlmostEqual(bench_z, clipped, places=4)
         self.assertEqual(bench_text, f"{bench_z:+.1f}%")
         self.assertGreater(bench_z, 0.0)
+        spx_z, spx_text = _cell(trace, 2019, BACKTEST_SPX_COLUMN)
+        spx_clipped = float(cdn_spx_year_returns(data, equity).loc[2019])
+        self.assertAlmostEqual(spx_z, spx_clipped, places=4)
+        self.assertEqual(spx_text, f"{spx_z:+.1f}%")
+        self.assertGreater(spx_z, 0.0)
 
     def test_tab_labels_strategy_and_tsx60(self):
         data = _fixture()
@@ -192,13 +223,17 @@ class CdnHeatmapTests(unittest.TestCase):
             [50.0, 55.0],
             index=pd.to_datetime(["2020-01-02", "2020-02-28"]),
         )
+        data["all_equity_curves"] = pd.DataFrame({
+            "S&P 500": pd.Series([300.0, 330.0], index=pd.to_datetime(["2020-01-02", "2020-02-28"])),
+        })
         tab = build_cdn_portfolio_tab(data)
         fig = _heatmap(tab)[0]
-        self.assertEqual(list(fig.data[0].x)[-2:], ["Strategy", "TSX60"])
+        self.assertEqual(list(fig.data[0].x)[-3:], ["Strategy", "TSX60", "S&P500"])
         blob = " ".join(_texts(tab))
-        self.assertIn("Strategy vs TSX60", blob)
+        self.assertIn("Strategy vs TSX60 | S&P500", blob)
         self.assertIn("XIU.TO", blob)
         self.assertIn("S&P/TSX 60", blob)
+        self.assertIn("S&P 500", blob)
 
     def test_auditor_page_shows_the_cdn_table(self):
         data = _fixture()

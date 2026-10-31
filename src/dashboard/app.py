@@ -298,17 +298,29 @@ def compounded_year_returns(monthly_returns):
     return annual
 
 
+def _align_annual(benchmark_annual, pivot_index):
+    bench = pd.Series(benchmark_annual, dtype=float)
+    bench.index = pd.to_numeric(pd.Index(bench.index), errors='coerce')
+    bench = bench[bench.index.notna()]
+    if len(bench) == 0:
+        return pd.Series(np.nan, index=list(pd.Index(pivot_index).astype(int)))
+    bench.index = bench.index.astype(int)
+    bench = bench.groupby(level=0).first()
+    return bench.reindex(list(pd.Index(pivot_index).astype(int)))
+
+
 def make_monthly_heatmap(monthly_returns, benchmark_annual=None, benchmark_label='QQQ B&H',
-                         year_label='Year'):
+                         year_label='Year', extra_benchmarks=None):
     """Year × month heatmap with a compounded year column.
 
     ``benchmark_annual`` is an optional calendar-year total return, in percent,
     indexed by year. When it is passed, that series is the column immediately
     after the strategy year (same red-to-green scale, signed percent text) so
-    each row pairs the strategy year with the benchmark. ``year_label`` stays
-    ``Year`` for QQQ Vegas (title ``Year (策略) vs …``). The Backtest tab
-    passes ``Strategy`` and ``S&P500``. The CDN heatmap passes ``Strategy``
-    and ``TSX60`` (S&P/TSX 60, XIU.TO).
+    each row pairs the strategy year with the benchmark. ``extra_benchmarks``
+    is a list of ``(series, label)`` columns after that first benchmark.
+    ``year_label`` stays ``Year`` for QQQ Vegas (title ``Year (策略) vs …``).
+    The Backtest tab passes ``Strategy`` and ``S&P500``. The CDN heatmap
+    passes ``Strategy``, ``TSX60`` (S&P/TSX 60, XIU.TO), and ``S&P500``.
     """
     if len(monthly_returns) == 0:
         fig = go.Figure(); fig.update_layout(**PL, title='Monthly Returns — No Data'); return fig
@@ -325,18 +337,16 @@ def make_monthly_heatmap(monthly_returns, benchmark_annual=None, benchmark_label
     annual = compounded_year_returns(mr)
     annual = annual.reindex(pivot.index)
 
-    bench = None
+    benches = []
     if benchmark_annual is not None:
-        bench = pd.Series(benchmark_annual, dtype=float)
-        bench.index = pd.to_numeric(pd.Index(bench.index), errors='coerce')
-        bench = bench[bench.index.notna()]
-        bench.index = bench.index.astype(int)
-        bench = bench.groupby(level=0).first()
-        bench = bench.reindex(list(pd.Index(pivot.index).astype(int)))
+        benches.append((_align_annual(benchmark_annual, pivot.index), benchmark_label))
+    for series, label in extra_benchmarks or []:
+        if series is None or len(series) == 0:
+            continue
+        benches.append((_align_annual(series, pivot.index), label))
 
     x_cols = month_names + ['  ', year_label]
-    if bench is not None:
-        x_cols = x_cols + [benchmark_label]
+    x_cols = x_cols + [label for _series, label in benches]
     z_rows, text_rows = [], []
     for i in range(len(pivot.index)):
         months = list(pivot.iloc[i].values)
@@ -344,19 +354,21 @@ def make_monthly_heatmap(monthly_returns, benchmark_annual=None, benchmark_label
         row_z = months + [np.nan, a]
         trow = [f'{v:.1f}' if pd.notna(v) else '' for v in months]
         trow += ['', f'{a:+.1f}%' if pd.notna(a) else '']
-        if bench is not None:
-            b = bench.iloc[i]
+        for series, _label in benches:
+            b = series.iloc[i]
             row_z.append(b)
             trow.append(f'{b:+.1f}%' if pd.notna(b) else '')
         z_rows.append(row_z)
         text_rows.append(trow)
 
     title = 'Monthly Returns Heatmap (%) — with compounded annual return'
-    if bench is not None:
-        if year_label == 'Year':
-            title = f'Monthly Returns Heatmap (%) — Year (策略) vs {benchmark_label}'
+    if benches:
+        labels = [label for _series, label in benches]
+        joined = ' | '.join(labels)
+        if year_label == 'Year' and len(labels) == 1:
+            title = f'Monthly Returns Heatmap (%) — Year (策略) vs {joined}'
         else:
-            title = f'Monthly Returns Heatmap (%) — {year_label} vs {benchmark_label}'
+            title = f'Monthly Returns Heatmap (%) — {year_label} vs {joined}'
     fig = go.Figure(go.Heatmap(
         z=z_rows, x=x_cols, y=pivot.index,
         colorscale=[[0,'#e74c3c'],[0.5,'#1a1a2e'],[1,'#00d97e']],
@@ -368,10 +380,10 @@ def make_monthly_heatmap(monthly_returns, benchmark_annual=None, benchmark_label
     ))
     ly = {**PL, 'title': title, 'height': max(300, len(pivot)*24+90)}
     ly['yaxis'] = dict(autorange='reversed', gridcolor='#2d2d44', dtick=1)
-    if bench is not None and year_label != 'Year':
-        ly['margin'] = dict(l=50, r=36, t=56, b=56)
+    if benches and year_label != 'Year':
+        ly['margin'] = dict(l=50, r=36 + 12 * max(len(benches) - 1, 0), t=56, b=56)
         ly['xaxis'] = dict(gridcolor='#2d2d44', automargin=True)
-    elif bench is not None:
+    elif benches:
         # The extra annual label needs a little more room than the Year-only map.
         ly['margin'] = dict(l=50, r=28, t=56, b=48)
     fig.update_layout(**ly)
@@ -1801,6 +1813,53 @@ def cdn_benchmark_year_returns(level, sample=None):
     return spx_calendar_year_returns(px, equity_curve=False)
 
 
+def _load_disk_spx_level():
+    """``all_equity_curves`` column ``S&P 500`` — the US heatmap's growth index."""
+    path = Path(__file__).resolve().parents[2] / 'data' / 'backtest_results' / 'all_equity_curves.csv'
+    if not path.exists():
+        return pd.Series(dtype=float)
+    frame = pd.read_csv(path, index_col=0, parse_dates=True)
+    return _prepared_level(_frame_column(frame, SPX_EQUITY_COLUMN))
+
+
+def _spx_level(data, sample=None):
+    """Level the US Backtest heatmap compounds, preferring one that covers ``sample``.
+
+    Order matches ``backtest_spx_year_returns``: the ``S&P 500`` equity curve
+    (static 100% SPY book in ``all_equity_curves``), then ``price_data['SPY']``.
+    The committed curve is the disk fallback. A series that does not overlap
+    the CDN sample is skipped so a short fixture cannot hide the real column.
+    """
+    candidates = []
+    if isinstance(data, dict):
+        equity = _prepared_level(_frame_column(data.get('all_equity_curves'), SPX_EQUITY_COLUMN))
+        if len(equity):
+            candidates.append(equity)
+        prices = _prepared_level(_frame_column(data.get('price_data'), SPX_PRICE_COLUMN))
+        if len(prices):
+            candidates.append(prices)
+    disk = _load_disk_spx_level()
+    if len(disk):
+        candidates.append(disk)
+    window = _prepared_level(sample) if sample is not None else pd.Series(dtype=float)
+    if len(window) == 0:
+        return candidates[0] if candidates else pd.Series(dtype=float)
+    start, end = window.index.min(), window.index.max()
+    for series in candidates:
+        clipped = series[(series.index >= start) & (series.index <= end)]
+        if len(clipped):
+            return series
+    return pd.Series(dtype=float)
+
+
+def cdn_spx_year_returns(data, sample=None):
+    """S&P 500 calendar-year total return (%) clipped to the CDN equity sample.
+
+    Same level as the US heatmap, then the same window rule as TSX60 / XIU.TO.
+    """
+    return cdn_benchmark_year_returns(_spx_level(data, sample), sample)
+
+
 def _cdn_benchmark_level(data):
     if isinstance(data, dict):
         series = _prepared_level(data.get('cdn_benchmark'))
@@ -1822,26 +1881,41 @@ def _cdn_benchmark_level(data):
     return pd.Series(dtype=float)
 
 
+def _year_overlap(annual, monthly_returns):
+    if annual is None or len(annual) == 0 or len(monthly_returns) == 0:
+        return pd.Series(dtype=float)
+    years = pd.Index(pd.to_datetime(monthly_returns.index).year).astype(int).unique()
+    if not annual.reindex(years).notna().any():
+        return pd.Series(dtype=float)
+    return annual
+
+
 def cdn_monthly_heatmap(monthly_returns, data=None):
-    """CDN heatmap with the strategy year and the S&P/TSX 60 year side by side."""
+    """CDN heatmap: Strategy, then TSX60, then S&P500.
+
+    S&P500 is the US heatmap series (``all_equity_curves`` column ``S&P 500``,
+    else SPY adjusted close), clipped to the CDN equity sample.
+    """
     monthly_returns = monthly_returns if monthly_returns is not None else pd.Series(dtype=float)
     if len(monthly_returns) == 0:
         return make_monthly_heatmap(monthly_returns)
-    sample = None
-    if isinstance(data, dict):
-        sample = data.get('cdn_equity_curve')
-    bench = cdn_benchmark_year_returns(_cdn_benchmark_level(data), sample)
-    if len(bench):
-        years = pd.Index(pd.to_datetime(monthly_returns.index).year).astype(int).unique()
-        if not bench.reindex(years).notna().any():
-            bench = pd.Series(dtype=float)
-    if len(bench) == 0 or not bench.notna().any():
+    sample = data.get('cdn_equity_curve') if isinstance(data, dict) else None
+    benches = []
+    tsx = _year_overlap(cdn_benchmark_year_returns(_cdn_benchmark_level(data), sample), monthly_returns)
+    if len(tsx) and tsx.notna().any():
+        benches.append((tsx, CDN_BENCH_COLUMN))
+    spx = _year_overlap(cdn_spx_year_returns(data, sample), monthly_returns)
+    if len(spx) and spx.notna().any():
+        benches.append((spx, BACKTEST_SPX_COLUMN))
+    if not benches:
         return make_monthly_heatmap(monthly_returns)
+    first, first_label = benches[0]
     return make_monthly_heatmap(
         monthly_returns,
-        benchmark_annual=bench,
-        benchmark_label=CDN_BENCH_COLUMN,
+        benchmark_annual=first,
+        benchmark_label=first_label,
         year_label=CDN_YEAR_COLUMN,
+        extra_benchmarks=benches[1:],
     )
 
 
@@ -3446,10 +3520,18 @@ def build_cdn_portfolio_tab(data):
         hovermode='x unified',
     )
 
-    # ── Monthly return heatmap (Strategy | TSX60, same compound as the US tab)
+    # ── Monthly return heatmap: Strategy | TSX60 | S&P500
     cdn_heat = cdn_monthly_heatmap(cdn_mr, data)
     cdn_heat_x = list(cdn_heat.data[0].x) if getattr(cdn_heat, 'data', None) else []
-    if CDN_BENCH_COLUMN in cdn_heat_x:
+    if CDN_BENCH_COLUMN in cdn_heat_x and BACKTEST_SPX_COLUMN in cdn_heat_x:
+        cdn_heat_note = (
+            'Monthly returns of the CDN equity curve. '
+            'Strategy is that calendar year’s compounded return. '
+            'TSX60 is the S&P/TSX 60 (XIU.TO) compounded total return for the same year. '
+            'S&P500 is the S&P 500 (the US heatmap’s S&P 500 equity curve, SPY total return) '
+            'for the same year. Both benchmarks are clipped to the CDN sample, including a partial year. '
+        )
+    elif CDN_BENCH_COLUMN in cdn_heat_x:
         cdn_heat_note = (
             'Monthly returns of the CDN equity curve. '
             'Strategy is that calendar year’s compounded return. '
@@ -3737,7 +3819,7 @@ def build_cdn_portfolio_tab(data):
 
         # Row 5: Monthly return heatmap with Heat Colors (Same as US Portfolio)
         html.Div([
-            html.H6('Monthly Returns Heatmap (%) — Strategy vs TSX60',
+            html.H6('Monthly Returns Heatmap (%) — Strategy vs TSX60 | S&P500',
                     style={'color': '#c8c8d4', 'marginBottom': '8px'}),
             dcc.Graph(figure=cdn_heat, config={'displayModeBar': False}),
             html.Div(
