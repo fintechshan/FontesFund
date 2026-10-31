@@ -307,8 +307,8 @@ def make_monthly_heatmap(monthly_returns, benchmark_annual=None, benchmark_label
     after the strategy year (same red-to-green scale, signed percent text) so
     each row pairs the strategy year with the benchmark. ``year_label`` stays
     ``Year`` for QQQ Vegas (title ``Year (策略) vs …``). The Backtest tab
-    passes ``Strategy`` and ``S&P500``. The CDN heatmap leaves the benchmark
-    unset.
+    passes ``Strategy`` and ``S&P500``. The CDN heatmap passes ``Strategy``
+    and ``TSX60`` (S&P/TSX 60, XIU.TO).
     """
     if len(monthly_returns) == 0:
         fig = go.Figure(); fig.update_layout(**PL, title='Monthly Returns — No Data'); return fig
@@ -1779,6 +1779,72 @@ def backtest_monthly_heatmap(monthly_returns, data):
     )
 
 
+# CDN heatmap. Same year compound as the US Backtest tab. The benchmark is
+# the S&P/TSX 60 (XIU.TO), the Canadian equity proxy named on this tab.
+CDN_YEAR_COLUMN = 'Strategy'
+CDN_BENCH_COLUMN = 'TSX60'
+CDN_BENCH_TICKER = 'XIU.TO'
+
+
+def cdn_benchmark_year_returns(level, sample=None):
+    """Calendar-year XIU.TO total return in percent, on the CDN equity sample.
+
+    ``level`` is XIU adjusted close. A partial year compounds only the months
+    inside the CDN equity curve, the same rule as the strategy year cell.
+    """
+    px = _prepared_level(level)
+    window = _prepared_level(sample) if sample is not None else pd.Series(dtype=float)
+    if len(px) and len(window):
+        px = px[(px.index >= window.index.min()) & (px.index <= window.index.max())]
+    if len(px) == 0:
+        return pd.Series(dtype=float)
+    return spx_calendar_year_returns(px, equity_curve=False)
+
+
+def _cdn_benchmark_level(data):
+    if isinstance(data, dict):
+        series = _prepared_level(data.get('cdn_benchmark'))
+        if len(series):
+            return series
+        prices = data.get('cdn_prices')
+        if isinstance(prices, pd.DataFrame) and CDN_BENCH_TICKER in prices.columns:
+            column = _prepared_level(prices[CDN_BENCH_TICKER])
+            if len(column):
+                return column
+    try:
+        from src.backtester.cdn_clock import CDN_BENCHMARK
+        if CDN_BENCHMARK.exists():
+            frame = pd.read_csv(CDN_BENCHMARK, index_col=0, parse_dates=True)
+            if frame.shape[1]:
+                return _prepared_level(frame.iloc[:, 0])
+    except Exception:
+        return pd.Series(dtype=float)
+    return pd.Series(dtype=float)
+
+
+def cdn_monthly_heatmap(monthly_returns, data=None):
+    """CDN heatmap with the strategy year and the S&P/TSX 60 year side by side."""
+    monthly_returns = monthly_returns if monthly_returns is not None else pd.Series(dtype=float)
+    if len(monthly_returns) == 0:
+        return make_monthly_heatmap(monthly_returns)
+    sample = None
+    if isinstance(data, dict):
+        sample = data.get('cdn_equity_curve')
+    bench = cdn_benchmark_year_returns(_cdn_benchmark_level(data), sample)
+    if len(bench):
+        years = pd.Index(pd.to_datetime(monthly_returns.index).year).astype(int).unique()
+        if not bench.reindex(years).notna().any():
+            bench = pd.Series(dtype=float)
+    if len(bench) == 0 or not bench.notna().any():
+        return make_monthly_heatmap(monthly_returns)
+    return make_monthly_heatmap(
+        monthly_returns,
+        benchmark_annual=bench,
+        benchmark_label=CDN_BENCH_COLUMN,
+        year_label=CDN_YEAR_COLUMN,
+    )
+
+
 def curve_for_path(data, path):
     """Equity curve of the selected path. Never another path's curve."""
     path = path or BACKTEST_PATH_TARGETED
@@ -1903,7 +1969,8 @@ def portfolio_backtest_headline(data):
 def us_backtest_comparison(data):
     """US column on the CDN tab. Matches the Backtest default (targeted fix).
 
-    CDN itself has no extra-month series. Callers should say so.
+    CDN cards stay on the targeted book. The extra month is an auditor
+    comparison (``cdn_lag_honesty.csv``), not a second CDN card series.
     """
     lm = _lagged_bundle(data)
     tgt = lm.get('targeted') or {}
@@ -2832,7 +2899,18 @@ def build_qqq_vegas_audit_panel(checks=None):
 
 def build_auditor_tab(data):
     audit = data.get('audit', {})
-    data_checks = audit.get('data_checks', [])
+    data_checks = list(audit.get('data_checks', []))
+    from src.dashboard.cdn_audit import CHECK_PRICE, audit_cdn_book, build_cdn_audit_panel
+    cdn_checks = audit.get('cdn_checks')
+    if not cdn_checks:
+        cdn_checks = audit_cdn_book(
+            prices=data.get('cdn_prices'),
+            us_prices=data.get('price_data'),
+            us_equity=data.get('equity_curve'),
+        )
+    present = {row.get('check') for row in data_checks}
+    if CHECK_PRICE not in present:
+        data_checks.extend(cdn_checks)
     math_audit = audit.get('math_audit', [])
     errors = audit.get('errors', [])
     regime_corr = audit.get('regime_corr', [])
@@ -3001,6 +3079,7 @@ def build_auditor_tab(data):
         ], className='mb-3'),
 
         build_qqq_vegas_audit_panel(audit.get('qqq_vegas_checks')),
+        build_cdn_audit_panel(cdn_checks),
 
         # Detailed Anomalies & Action Items
         build_audit_findings_panel(data_checks, errors, math_audit, bias_status, bias_desc),
@@ -3367,23 +3446,18 @@ def build_cdn_portfolio_tab(data):
         hovermode='x unified',
     )
 
-    # ── Monthly return heatmap ─────────────────────────────────────────
-    heatmap_rows = []
-    if not cdn_mr.empty:
-        cdn_mr.index = pd.to_datetime(cdn_mr.index)
-        for year in sorted(cdn_mr.index.year.unique()):
-            row = {'Year': str(year)}
-            for mo in range(1, 13):
-                mask = (cdn_mr.index.year == year) & (cdn_mr.index.month == mo)
-                row[f'{mo:02d}'] = f'{cdn_mr[mask].values[0]:+.1%}' if mask.any() else ''
-            annual = (1 + cdn_mr[cdn_mr.index.year == year]).prod() - 1
-            row['Annual'] = f'{annual:+.1%}'
-            heatmap_rows.append(row)
-
-    mo_cols = [str(mo) for mo in ['01','02','03','04','05','06','07','08','09','10','11','12']]
-    heat_cols = [{'name': 'Year', 'id': 'Year'}] + \
-                [{'name': m, 'id': m} for m in mo_cols] + \
-                [{'name': 'Annual', 'id': 'Annual'}]
+    # ── Monthly return heatmap (Strategy | TSX60, same compound as the US tab)
+    cdn_heat = cdn_monthly_heatmap(cdn_mr, data)
+    cdn_heat_x = list(cdn_heat.data[0].x) if getattr(cdn_heat, 'data', None) else []
+    if CDN_BENCH_COLUMN in cdn_heat_x:
+        cdn_heat_note = (
+            'Monthly returns of the CDN equity curve. '
+            'Strategy is that calendar year’s compounded return. '
+            'TSX60 is the S&P/TSX 60 (XIU.TO) compounded total return for the same year, '
+            'including a partial year, clipped to the CDN sample. '
+        )
+    else:
+        cdn_heat_note = 'Monthly returns of the CDN equity curve. '
 
     # ── All-regime weights table ───────────────────────────────────────
     regime_rows = []
@@ -3438,7 +3512,8 @@ def build_cdn_portfolio_tab(data):
                      f'CAGR {metrics.get("CAGR","—")} | MaxDD {metrics.get("MaxDD","—")} | '
                      f'Sharpe {metrics.get("Sharpe","—")} | Vol {metrics.get("Volatility","—")}',
                      style={'color': '#6c757d', 'fontSize': '11px', 'marginBottom': '4px'}),
-            html.Div('CDN cards are the TSX production backtest. There is no CDN extra-month timing series. '
+            html.Div('CDN cards are the targeted TSX production book (CPI+1 / GDP+4, VFV.TO lagged one month). '
+                     'Path A, path C, and the extra month are auditor comparisons, not this curve. '
                      'The US comparison follows the Backtest tab default (targeted fix). '
                      'The old month-end look-ahead path is the dotted US curve when that run is loaded.',
                      style={'color': '#b55fe6', 'fontSize': '11px', 'marginBottom': '10px'}),
@@ -3662,10 +3737,13 @@ def build_cdn_portfolio_tab(data):
 
         # Row 5: Monthly return heatmap with Heat Colors (Same as US Portfolio)
         html.Div([
-            html.H6('Monthly Returns Heatmap (%) — Canadian Portfolio (CAD)',
+            html.H6('Monthly Returns Heatmap (%) — Strategy vs TSX60',
                     style={'color': '#c8c8d4', 'marginBottom': '8px'}),
-            dcc.Graph(figure=make_monthly_heatmap(cdn_mr), config={'displayModeBar': False}),
-            _source_line('Compounded annual return per year. Green = positive month, red = negative month (matching US heatmap color scale).'),
+            dcc.Graph(figure=cdn_heat, config={'displayModeBar': False}),
+            html.Div(
+                cdn_heat_note + 'Green is a positive month and red is a negative month, on the same scale as the US heatmap.',
+                style={'color': '#6c757d', 'fontSize': '11px', 'marginTop': '4px'},
+            ),
         ], style={**CS, 'marginBottom': '16px'}),
 
         # Row 6: Rebalancing History Log (Same as US Portfolio)

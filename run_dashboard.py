@@ -115,6 +115,30 @@ def _upload_qqq_vegas_signal():
         logger.warning(f"/tasks/refresh: QQQ Vegas signal upload skipped: {exc}")
 
 
+def refresh_cdn_backtest():
+    """Best-effort CDN curve, XIU benchmark, and path A/B/C table.
+
+    Runs after the US backtest so the macro cache is already fresh. A failure
+    leaves the previous CDN files in place and does not fail the US upload.
+    It does not change REGIME_WEIGHTS.
+    """
+    import subprocess
+    try:
+        res = subprocess.run(
+            [sys.executable, 'scripts/run_cdn_backtest.py'],
+            capture_output=True, text=True, timeout=300,
+        )
+    except Exception as exc:
+        logger.warning(f"/tasks/refresh: CDN backtest skipped: {exc}")
+        return False
+    if res.returncode != 0:
+        detail = (res.stderr or res.stdout or '')[-300:]
+        logger.warning(f"/tasks/refresh: CDN backtest unchanged (rc={res.returncode}): {detail}")
+        return False
+    logger.info(f"/tasks/refresh: CDN backtest updated: {(res.stdout or '').strip()[-300:]}")
+    return True
+
+
 def refresh_risk_flags_cache():
     """Best-effort notify-only scorecard. Never raises and never sizes the book."""
     import subprocess
@@ -413,59 +437,27 @@ _ibkr_risk_mgr = None
 _ibkr_order_mgr = None
 
 # ── Load Canadian ETF Portfolio Data ──────────────────────────────────────
-CDN_EQUITY_CURVE    = pd.Series(dtype=float)
-CDN_MONTHLY_RETURNS = pd.Series(dtype=float)
-CDN_BACKTEST_META   = {}
-CDN_WEIGHTS         = {}
-CDN_ALL_WEIGHTS     = {}
+# Live weights use the targeted CDN clock (VFV.TO momentum) when the TSX
+# cache exists. Without it they follow the US label and the auditor says so.
 try:
-    from config.cdn_regime_rules import CDN_REGIME_WEIGHTS, CDN_UNIVERSE, CDN_VERSION
-    CDN_ALL_WEIGHTS = CDN_REGIME_WEIGHTS
-    _cdn_eq_path = ROOT / 'data' / 'backtest_results' / 'cdn_equity_curve.csv'
-    _cdn_mr_path = ROOT / 'data' / 'backtest_results' / 'cdn_monthly_returns.csv'
-    _cdn_cfg_path = ROOT / 'data' / 'backtest_results' / 'cdn_strategy_config.json'
-    if _cdn_eq_path.exists():
-        CDN_EQUITY_CURVE = pd.read_csv(_cdn_eq_path, index_col=0, parse_dates=True).iloc[:, 0]
-    if _cdn_mr_path.exists():
-        CDN_MONTHLY_RETURNS = pd.read_csv(_cdn_mr_path, index_col=0, parse_dates=True).iloc[:, 0]
-    if _cdn_cfg_path.exists():
-        import json as _json
-        CDN_BACKTEST_META = _json.loads(_cdn_cfg_path.read_text())
-    # Current CDN weights for the live regime
-    _cdn_r = current.get('regime', 'goldilocks')
-    CDN_WEIGHTS = CDN_REGIME_WEIGHTS.get(_cdn_r, CDN_REGIME_WEIGHTS['goldilocks'])
-    
-    # Compute Canadian rebalancing history
-    CDN_REGIME_CHANGES = []
-    if not regime_history.empty:
-        _rh_cdn = regime_history[regime_history['date'] >= '2012-11-01'].copy()
-        _prev_r = None
-        for _, _row in _rh_cdn.iterrows():
-            _r = _row['regime']
-            _d = _row['date']
-            if _prev_r is not None and _r != _prev_r:
-                _old_w = CDN_REGIME_WEIGHTS.get(_prev_r, {})
-                _new_w = CDN_REGIME_WEIGHTS.get(_r, {})
-                _diffs = []
-                for _t in CDN_UNIVERSE:
-                    _delta = _new_w.get(_t, 0) - _old_w.get(_t, 0)
-                    if abs(_delta) > 0.01:
-                        _diffs.append(f"{_t}: {_delta:+.0%}")
-                _g_desc = 'rising' if _r in ['goldilocks','reflation'] else 'slowing'
-                _i_desc = 'rising' if _r in ['reflation','stagflation'] else 'cooling'
-                CDN_REGIME_CHANGES.append({
-                    'date': _d.strftime('%Y-%m') if hasattr(_d, 'strftime') else str(_d)[:7],
-                    'from_regime': _prev_r.capitalize(),
-                    'to_regime': _r.capitalize(),
-                    'reason': f"Growth {_g_desc}, Inflation {_i_desc}",
-                    'key_changes': ' | '.join(_diffs) if _diffs else 'Allocation shift'
-                })
-            _prev_r = _r
-    
-    logger.info(f"CDN portfolio loaded: {CDN_VERSION}, regime={_cdn_r}, {len(CDN_WEIGHTS)} ETFs, {len(CDN_REGIME_CHANGES)} rebalance events")
+    from src.backtester.cdn_clock import dashboard_cdn_payload
+    from src.dashboard.cdn_audit import merge_cdn_audit
+    _cdn_payload = dashboard_cdn_payload(macro, current.get('regime', 'goldilocks'), regime_history)
+    audit_results = merge_cdn_audit(
+        audit_results,
+        prices=_cdn_payload.get('cdn_prices'),
+        us_prices=price_data,
+        us_equity=equity_curve,
+    )
+    logger.info(
+        "CDN portfolio loaded: regime=%s source=%s benchmark=%s",
+        _cdn_payload.get('cdn_regime'),
+        _cdn_payload.get('cdn_regime_source'),
+        len(_cdn_payload.get('cdn_benchmark', [])),
+    )
 except Exception as _cdn_err:
     logger.warning(f"CDN portfolio data load failed: {_cdn_err}")
-    CDN_REGIME_CHANGES = []
+    _cdn_payload = {}
 
 DASHBOARD_DATA = {
 
@@ -491,12 +483,15 @@ DASHBOARD_DATA = {
     'all_regime_weights': REGIME_WEIGHTS,
     'audit': audit_results,
     # Canadian ETF Portfolio
-    'cdn_equity_curve':    CDN_EQUITY_CURVE,
-    'cdn_monthly_returns': CDN_MONTHLY_RETURNS,
-    'cdn_backtest_meta':   CDN_BACKTEST_META,
-    'cdn_current_weights': CDN_WEIGHTS,
-    'cdn_all_weights':     CDN_ALL_WEIGHTS,
-    'cdn_regime_changes':  CDN_REGIME_CHANGES,
+    'cdn_equity_curve':    _cdn_payload.get('cdn_equity_curve', pd.Series(dtype=float)),
+    'cdn_monthly_returns': _cdn_payload.get('cdn_monthly_returns', pd.Series(dtype=float)),
+    'cdn_backtest_meta':   _cdn_payload.get('cdn_backtest_meta', {}),
+    'cdn_current_weights': _cdn_payload.get('cdn_current_weights', {}),
+    'cdn_all_weights':     _cdn_payload.get('cdn_all_weights', {}),
+    'cdn_regime_changes':  _cdn_payload.get('cdn_regime_changes', []),
+    'cdn_benchmark':       _cdn_payload.get('cdn_benchmark', pd.Series(dtype=float)),
+    'cdn_prices':          _cdn_payload.get('cdn_prices', pd.DataFrame()),
+    'cdn_regime_source':   _cdn_payload.get('cdn_regime_source', 'us_fallback'),
 
     # Goldman Sachs Bull/Bear Market Indicator (GSBLBR)
     'gsblbr_data': (lambda: (
@@ -724,6 +719,27 @@ def start_background_updater(app_data):
                         from src.dashboard.auditor import run_independent_audit
                         new_audit = run_independent_audit(new_price, new_macro, new_backtest, new_rh, all_equity_curves, lagged_metrics)
                         new_audit['lagged_metrics'] = lagged_metrics
+                        try:
+                            from src.backtester.cdn_clock import dashboard_cdn_payload
+                            from src.dashboard.cdn_audit import merge_cdn_audit
+                            _cdn_payload = dashboard_cdn_payload(
+                                new_macro, new_curr.get('regime', 'goldilocks'), new_rh,
+                            )
+                            new_audit = merge_cdn_audit(
+                                new_audit,
+                                prices=_cdn_payload.get('cdn_prices'),
+                                us_prices=new_price,
+                                us_equity=equity_curve,
+                            )
+                            for _key in (
+                                'cdn_equity_curve', 'cdn_monthly_returns', 'cdn_backtest_meta',
+                                'cdn_current_weights', 'cdn_all_weights', 'cdn_regime_changes',
+                                'cdn_benchmark', 'cdn_prices', 'cdn_regime_source',
+                            ):
+                                if _key in _cdn_payload:
+                                    app_data[_key] = _cdn_payload[_key]
+                        except Exception as _cdn_err:
+                            logger.warning(f"CDN refresh in memory failed: {_cdn_err}")
                         
                         # Timestamps
                         price_mtime = datetime.fromtimestamp(PRICE_CACHE.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
@@ -909,6 +925,7 @@ if __name__ == '__main__':
                                 'risk_flags': risk_flags,
                                 'previous': prev, 'new': new}), 500
 
+            cdn_backtest = refresh_cdn_backtest()
             vegas_market = refresh_qqq_vegas_market_cache()
             vegas_signal = refresh_qqq_vegas_signal_cache()
             risk_flags = refresh_risk_flags_cache()
@@ -954,7 +971,7 @@ if __name__ == '__main__':
             logger.info(f"/tasks/refresh OK at {ts}; uploaded {len(uploaded)} backtest + {len(ibkr_uploaded)} IBKR files to GCS.")
             return jsonify({'ok': True, 'refreshed_at': ts, 'uploaded': uploaded, 'ibkr_uploaded': ibkr_uploaded,
                             'qqq_vegas_market': vegas_market, 'qqq_vegas_signal': vegas_signal,
-                            'risk_flags': risk_flags, 'headline': headline})
+                            'risk_flags': risk_flags, 'cdn_backtest': cdn_backtest, 'headline': headline})
         except subprocess.TimeoutExpired:
             return jsonify({'ok': False, 'error': 'timeout'}), 504
         except Exception as e:

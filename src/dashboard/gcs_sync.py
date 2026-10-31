@@ -52,6 +52,8 @@ SYNC_FILES = [
     'data/backtest_results/cdn_monthly_returns.csv',
     'data/backtest_results/cdn_strategy_config.json',
     'data/backtest_results/cdn_comparison.csv',
+    'data/backtest_results/cdn_benchmark_xiu.csv',
+    'data/backtest_results/cdn_lag_honesty.csv',
     'data/cache/gsblbr_history.csv',
     *VEGAS_MARKET_FILES,
     *VEGAS_SIGNAL_FILES,

@@ -139,8 +139,15 @@ curve, and the monthly file. `run_backtest.py` runs the same check and exits
 3 on a failure, so `/tasks/refresh` does not upload a split series. Targets remain 16% CAGR, max drawdown under 14.8%, Sharpe
 1.2. Whether the latest run meets them is the CSV’s job, not a sentence in this file.
 
-**CDN:** `scripts/run_cdn_backtest.py` has no extra-month run, so the CDN cards stay the
-TSX production book. The US column and the bold US curve on that tab follow the targeted
+**CDN:** cards stay the targeted TSX book (CPI+1 / GDP+4, VFV.TO momentum lagged one
+month — the same publication rule as US path B, not a more optimistic calendar).
+`scripts/run_cdn_backtest.py` also writes path A (lookahead), unlagged, the extra month,
+and path C (vintage, when the release table loads) to `cdn_lag_honesty.csv`. Those rows
+are auditor comparisons. They are not the CDN cards. The monthly heatmap pairs
+**Strategy** with **TSX60** (S&P/TSX 60, XIU.TO) the way the US heatmap pairs Strategy
+with S&P500. Auditor checks CDN price and curve freshness, backtest consistency, that
+heatmap, the targeted clock, and paths A/B/C. A missing CDN series fails the check. It
+is not skipped. The US column and the bold US curve on the CDN tab follow the targeted
 fix when the US series is loaded. The dotted curve is the old month-end look-ahead path.
 
 > **Historical — 8-ETF v5.1 (do not quote as current).** Sleeve was QQQ, SOXX, SPY,

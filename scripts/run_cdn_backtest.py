@@ -7,19 +7,25 @@ Canadian Portfolio B (6 ETFs). The published numbers live in
 ``data/backtest_results/cdn_comparison.csv`` after this script runs. Do not
 copy a CAGR into this file.
 
-The curve starts when every sleeve exists (about 2012-11), not 20 years.
 ZQQ.TO is CAD-hedged Nasdaq-100; VFV.TO is unhedged. The book does not hold ZNQ.TO.
+Names that have not listed yet are dropped and the sleeve is renormalized.
 
 Regime clock matches the US targeted fix: CPI +1 month and GDP +4 months,
 applied once. VIX monthly mean and 12-month momentum then take
 ``lag_vix_and_momentum_one_month`` (``shift(1)`` on those two series only).
-Momentum is VFV.TO, not SPY. Auditor's extra regime shift is not used here.
+Momentum is VFV.TO, not SPY. The extra month is stored for the auditor only.
+
+The published curve is path B (targeted). Path A, path C, the unlagged
+diagnostic, and the extra month are written to ``cdn_lag_honesty.csv`` for
+the auditor. They are not the CDN cards.
 
 Outputs:
   data/backtest_results/cdn_equity_curve.csv
   data/backtest_results/cdn_monthly_returns.csv
   data/backtest_results/cdn_comparison.csv
   data/backtest_results/cdn_strategy_config.json
+  data/backtest_results/cdn_lag_honesty.csv
+  data/backtest_results/cdn_benchmark_xiu.csv
 """
 
 import sys
@@ -32,18 +38,18 @@ os.chdir(ROOT)
 
 import json
 import pickle
-import numpy as np
 import pandas as pd
-import yfinance as yf
 
-from src.backtester.engine import BacktestEngine
-from src.backtester.regime_clock import (
-    _classify_one,
-    market_signals,
-    publication_lagged_macro,
+from src.backtester.cdn_clock import (
+    CDN_BENCHMARK,
+    CDN_BENCHMARK_TICKER,
+    CDN_HONESTY,
+    classify_cdn_regimes,
+    honesty_frame,
+    run_cdn_honesty_paths,
 )
-from config.regime_rules import STRATEGY_PARAMS, REGIME_VIX_DEFENSIVE
-from config.cdn_regime_rules import CDN_REGIME_WEIGHTS, CDN_UNIVERSE, CDN_VERSION
+from src.backtester.regime_clock import MODE_TARGETED
+from config.cdn_regime_rules import CDN_AB_WINNER, CDN_REGIME_WEIGHTS, CDN_UNIVERSE, CDN_VERSION
 
 
 def load_data():
@@ -53,6 +59,7 @@ def load_data():
 
     if not cdn_cache.exists():
         print("Downloading Canadian ETF prices...")
+        import yfinance as yf
         raw = yf.download(CDN_UNIVERSE, start='2012-01-01', auto_adjust=True, progress=False)
         cdn_px = raw['Close'] if isinstance(raw.columns, pd.MultiIndex) else raw
         cdn_px.columns = [str(c) for c in cdn_px.columns]
@@ -71,45 +78,46 @@ def load_data():
     return cdn_px, macro
 
 
-def classify_regimes(macro, price_data, momentum_ticker='VFV.TO'):
-    """Canadian regimes on the US targeted clock.
+def classify_regimes(macro, price_data, momentum_ticker='VFV.TO', mode=MODE_TARGETED):
+    """Canadian regimes on the shared clock.
 
-    CPI +1 and GDP +4 are applied once in ``publication_lagged_macro``.
-    VIX monthly mean and 12-month momentum then go through
-    ``lag_vix_and_momentum_one_month`` (``shift(1)`` on those two series only),
-    via ``market_signals(..., same_month=False)``. Momentum is
-    ``momentum_ticker`` (VFV.TO). CPI and GDP are not shifted a second time.
+    The default mode is targeted: CPI +1 and GDP +4 once, then
+    ``lag_vix_and_momentum_one_month`` on VIX and ``momentum_ticker``
+    (VFV.TO). ``lookahead`` keeps the publication lag but stamps VIX and
+    momentum in the same month. That path is not the published book.
     """
-    vix = macro.get('vix', pd.Series(dtype=float))
-    gdp = macro.get('gdp', pd.Series(dtype=float))
-    cpi = macro.get('cpi', pd.Series(dtype=float))
-    _cpi_yoy, _gdp, cpi_mo, gdp_mo = publication_lagged_macro(cpi, gdp, apply_lag=True)
+    history, _current, _info = classify_cdn_regimes(
+        macro, price_data, momentum_ticker=momentum_ticker, mode=mode,
+    )
+    return history
 
-    if isinstance(price_data, pd.DataFrame) and momentum_ticker in price_data.columns:
-        mom_px = price_data[momentum_ticker]
-    else:
-        mom_px = pd.Series(dtype=float)
-    vix_mo, mom_mo = market_signals(vix, mom_px, same_month=False)
 
-    ready = price_data[CDN_UNIVERSE].dropna()
-    if len(ready) == 0:
-        return pd.DataFrame(columns=['date', 'regime'])
-    end = price_data.index.max()
-    dates = pd.date_range(start=ready.index[0], end=end, freq='MS')
-
-    records = []
-    for date in dates:
-        records.append({
-            'date': date,
-            'regime': _classify_one(
-                date, gdp_mo, mom_mo, cpi_mo, vix_mo, REGIME_VIX_DEFENSIVE,
-            ),
-        })
-    return pd.DataFrame(records)
+def refresh_xiu_benchmark():
+    """Adjusted close of XIU.TO, the S&P/TSX 60 proxy. Not a sleeve holding."""
+    dest = CDN_BENCHMARK
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        import yfinance as yf
+        raw = yf.download(CDN_BENCHMARK_TICKER, start='2011-12-01', auto_adjust=True, progress=False)
+        px = raw['Close'] if isinstance(raw.columns, pd.MultiIndex) else raw
+        if isinstance(px, pd.DataFrame):
+            px = px.iloc[:, 0]
+        px = px.dropna()
+        px.index = pd.to_datetime(px.index)
+        if getattr(px.index, 'tz', None) is not None:
+            px.index = px.index.tz_convert(None)
+        if len(px) < 100:
+            raise RuntimeError(f'XIU.TO download returned {len(px)} rows')
+        px.to_csv(dest, header=[CDN_BENCHMARK_TICKER])
+        print(f'Saved: {dest} ({px.index.min().date()} → {px.index.max().date()})')
+    except Exception as exc:
+        print(f'XIU benchmark unchanged ({exc}).')
+    return dest
 
 
 def run_cdn_backtest():
     cdn_px, macro = load_data()
+    refresh_xiu_benchmark()
     regime_history = classify_regimes(macro, cdn_px, momentum_ticker='VFV.TO')
 
     print(f"Canadian Backtest Period: {cdn_px.index[0].date()} to {cdn_px.index[-1].date()}")
@@ -117,16 +125,14 @@ def run_cdn_backtest():
     for r, cnt in regime_history['regime'].value_counts().items():
         print(f"  {r:<12}: {cnt} months ({cnt / len(regime_history):.1%})")
 
-    engine = BacktestEngine(cdn_px[CDN_UNIVERSE], initial_capital=100_000, risk_free_rate=0.02)
-    params = dict(STRATEGY_PARAMS)
-
-    result = engine.run_optimized_regime_backtest(
-        regime_history=regime_history,
-        regime_weights=CDN_REGIME_WEIGHTS,
-        name='Portfolio B (High-Growth 14.6%)',
-        vix_data=macro.get('vix'),
-        **params,
-    )
+    paths = run_cdn_honesty_paths(cdn_px, macro)
+    result = paths.get(MODE_TARGETED)
+    if result is None:
+        raise RuntimeError('CDN targeted path did not run.')
+    honesty = honesty_frame(paths)
+    honesty.to_csv(CDN_HONESTY)
+    print(f'Saved: {CDN_HONESTY}')
+    print(honesty[['cagr', 'max_dd', 'sharpe']].to_string())
 
     print("\n" + "=" * 60)
     print(f"CANADIAN REGIME STRATEGY RESULTS ({CDN_VERSION})")
@@ -152,7 +158,7 @@ def run_cdn_backtest():
         print(f"Saved: {out_dir / 'cdn_monthly_returns.csv'}")
 
     comp_df = pd.DataFrame([{
-        'Strategy': 'Portfolio B (High-Growth 14.6%)',
+        'Strategy': CDN_AB_WINNER,
         'Annual Return': f'{result.annual_return:.2%}',
         'Volatility': f'{result.volatility:.2%}',
         'Sharpe Ratio': f'{result.sharpe_ratio:.2f}',
@@ -167,9 +173,17 @@ def run_cdn_backtest():
     print(f"Saved: {out_dir / 'cdn_comparison.csv'}")
 
     cfg_out = {
-        'name': 'Portfolio B (High-Growth 14.6%)',
+        'name': CDN_AB_WINNER,
         'as_of': pd.Timestamp.now().strftime('%Y-%m-%d'),
         'tickers': CDN_UNIVERSE,
+        'clock': {
+            'mode': 'targeted',
+            'cpi_lag_months': 1,
+            'gdp_lag_months': 4,
+            'momentum': 'VFV.TO',
+            'same_month_market': False,
+            'publication_lag': True,
+        },
         'weights': CDN_REGIME_WEIGHTS,
         'metrics': {
             'CAGR': f'{result.annual_return:.2%}',
@@ -184,6 +198,19 @@ def run_cdn_backtest():
     with open(out_dir / 'cdn_strategy_config.json', 'w') as f:
         json.dump(cfg_out, f, indent=2)
     print(f"Saved: {out_dir / 'cdn_strategy_config.json'}")
+
+    from src.backtester.consistency import verify_series
+    report = verify_series(
+        result.annual_return,
+        result.total_return,
+        result.max_drawdown,
+        result.equity_curve,
+        result.monthly_returns,
+    )
+    print("\n" + report.text())
+    if not report.ok:
+        print('Consistency check failed. This CDN run is not publishable.')
+        sys.exit(3)
 
 
 if __name__ == '__main__':

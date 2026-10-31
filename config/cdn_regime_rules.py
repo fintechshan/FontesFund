@@ -1,7 +1,7 @@
 """
 config/cdn_regime_rules.py
 ==========================
-Canadian ETF Portfolio (6-ETF, CAD) -- Portfolio B (High-Growth 14.6%), 2026-09-19
+Canadian ETF Portfolio (6-ETF, CAD) -- Portfolio B.
 VFV.TO is unhedged S&P 500 (USD/CAD is in that sleeve). ZQQ.TO is CAD-hedged
 Nasdaq-100. This book does not hold unhedged ZNQ.TO.
 
@@ -13,8 +13,10 @@ Universe B: ZQQ.TO, VFV.TO, ZEB.TO, XBB.TO, CGL-C.TO, XGD.TO
   CGL-C.TO -- iShares Gold Bullion ETF (CAD) -- gold/tail-risk crisis hedge
   XGD.TO   -- iShares S&P/TSX Global Gold Index -- gold miners / inflation spike
 
-The published curve starts when every sleeve exists (about 2012-11), not a
-20-year sample. The last run's CAGR, drawdown, and Sharpe are
+The published curve is ``data/backtest_results/cdn_equity_curve.csv``.
+Sleeves that have not listed yet are dropped and the rest renormalized, so
+the file can open before every name exists. It is not a 20-year sample.
+The last run's CAGR, drawdown, and Sharpe are
 ``data/backtest_results/cdn_comparison.csv``. Do not copy those figures here.
 The clock is the US targeted fix (CPI+1 / GDP+4 once, then
 lag_vix_and_momentum_one_month: shift(1) on VIX and VFV.TO momentum only).
@@ -62,6 +64,6 @@ for _regime, _weights in CDN_REGIME_WEIGHTS.items():
     assert _s == 1.0, f"CDN regime {_regime!r} weights sum to {_s}, not 1.0"
 
 CDN_UNIVERSE  = list(CDN_REGIME_WEIGHTS["goldilocks"].keys())
-CDN_VERSION   = "v2 (Portfolio B - 14.6% High-Growth)"
-CDN_AB_WINNER = "Portfolio B (High-Growth 14.6%)"
+CDN_VERSION   = "v2 (Portfolio B)"
+CDN_AB_WINNER = "Portfolio B"
 

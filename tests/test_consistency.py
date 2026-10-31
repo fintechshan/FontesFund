@@ -65,6 +65,21 @@ class SavedRunTests(unittest.TestCase):
         )
         self.assertTrue(report.ok, report.text())
 
+    def test_published_cdn_files_are_one_series(self):
+        from pathlib import Path
+
+        from config.cdn_regime_rules import CDN_AB_WINNER
+        from src.backtester.consistency import verify_files
+
+        root = Path(__file__).resolve().parents[1] / "data" / "backtest_results"
+        report = verify_files(
+            root / "cdn_comparison.csv",
+            root / "cdn_equity_curve.csv",
+            root / "cdn_monthly_returns.csv",
+            CDN_AB_WINNER,
+        )
+        self.assertTrue(report.ok, report.text())
+
 
 if __name__ == "__main__":
     unittest.main()

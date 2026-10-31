@@ -71,6 +71,34 @@ class CdnClockTests(unittest.TestCase):
         self.assertEqual(list(history["regime"]), targeted)
         self.assertNotEqual(targeted, lookahead)
 
+    def test_us_default_momentum_stays_spy(self):
+        """Adding VFV.TO beside SPY does not move the US clock."""
+        from src.backtester.regime_clock import MODE_TARGETED, classify_regimes
+
+        index = pd.bdate_range("2012-01-02", "2014-06-28")
+        spy = pd.Series(100.0, index=index)
+        spy.iloc[-252:] = 80.0
+        vfv = pd.Series(100.0 * (1.001 ** pd.Series(range(len(index)), index=index)), index=index)
+        prices = pd.DataFrame({"SPY": spy, "VFV.TO": vfv})
+        for ticker in CDN_UNIVERSE:
+            if ticker not in prices.columns:
+                prices[ticker] = vfv
+        vix = pd.Series(14.0, index=index)
+        cpi = pd.Series(100.0, index=pd.date_range("2010-01-01", "2014-06-01", freq="MS"))
+        gdp = pd.Series(0.2, index=pd.date_range("2010-01-01", "2014-06-01", freq="QS"))
+        macro = {"vix": vix, "cpi": cpi, "gdp": gdp}
+
+        default, _, info = classify_regimes(macro, prices, mode=MODE_TARGETED)
+        via_spy, _, _ = classify_regimes(macro, prices, mode=MODE_TARGETED, momentum_column="SPY")
+        via_vfv, _, vfv_info = classify_regimes(
+            macro, prices, mode=MODE_TARGETED, momentum_column="VFV.TO",
+        )
+        self.assertEqual(info["momentum_column"], "SPY")
+        self.assertTrue(default["regime"].equals(via_spy["regime"]))
+        both = default.merge(via_vfv, on="date", suffixes=("_spy", "_vfv"))
+        self.assertGreater((both["regime_spy"] != both["regime_vfv"]).sum(), 0)
+        self.assertEqual(vfv_info["momentum_column"], "VFV.TO")
+
 
 if __name__ == "__main__":
     unittest.main()
