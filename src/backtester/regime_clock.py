@@ -678,14 +678,21 @@ def _write_vintage_cache(payload: dict) -> None:
         values.to_csv(cache / name, header=True)
 
 
-def _decision_dates(price_data: pd.DataFrame, vix: pd.Series) -> pd.DatetimeIndex:
+def _decision_dates(
+    price_data: pd.DataFrame,
+    vix: pd.Series,
+    start: str | pd.Timestamp = "2005-06-01",
+) -> pd.DatetimeIndex:
     if price_data is not None and not price_data.empty:
         end = price_data.index.max()
     elif vix is not None and len(vix):
         end = _as_dt_index(vix).index.max()
     else:
         return pd.DatetimeIndex([])
-    return pd.date_range(start="2005-06-01", end=end, freq="MS")
+    start_ts = pd.Timestamp(start)
+    if pd.Timestamp(end) < start_ts:
+        return pd.DatetimeIndex([])
+    return pd.date_range(start=start_ts, end=end, freq="MS")
 
 
 def _snapshot(records, vix, t10y, t2y, cpi_yoy, gdp, spy_daily, vix_defensive: float) -> dict:
@@ -753,6 +760,8 @@ def classify_regimes(
     use_realtime_vintage: bool = False,
     vintage: dict | None = None,
     vix_defensive: float | None = None,
+    momentum_column: str = "SPY",
+    decision_start: str | pd.Timestamp | None = None,
 ):
     """Classify each month-start.
 
@@ -761,6 +770,12 @@ def classify_regimes(
     mode
         ``targeted`` (default), ``lookahead``, ``unlagged``, ``auditor``,
         or ``vintage``.
+    momentum_column
+        Price column for the 12-month momentum input. The US book uses
+        ``SPY``. The Canadian book uses ``VFV.TO``. The default is ``SPY``.
+    decision_start
+        First month-start stamp. The US book keeps ``2005-06-01``. The
+        Canadian book starts when every sleeve name has a print.
     apply_lag
         Legacy switch. ``False`` selects ``unlagged``. ``True`` selects
         ``targeted`` (publication lag, no month-end look-ahead). Ignored
@@ -791,11 +806,13 @@ def classify_regimes(
         "vintage_fallback": False,
         "vintage_source": None,
         "vintage_error": None,
+        "momentum_column": momentum_column,
     }
 
     if mode == MODE_AUDITOR:
         history, current, base_info = classify_regimes(
             macro, price_data, mode=MODE_LOOKAHEAD, vix_defensive=vix_defensive,
+            momentum_column=momentum_column, decision_start=decision_start,
         )
         history = history.copy()
         history["regime"] = history["regime"].shift(1).bfill()
@@ -813,6 +830,7 @@ def classify_regimes(
         if not payload or payload.get("cpi_yoy_release") is None or len(payload.get("cpi_yoy_release", [])) == 0:
             history, current, fb = classify_regimes(
                 macro, price_data, mode=MODE_TARGETED, vix_defensive=vix_defensive,
+                momentum_column=momentum_column, decision_start=decision_start,
             )
             fb["vintage_fallback"] = True
             fb["vintage_error"] = "first-release vintage unavailable; used targeted CPI+1/GDP+4"
@@ -836,18 +854,23 @@ def classify_regimes(
 
     vix = macro.get("vix", pd.Series(dtype=float))
     spy = pd.Series(dtype=float)
-    if price_data is not None and not price_data.empty and "SPY" in price_data.columns:
-        spy = price_data["SPY"]
+    if price_data is not None and not price_data.empty and momentum_column in price_data.columns:
+        spy = price_data[momentum_column]
     # same_month is False for MODE_TARGETED and MODE_VINTAGE, so this applies
     # lag_vix_and_momentum_one_month (shift(1) on VIX mean and momentum only).
     # MODE_AUDITOR never reaches this line; it shifts history["regime"].
+    # The default column is SPY. The CDN book passes VFV.TO.
     vix_m, spy_m = market_signals(vix, spy, same_month=same_month)
 
     spy_daily = pd.Series(dtype=float)
     if len(spy):
         spy_daily = (_as_dt_index(spy) / _as_dt_index(spy).shift(252) - 1.0).dropna()
 
-    dates = _decision_dates(price_data if price_data is not None else pd.DataFrame(), vix)
+    dates = _decision_dates(
+        price_data if price_data is not None else pd.DataFrame(),
+        vix,
+        start="2005-06-01" if decision_start is None else decision_start,
+    )
     records = []
     for date in dates:
         records.append({

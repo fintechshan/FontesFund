@@ -27,6 +27,13 @@ on:
       - 'tests/test_risk_officer.py'
       - 'src/dashboard/app.py'
       - 'src/dashboard/auditor.py'
+      - 'src/dashboard/cdn_audit.py'
+      - 'src/backtester/cdn_clock.py'
+      - 'scripts/run_cdn_backtest.py'
+      - 'scripts/verify_consistency.py'
+      - 'tests/test_cdn_clock.py'
+      - 'tests/test_cdn_audit.py'
+      - 'tests/test_consistency.py'
       - 'src/dashboard/gcs_sync.py'
       - 'data/risk_flags/flags.json'
       - 'data/risk_flags/raw_capex_hyperscalers.csv'
@@ -54,6 +61,13 @@ on:
       - 'tests/test_risk_officer.py'
       - 'src/dashboard/app.py'
       - 'src/dashboard/auditor.py'
+      - 'src/dashboard/cdn_audit.py'
+      - 'src/backtester/cdn_clock.py'
+      - 'scripts/run_cdn_backtest.py'
+      - 'scripts/verify_consistency.py'
+      - 'tests/test_cdn_clock.py'
+      - 'tests/test_cdn_audit.py'
+      - 'tests/test_consistency.py'
       - 'src/dashboard/gcs_sync.py'
       - 'data/risk_flags/flags.json'
       - 'data/risk_flags/raw_capex_hyperscalers.csv'
@@ -79,4 +93,4 @@ jobs:
         env:
           PYTHONUTF8: '1'
           PYTHONIOENCODING: utf-8
-        run: python -m unittest tests.test_notify_regime tests.test_risk_flags tests.test_risk_officer tests.test_qqq_vegas_tab tests.test_qqq_vegas_market -v
+        run: python -m unittest tests.test_notify_regime tests.test_risk_flags tests.test_risk_officer tests.test_qqq_vegas_tab tests.test_qqq_vegas_market tests.test_cdn_clock tests.test_cdn_audit tests.test_consistency tests.test_backtest_heatmap_spx tests.test_classifier_parity tests.test_backtest_default tests.test_chart_legend_layout -v

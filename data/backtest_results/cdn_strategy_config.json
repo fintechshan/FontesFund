@@ -1,6 +1,14 @@
 {
-  "name": "Portfolio B (High-Growth 14.6%)",
+  "name": "Portfolio B",
   "as_of": "2026-09-27",
+  "clock": {
+    "mode": "targeted",
+    "cpi_lag_months": 1,
+    "gdp_lag_months": 4,
+    "momentum": "VFV.TO",
+    "same_month_market": false,
+    "publication_lag": true
+  },
   "tickers": [
     "ZQQ.TO",
     "VFV.TO",

@@ -1,4 +1,4 @@
-"""Compare a saved backtest row with its equity curve and monthly heatmap.
+"""Compare saved US and CDN backtest rows with their equity curves and heatmaps.
 
 Exit 0 when they are one series. Exit 1 when the heatmap compound, the
 equity-curve total return, the 252-day CAGR, or the daily max drawdown
@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from config.cdn_regime_rules import CDN_AB_WINNER
 from src.backtester.consistency import verify_files
 
 
@@ -39,10 +40,25 @@ def main(argv: list[str] | None = None) -> int:
         default=str(ROOT / "data" / "backtest_results" / "aggressive_monthly_returns.csv"),
     )
     parser.add_argument("--strategy", default="Optimized Regime Strategy")
+    parser.add_argument(
+        "--skip-cdn",
+        action="store_true",
+        help="Check only the US book.",
+    )
     args = parser.parse_args(argv)
     report = verify_files(args.comparison, args.equity, args.monthly, args.strategy)
     print(report.text())
-    return 0 if report.ok else 1
+    ok = report.ok
+    if not args.skip_cdn:
+        cdn = verify_files(
+            ROOT / "data" / "backtest_results" / "cdn_comparison.csv",
+            ROOT / "data" / "backtest_results" / "cdn_equity_curve.csv",
+            ROOT / "data" / "backtest_results" / "cdn_monthly_returns.csv",
+            CDN_AB_WINNER,
+        )
+        print(cdn.text())
+        ok = ok and cdn.ok
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

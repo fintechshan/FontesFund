@@ -10,7 +10,10 @@ from datetime import datetime
 
 logger = logging.getLogger('auditor')
 
-def run_independent_audit(price_data, macro, backtest_results, regime_history, all_equity_curves, lagged_metrics=None):
+def run_independent_audit(
+    price_data, macro, backtest_results, regime_history, all_equity_curves,
+    lagged_metrics=None, cdn_prices=None, cdn_equity=None,
+):
     audit = {}
 
     # Helper function to clean and parse percentages
@@ -313,6 +316,34 @@ def run_independent_audit(price_data, macro, backtest_results, regime_history, a
     data_checks.extend(vegas_checks)
     audit['qqq_vegas_checks'] = vegas_checks
     audit['data_checks'] = data_checks
+    try:
+        from src.dashboard.cdn_audit import merge_cdn_audit
+        us_curve = None
+        if cdn_equity is None and isinstance(all_equity_curves, pd.DataFrame) and not all_equity_curves.empty:
+            for column in ('Optimized Regime Strategy', 'S&P 500'):
+                if column in all_equity_curves.columns:
+                    us_curve = all_equity_curves[column]
+                    break
+        merged = merge_cdn_audit(
+            audit,
+            prices=cdn_prices,
+            us_prices=price_data,
+            us_equity=us_curve,
+        )
+        audit['cdn_checks'] = merged.get('cdn_checks', [])
+        audit['data_checks'] = merged.get('data_checks', data_checks)
+    except Exception as exc:
+        logger.error(f'CDN audit failed: {exc}')
+        audit['cdn_checks'] = [{
+            'check': 'CDN book',
+            'status': 'FAIL',
+            'value': 'Checks did not run',
+            'threshold': 'Six CDN checks',
+            'location': 'src/dashboard/cdn_audit.py',
+            'remedy': 'Fix the CDN auditor import and re-run. Do not drop the Canadian book from this page.',
+            'desc': f'CDN audit failed: {exc}',
+        }]
+        audit['data_checks'] = list(audit.get('data_checks') or []) + audit['cdn_checks']
 
     # ───────────────────────────────────────────────────────────────────────
     # PILLAR 3: STRATEGY REALISM & OPTIMISM CHECKS (SYSTEM ERRORS CHECKER)
