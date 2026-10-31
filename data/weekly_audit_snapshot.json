@@ -1,0 +1,109 @@
+{
+  "schema": 1,
+  "generated_at": "2026-10-31 07:03 UTC",
+  "overall_status": "WARNING",
+  "freshness": {
+    "status": "WARNING",
+    "backtest_end": "2026-09-25",
+    "notify_price_asof": "2026-10-26",
+    "risk_flags_asof": "2026-10-19",
+    "latest_market_date": "2026-10-26",
+    "backtest_lag_calendar_days": 31
+  },
+  "regime_state": {
+    "regime": "reflation",
+    "vix": 19.4,
+    "vix_band": "0-20",
+    "cpi_yoy": 4.02,
+    "gdp": 2.2,
+    "spy_momentum": 0.1516
+  },
+  "backtest_consistency": {
+    "status": "PASS",
+    "backtest_start": "2005-01-04",
+    "backtest_end": "2026-09-25",
+    "sessions": 5466,
+    "reported_cagr": 0.1343,
+    "recomputed_cagr_252": 0.134299,
+    "cagr_diff_bps": 0.01,
+    "reported_total_return": 14.3839,
+    "recomputed_total_return": 14.383863,
+    "total_diff_bps": 0.37,
+    "reported_max_dd": 0.1413,
+    "recomputed_max_dd": 0.141252,
+    "dd_diff_bps": 0.48,
+    "heatmap_vs_equity_diff_bps": 0.0,
+    "lag_paths": {
+      "A_lookahead": {
+        "cagr": 0.1481,
+        "max_dd": 0.139,
+        "sharpe": 1.03,
+        "end": "2026-09-25"
+      },
+      "B_targeted": {
+        "cagr": 0.1343,
+        "max_dd": 0.1413,
+        "sharpe": 0.93,
+        "end": "2026-09-25"
+      },
+      "C_vintage_sa": {
+        "cagr": 0.1265,
+        "max_dd": 0.1523,
+        "sharpe": 0.87,
+        "end": "2026-09-25"
+      },
+      "B_targeted_common_inception": {
+        "cagr": 0.1028,
+        "max_dd": 0.091,
+        "sharpe": 0.53,
+        "end": "2026-09-25"
+      }
+    },
+    "benchmark_normalization_notes": [
+      "60/40 Benchmark: Day-1 base=0.9923 (End/Start-1 differs from End-1 by +4.26%)",
+      "S&P 500: Day-1 base=0.9878 (End/Start-1 differs from End-1 by +11.78%)",
+      "Nasdaq 100 (QQQ): Day-1 base=0.9818 (End/Start-1 differs from End-1 by +41.16%)"
+    ]
+  },
+  "coverage": {
+    "QQQ": {
+      "first_date": "2005-01-03",
+      "sessions": 5467,
+      "coverage_pct": 100.0
+    },
+    "SOXX": {
+      "first_date": "2005-01-03",
+      "sessions": 5467,
+      "coverage_pct": 100.0
+    },
+    "SPY": {
+      "first_date": "2005-01-03",
+      "sessions": 5467,
+      "coverage_pct": 100.0
+    },
+    "IEF": {
+      "first_date": "2005-01-03",
+      "sessions": 5467,
+      "coverage_pct": 100.0
+    },
+    "GLD": {
+      "first_date": "2005-01-03",
+      "sessions": 5467,
+      "coverage_pct": 100.0
+    },
+    "DBMF": {
+      "first_date": "2019-05-08",
+      "sessions": 1857,
+      "coverage_pct": 33.97
+    },
+    "AIPO": {
+      "first_date": "2025-07-25",
+      "sessions": 295,
+      "coverage_pct": 5.4
+    }
+  },
+  "live_market_check": {
+    "refreshed": false,
+    "tickers": {}
+  }
+}
