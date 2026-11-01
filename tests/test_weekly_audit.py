@@ -228,6 +228,7 @@ class NotifyWorkflowTests(unittest.TestCase):
         self.assertIn('[skip ci]', text)
         self.assertIn('weekly_audit_snapshot.py --refresh', text)
         self.assertIn('git add -- data/notify_state.json', text)
+        self.assertIn('git add -- data/risk_flags/flags.json', text)
         self.assertIn('git add -- data/weekly_audit_snapshot.json', text)
         self.assertNotIn('git diff --cached --quiet -- data/notify_state.json', text)
         self.assertIn('git diff --cached --quiet', text)

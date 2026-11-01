@@ -64,13 +64,13 @@ class CdnAuditTests(unittest.TestCase):
         self.assertIn("TSX60", checks[CHECK_HEATMAP]["desc"])
         self.assertIn("S&P500", checks[CHECK_HEATMAP]["desc"])
         self.assertIn("all_equity_curves.csv", checks[CHECK_HEATMAP]["desc"])
-        # No TSX cache in git. The row is present and failing, not omitted.
-        self.assertEqual(checks[CHECK_PRICE]["status"], "FAIL")
-        self.assertIn("missing", checks[CHECK_PRICE]["desc"].lower())
-        # Path table is written by scripts/run_cdn_backtest.py. Until that file
-        # exists the row warns. It does not disappear.
-        self.assertEqual(checks[CHECK_PATHS]["status"], "WARNING")
-        self.assertIn("not loaded", checks[CHECK_PATHS]["desc"].lower())
+        # The TSX cache is gitignored. A clean checkout fails the price row;
+        # a workstation that just ran the CDN refresh passes it. The row stays.
+        price = checks[CHECK_PRICE]["status"]
+        self.assertIn(price, ("PASS", "FAIL"))
+        if price == "FAIL":
+            self.assertIn("missing", checks[CHECK_PRICE]["desc"].lower())
+        self.assertEqual(checks[CHECK_PATHS]["status"], "PASS", checks[CHECK_PATHS]["desc"])
 
     def test_prices_behind_the_us_sample_fail(self):
         idx_us = pd.bdate_range("2026-09-01", "2026-09-25")
@@ -84,8 +84,9 @@ class CdnAuditTests(unittest.TestCase):
         self.assertIn("behind", checks[CHECK_PRICE]["desc"])
 
     def test_curve_behind_the_us_book_fails(self):
-        us = pd.Series([1.0, 1.1], index=pd.to_datetime(["2026-09-25", "2026-10-20"]))
-        checks = _by_name(audit_cdn_book(us_equity=us))
+        us = pd.Series([1.0, 1.1], index=pd.to_datetime(["2026-09-25", "2026-10-30"]))
+        cdn = pd.Series([1.0, 1.02], index=pd.to_datetime(["2026-09-18", "2026-09-25"]))
+        checks = _by_name(audit_cdn_book(us_equity=us, cdn_equity=cdn, load_defaults=False))
         self.assertEqual(checks[CHECK_ARTIFACT]["status"], "FAIL", checks[CHECK_ARTIFACT]["desc"])
 
     def test_lookahead_published_book_fails(self):
@@ -114,7 +115,7 @@ class CdnAuditTests(unittest.TestCase):
             {"cagr": [0.1203, 0.1300, 0.1100, 0.1400, 0.1000]},
             index=["B_targeted", "A_lookahead", "C_vintage", "unlagged", "auditor_extra"],
         )
-        checks = _by_name(audit_cdn_book(honesty=honesty))
+        checks = _by_name(audit_cdn_book(honesty=honesty, load_defaults=False))
         self.assertEqual(checks[CHECK_PATHS]["status"], "PASS", checks[CHECK_PATHS]["desc"])
 
     def test_optimistic_clock_config_fails(self):

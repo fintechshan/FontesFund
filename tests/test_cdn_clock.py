@@ -1,7 +1,9 @@
 """Canadian classifier uses the targeted month-end clock, not a tenth copy."""
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 import pandas as pd
 
@@ -21,6 +23,20 @@ def _book(index):
         index=index,
     )
     return frame
+
+
+class CdnCacheRefreshTests(unittest.TestCase):
+    def test_missing_or_stale_cache_refreshes_and_same_day_does_not(self):
+        from scripts.run_cdn_backtest import cdn_prices_need_refresh
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'cdn_price_data.csv'
+            self.assertTrue(cdn_prices_need_refresh(path, today='2026-11-01', force=False))
+            idx = pd.bdate_range('2026-08-03', '2026-09-18')
+            pd.DataFrame({'ZQQ.TO': range(len(idx))}, index=idx).to_csv(path)
+            self.assertTrue(cdn_prices_need_refresh(path, today='2026-11-01', force=False))
+            self.assertFalse(cdn_prices_need_refresh(path, today='2026-09-18', force=False))
+            self.assertTrue(cdn_prices_need_refresh(path, today='2026-09-18', force=True))
 
 
 class CdnClockTests(unittest.TestCase):

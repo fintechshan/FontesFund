@@ -832,6 +832,8 @@ def build_regime_tab(data):
     vix_s = macro.get('vix', pd.Series(dtype=float))
     gdp_s = macro.get('gdp', pd.Series(dtype=float))
     cpi_s = derived.get('cpi_yoy', pd.Series(dtype=float)) if derived else pd.Series(dtype=float)
+    # Source line cites the FRED observation date. derived cpi_yoy is already
+    # shifted +1 month for the clock, so its index is not the FRED print date.
     unemp_s = macro.get('unemp', pd.Series(dtype=float))
     t10y_s = macro.get('t10y', pd.Series(dtype=float))
     t2y_s = macro.get('t2y', pd.Series(dtype=float))
@@ -844,7 +846,11 @@ def build_regime_tab(data):
             return s2.index[-1].strftime('%Y-%m-%d') if len(s2) else '—'
         except Exception:
             return '—'
-    macro_src = (f"Source: FRED — VIX {_last(vix_s)}, CPI {_last(cpi_s)}, GDP {_last(gdp_s)}, "
+    cpi_obs = macro.get('cpi', pd.Series(dtype=float))
+    cpi_obs_txt = _last(cpi_obs)
+    if cpi_obs_txt == '—':
+        cpi_obs_txt = _last(cpi_s)
+    macro_src = (f"Source: FRED — VIX {_last(vix_s)}, CPI observation {cpi_obs_txt}, GDP {_last(gdp_s)}, "
                  f"UNRATE {_last(unemp_s)}, FedFunds {_last(ff_s)}, 10Y/2Y {_last(t10y_s)} · "
                  f"Prices: Yahoo Finance · Regime computed in-app (rules-based)")
 

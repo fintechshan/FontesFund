@@ -19,9 +19,10 @@
 # 周六周度审计（Auditor 第 7 节）：01:00 UTC（香港/北京周六 09:00）仍先跑上面的
 # 象限检查，再跑 scripts/weekly_audit_snapshot.py --refresh，写入
 # data/weekly_audit_snapshot.json。workflow_dispatch 的 weekly_audit 默认为 true，
-# 手动跑也会生成快照。提交同时暂存 notify_state.json 与周度快照（文件存在时）；
-# 只有两者相对 HEAD 都没变才跳过提交。快照脚本在回测对账 FAIL 时退出 3（本步变红），
-# 但文件已经写好，保存步仍会把它推上去。
+# 手动跑也会生成快照。象限与 VIX 档位都没变时仍会推进 price_asof / checked_at
+# （以及风险旗开关变化），但不开 Issue。提交同时暂存 notify_state.json、
+# data/risk_flags/flags.json 与周度快照（文件存在时）；三者相对 HEAD 都没变才跳过。
+# 快照脚本在回测对账 FAIL 时退出 3（本步变红），但文件已经写好，保存步仍会把它推上去。
 
 name: 象限切换提醒与周度审计
 
@@ -123,10 +124,15 @@ jobs:
           # checkout 在 schedule 上有时是 detached HEAD。钉到事件分支再提交。
           git checkout -B "${GITHUB_REF_NAME}"
           git add -- data/notify_state.json
+          # 记分卡 as-of 每天前进，但开关未必变。不暂存 flags.json 的话
+          # 仓库里的风险旗会停在上一次开关翻转。
+          if [ -f data/risk_flags/flags.json ]; then
+            git add -- data/risk_flags/flags.json
+          fi
           if [ -f data/weekly_audit_snapshot.json ]; then
             git add -- data/weekly_audit_snapshot.json
           fi
-          # 周度快照变了也要提交，不能只因为 notify_state.json 没变就退出。
+          # 周度快照或记分卡变了也要提交，不能只因为 notify_state.json 没变就退出。
           if git diff --cached --quiet; then
             echo "状态与周度审计快照均未变，无需提交"
             exit 0

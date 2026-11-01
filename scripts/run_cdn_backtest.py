@@ -52,20 +52,125 @@ from src.backtester.regime_clock import MODE_TARGETED
 from config.cdn_regime_rules import CDN_AB_WINNER, CDN_REGIME_WEIGHTS, CDN_UNIVERSE, CDN_VERSION
 
 
+def cdn_prices_need_refresh(path, today=None, force=None) -> bool:
+    """True when the TSX cache is missing or its last print is before ``today``.
+
+    ``FORCE_REFRESH=1`` (the Cloud Scheduler path) always re-downloads. A GCS
+    pull stamps a fresh mtime on a file whose last row can still be weeks old,
+    so the decision uses the last index date inside the CSV, not the mtime.
+    """
+    if force is None:
+        force = bool(os.getenv('FORCE_REFRESH'))
+    if force:
+        return True
+    file = Path(path)
+    if not file.exists():
+        return True
+    try:
+        frame = pd.read_csv(file, index_col=0, parse_dates=True)
+    except Exception:
+        return True
+    if frame.empty:
+        return True
+    last = pd.Timestamp(frame.index.max())
+    if getattr(last, 'tzinfo', None) is not None:
+        last = last.tz_localize(None)
+    last = last.normalize()
+    anchor = pd.Timestamp(today or pd.Timestamp.now())
+    if getattr(anchor, 'tzinfo', None) is not None:
+        anchor = anchor.tz_localize(None)
+    anchor = anchor.normalize()
+    return last < anchor
+
+
+def _coerce_cdn_prices(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame is None or frame.empty:
+        return pd.DataFrame()
+    out = frame.copy()
+    out.index = pd.to_datetime(out.index)
+    if getattr(out.index, 'tz', None) is not None:
+        out.index = out.index.tz_localize(None)
+    out = out.sort_index()
+    out = out[~out.index.duplicated(keep='last')]
+    out.columns = [str(col) for col in out.columns]
+    return out
+
+
+def _read_cdn_cache(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        return pd.DataFrame()
+    try:
+        return _coerce_cdn_prices(pd.read_csv(path, index_col=0, parse_dates=True))
+    except Exception as exc:
+        print(f'CDN price cache unreadable ({exc}).')
+        return pd.DataFrame()
+
+
+def _download_cdn_prices() -> pd.DataFrame:
+    import yfinance as yf
+    raw = yf.download(
+        list(CDN_UNIVERSE), start='2012-01-01', auto_adjust=True, progress=False, threads=False,
+    )
+    if raw is None or getattr(raw, 'empty', True):
+        return pd.DataFrame()
+    if isinstance(raw.columns, pd.MultiIndex):
+        levels = raw.columns.get_level_values(0)
+        px = raw['Close'] if 'Close' in levels else raw.iloc[:, 0]
+    else:
+        px = raw['Close'] if 'Close' in raw.columns else raw
+    if isinstance(px, pd.Series):
+        px = px.to_frame()
+    return _coerce_cdn_prices(px)
+
+
+def load_cdn_price_frame(cache_path=None, today=None, force=None) -> pd.DataFrame:
+    """Return TSX closes, refreshing when the cache stops before ``today``.
+
+    A failed or shorter download keeps the previous file. Names that Yahoo
+    omits stay on the previous column via ``combine_first``.
+    """
+    cdn_cache = Path(cache_path) if cache_path is not None else ROOT / 'data' / 'cache' / 'cdn_price_data.csv'
+    existing = _read_cdn_cache(cdn_cache)
+    if not cdn_prices_need_refresh(cdn_cache, today=today, force=force):
+        if not existing.empty:
+            print(f"CDN prices {existing.index.min().date()} → {existing.index.max().date()} (cache)")
+        return existing
+    print("Downloading Canadian ETF prices...")
+    try:
+        fresh = _download_cdn_prices()
+    except Exception as exc:
+        print(f'CDN price refresh failed ({exc}); keeping the previous cache.')
+        fresh = pd.DataFrame()
+    if fresh.empty:
+        if existing.empty:
+            raise RuntimeError(f'CDN price download failed and {cdn_cache} is empty.')
+        print('CDN download was empty; keeping the previous cache.')
+        return existing
+    merged = fresh if existing.empty else fresh.combine_first(existing)
+    merged = _coerce_cdn_prices(merged)
+    if len(merged) < 100:
+        print(f'CDN download returned {len(merged)} rows; keeping the previous cache.')
+        if existing.empty:
+            raise RuntimeError('CDN price download is too short and there is no previous cache.')
+        return existing
+    if not existing.empty and merged.index.max() < existing.index.max():
+        print(
+            f'CDN download ends {merged.index.max().date()}, '
+            f'behind the cache {existing.index.max().date()}; keeping the cache.'
+        )
+        return existing
+    cdn_cache.parent.mkdir(parents=True, exist_ok=True)
+    merged.to_csv(cdn_cache)
+    print(f"CDN prices {merged.index.min().date()} → {merged.index.max().date()} (refreshed)")
+    return merged
+
+
 def load_data():
     """Load Canadian ETF prices and macro data."""
-    cdn_cache = ROOT / 'data' / 'cache' / 'cdn_price_data.csv'
     macro_cache = ROOT / 'data' / 'cache' / 'macro_data.pkl'
-
-    if not cdn_cache.exists():
-        print("Downloading Canadian ETF prices...")
-        import yfinance as yf
-        raw = yf.download(CDN_UNIVERSE, start='2012-01-01', auto_adjust=True, progress=False)
-        cdn_px = raw['Close'] if isinstance(raw.columns, pd.MultiIndex) else raw
-        cdn_px.columns = [str(c) for c in cdn_px.columns]
-        cdn_px.to_csv(cdn_cache)
-    else:
-        cdn_px = pd.read_csv(cdn_cache, index_col=0, parse_dates=True)
+    cdn_px = load_cdn_price_frame()
+    if cdn_px.empty:
+        raise FileNotFoundError('CDN price cache is empty.')
 
     cdn_px = cdn_px.ffill()
 
