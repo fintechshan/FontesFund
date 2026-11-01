@@ -763,6 +763,33 @@ def risk_flag_state_changed(prev, cur: dict) -> bool:
     return risk_flags_changed(prev_block, cur_block)
 
 
+def silent_freshness_update(prev, cur: dict) -> dict | None:
+    """Rewrite the baseline on a no-signal day when the tape or the scorecard moved.
+
+    Same regime and same VIX band still do not open an Issue. An intra-band VIX
+    wiggle, or a new ``checked_at`` with the same price date and the same
+    on/off flags, does not rewrite the file. ``last_delivery`` is kept.
+    """
+    if not isinstance(prev, dict):
+        return None
+    price_moved = (prev.get('price_asof') or '') != (cur.get('price_asof') or '')
+    flags_moved = risk_flag_state_changed(prev, cur)
+    if not price_moved and not flags_moved:
+        return None
+    updated = dict(prev)
+    if price_moved:
+        for key in ('price_asof', 'checked_at', 'vix', 'cpi_yoy', 'gdp', 'spy_momentum'):
+            if key in cur:
+                updated[key] = cur[key]
+    elif cur.get('checked_at'):
+        updated['checked_at'] = cur['checked_at']
+    if isinstance(cur.get('risk_flags'), dict):
+        updated['risk_flags'] = cur['risk_flags']
+    if 'last_delivery' in prev:
+        updated['last_delivery'] = prev['last_delivery']
+    return updated
+
+
 def _risk_flag_section(cur: dict, reasons: dict) -> list[str]:
     block = cur.get('risk_flags') if isinstance(cur.get('risk_flags'), dict) else {}
     names = reasons.get('risk_flags') or ''
@@ -1732,11 +1759,11 @@ def execute(args: argparse.Namespace, opener=None, wechat=None) -> str:
             f"无变化：{cur['regime']} / VIX {cur['vix']}（{cur['vix_band']} {cur['vix_band_name']}）"
             f'{flag_note}—— 不发送。'
         )
-        if isinstance(prev, dict) and risk_flag_state_changed(prev, cur) and not args.dry_run:
-            updated = dict(prev)
-            updated['risk_flags'] = cur['risk_flags']
-            write_state(updated)
-            print('风险旗状态已更新（没有新亮起，不发送）。')
+        if not args.dry_run:
+            updated = silent_freshness_update(prev, cur)
+            if updated is not None:
+                write_state(updated)
+                print('行情日期或风险旗已写入基线（没有新信号，不发送）。')
         write_audit(audit)
         return action
 

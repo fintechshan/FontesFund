@@ -324,6 +324,83 @@ class ExecuteTests(unittest.TestCase):
         self.assertEqual(calls, [])
         self.assertEqual(nr.state_path().read_text(encoding='utf-8'), original)
 
+    def test_silent_newer_price_advances_asof_without_issue(self):
+        prev = _state('reflation', '0-20', '正常', 19.4, price_asof='2026-10-26')
+        prev['last_delivery'] = {
+            'delivery': 'created',
+            'issue_number': 32,
+            'price_asof': '2026-10-26',
+        }
+        prev['risk_flags'] = {
+            'as_of': '2026-10-27',
+            'A_vol': True,
+            'B_crowd': False,
+            'status': {'A_vol': 'on', 'B_crowd': 'off'},
+        }
+        nr.write_state(prev)
+        cur = dict(prev)
+        cur['price_asof'] = '2026-10-30'
+        cur['checked_at'] = '2026-10-31 01:56 UTC'
+        cur['vix'] = 17.2
+        cur['risk_flags'] = dict(prev['risk_flags'], as_of='2026-10-30')
+        calls = []
+        real = nr.current_state
+        nr.current_state = lambda: cur
+        try:
+            action = nr.execute(
+                nr.parse_args([]),
+                opener=lambda title, body: calls.append((title, body)),
+            )
+        finally:
+            nr.current_state = real
+        self.assertEqual(action, 'silent')
+        self.assertEqual(calls, [])
+        saved = json.loads(nr.state_path().read_text(encoding='utf-8'))
+        self.assertEqual(saved['price_asof'], '2026-10-30')
+        self.assertEqual(saved['checked_at'], '2026-10-31 01:56 UTC')
+        self.assertEqual(saved['vix'], 17.2)
+        self.assertEqual(saved['regime'], 'reflation')
+        self.assertEqual(saved['vix_band'], '0-20')
+        self.assertEqual(saved['last_delivery']['issue_number'], 32)
+        self.assertEqual(saved['risk_flags']['as_of'], '2026-10-30')
+        self.assertTrue(saved['risk_flags']['A_vol'])
+
+    def test_silent_dry_run_does_not_advance_price_asof(self):
+        prev = _state('reflation', '0-20', '正常', 19.4, price_asof='2026-10-26')
+        nr.write_state(prev)
+        original = nr.state_path().read_text(encoding='utf-8')
+        cur = dict(prev, price_asof='2026-10-30', checked_at='2026-10-31 01:56 UTC')
+        real = nr.current_state
+        nr.current_state = lambda: cur
+        try:
+            action = nr.execute(nr.parse_args(['--dry-run']))
+        finally:
+            nr.current_state = real
+        self.assertEqual(action, 'silent')
+        self.assertEqual(nr.state_path().read_text(encoding='utf-8'), original)
+
+    def test_silent_flag_flip_stamps_checked_at_without_issue(self):
+        prev = _state('reflation', '0-20', '正常', 19.4, price_asof='2026-10-26', checked_at='2026-10-27 01:43 UTC')
+        prev['risk_flags'] = {
+            'as_of': '2026-10-26',
+            'A_vol': True,
+            'B_crowd': True,
+            'status': {'A_vol': 'on', 'B_crowd': 'on'},
+        }
+        cur = dict(prev)
+        cur['checked_at'] = '2026-10-28 01:55 UTC'
+        cur['risk_flags'] = {
+            'as_of': '2026-10-27',
+            'A_vol': True,
+            'B_crowd': False,
+            'status': {'A_vol': 'on', 'B_crowd': 'off'},
+        }
+        updated = nr.silent_freshness_update(prev, cur)
+        self.assertEqual(updated['price_asof'], '2026-10-26')
+        self.assertEqual(updated['checked_at'], '2026-10-28 01:55 UTC')
+        self.assertFalse(updated['risk_flags']['B_crowd'])
+        self.assertIsNone(nr.silent_freshness_update(prev, dict(prev, vix=19.9, checked_at='2026-10-28 01:55 UTC')))
+
     def test_baseline_dry_run_skips_state(self):
         real = nr.current_state
         nr.current_state = lambda: _state('goldilocks', '0-20', '正常', 15.0)

@@ -1,109 +1,143 @@
 {
   "schema": 1,
-  "generated_at": "2026-10-31 07:03 UTC",
-  "overall_status": "WARNING",
+  "generated_at": "2026-11-01 03:17 UTC",
+  "overall_status": "PASS",
   "freshness": {
-    "status": "WARNING",
-    "backtest_end": "2026-09-25",
-    "notify_price_asof": "2026-10-26",
-    "risk_flags_asof": "2026-10-19",
-    "latest_market_date": "2026-10-26",
-    "backtest_lag_calendar_days": 31
+    "status": "PASS",
+    "backtest_end": "2026-10-30",
+    "notify_price_asof": "2026-10-30",
+    "risk_flags_asof": "2026-10-30",
+    "latest_market_date": "2026-10-30",
+    "backtest_lag_calendar_days": 0
   },
   "regime_state": {
     "regime": "reflation",
-    "vix": 19.4,
+    "vix": 17.2,
     "vix_band": "0-20",
     "cpi_yoy": 4.02,
-    "gdp": 2.2,
-    "spy_momentum": 0.1516
+    "gdp": 3.4,
+    "spy_momentum": 0.1113
   },
   "backtest_consistency": {
     "status": "PASS",
     "backtest_start": "2005-01-04",
-    "backtest_end": "2026-09-25",
-    "sessions": 5466,
-    "reported_cagr": 0.1343,
-    "recomputed_cagr_252": 0.134299,
-    "cagr_diff_bps": 0.01,
-    "reported_total_return": 14.3839,
-    "recomputed_total_return": 14.383863,
-    "total_diff_bps": 0.37,
+    "backtest_end": "2026-10-30",
+    "sessions": 5491,
+    "reported_cagr": 0.131,
+    "recomputed_cagr_252": 0.131004,
+    "cagr_diff_bps": 0.04,
+    "reported_total_return": 13.6205,
+    "recomputed_total_return": 13.620529,
+    "total_diff_bps": 0.29,
     "reported_max_dd": 0.1413,
     "recomputed_max_dd": 0.141252,
     "dd_diff_bps": 0.48,
     "heatmap_vs_equity_diff_bps": 0.0,
     "lag_paths": {
       "A_lookahead": {
-        "cagr": 0.1481,
+        "cagr": 0.1447,
         "max_dd": 0.139,
-        "sharpe": 1.03,
-        "end": "2026-09-25"
+        "sharpe": 1.0,
+        "end": "2026-10-30"
       },
       "B_targeted": {
-        "cagr": 0.1343,
+        "cagr": 0.131,
         "max_dd": 0.1413,
-        "sharpe": 0.93,
-        "end": "2026-09-25"
+        "sharpe": 0.9,
+        "end": "2026-10-30"
       },
       "C_vintage_sa": {
-        "cagr": 0.1265,
+        "cagr": 0.1229,
         "max_dd": 0.1523,
-        "sharpe": 0.87,
-        "end": "2026-09-25"
+        "sharpe": 0.84,
+        "end": "2026-10-30"
       },
       "B_targeted_common_inception": {
-        "cagr": 0.1028,
+        "cagr": 0.054,
         "max_dd": 0.091,
-        "sharpe": 0.53,
-        "end": "2026-09-25"
+        "sharpe": 0.13,
+        "end": "2026-10-30"
       }
     },
     "benchmark_normalization_notes": [
-      "60/40 Benchmark: Day-1 base=0.9923 (End/Start-1 differs from End-1 by +4.26%)",
-      "S&P 500: Day-1 base=0.9878 (End/Start-1 differs from End-1 by +11.78%)",
-      "Nasdaq 100 (QQQ): Day-1 base=0.9818 (End/Start-1 differs from End-1 by +41.16%)"
+      "60/40 Benchmark: Day-1 base=0.9923 (End/Start-1 differs from End-1 by +4.24%)",
+      "S&P 500: Day-1 base=0.9878 (End/Start-1 differs from End-1 by +11.55%)",
+      "Nasdaq 100 (QQQ): Day-1 base=0.9818 (End/Start-1 differs from End-1 by +38.18%)"
     ]
   },
   "coverage": {
     "QQQ": {
       "first_date": "2005-01-03",
-      "sessions": 5467,
+      "sessions": 5492,
       "coverage_pct": 100.0
     },
     "SOXX": {
       "first_date": "2005-01-03",
-      "sessions": 5467,
+      "sessions": 5492,
       "coverage_pct": 100.0
     },
     "SPY": {
       "first_date": "2005-01-03",
-      "sessions": 5467,
+      "sessions": 5492,
       "coverage_pct": 100.0
     },
     "IEF": {
       "first_date": "2005-01-03",
-      "sessions": 5467,
+      "sessions": 5492,
       "coverage_pct": 100.0
     },
     "GLD": {
       "first_date": "2005-01-03",
-      "sessions": 5467,
+      "sessions": 5492,
       "coverage_pct": 100.0
     },
     "DBMF": {
       "first_date": "2019-05-08",
-      "sessions": 1857,
-      "coverage_pct": 33.97
+      "sessions": 1882,
+      "coverage_pct": 34.27
     },
     "AIPO": {
       "first_date": "2025-07-25",
-      "sessions": 295,
-      "coverage_pct": 5.4
+      "sessions": 320,
+      "coverage_pct": 5.83
     }
   },
   "live_market_check": {
-    "refreshed": false,
-    "tickers": {}
+    "refreshed": true,
+    "latest_market_date": "2026-10-30",
+    "tickers": {
+      "SPY": {
+        "close": 755.72,
+        "weekly_change_pct": -0.56
+      },
+      "QQQ": {
+        "close": 690.49,
+        "weekly_change_pct": -1.97
+      },
+      "SOXX": {
+        "close": 471.51,
+        "weekly_change_pct": -1.4
+      },
+      "IEF": {
+        "close": 91.76,
+        "weekly_change_pct": 0.78
+      },
+      "GLD": {
+        "close": 355.78,
+        "weekly_change_pct": -2.95
+      },
+      "DBMF": {
+        "close": 32.45,
+        "weekly_change_pct": -0.86
+      },
+      "AIPO": {
+        "close": 24.665,
+        "weekly_change_pct": 2.64
+      },
+      "VIX": {
+        "close": 19.42,
+        "weekly_change_pct": -0.15
+      }
+    }
   }
 }

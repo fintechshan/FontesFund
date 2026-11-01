@@ -1,14 +1,6 @@
 {
   "name": "Portfolio B",
-  "as_of": "2026-09-27",
-  "clock": {
-    "mode": "targeted",
-    "cpi_lag_months": 1,
-    "gdp_lag_months": 4,
-    "momentum": "VFV.TO",
-    "same_month_market": false,
-    "publication_lag": true
-  },
+  "as_of": "2026-11-01",
   "tickers": [
     "ZQQ.TO",
     "VFV.TO",
@@ -17,6 +9,14 @@
     "CGL-C.TO",
     "XGD.TO"
   ],
+  "clock": {
+    "mode": "targeted",
+    "cpi_lag_months": 1,
+    "gdp_lag_months": 4,
+    "momentum": "VFV.TO",
+    "same_month_market": false,
+    "publication_lag": true
+  },
   "weights": {
     "goldilocks": {
       "ZQQ.TO": 0.35,
@@ -52,12 +52,12 @@
     }
   },
   "metrics": {
-    "CAGR": "12.03%",
+    "CAGR": "11.51%",
     "MaxDD": "15.22%",
-    "Sharpe": "0.96",
-    "Volatility": "10.46%",
-    "Calmar": "0.79",
-    "WinRate": "53.3%",
-    "TotalReturn": "429.33%"
+    "Sharpe": "0.90",
+    "Volatility": "10.52%",
+    "Calmar": "0.76",
+    "WinRate": "53.2%",
+    "TotalReturn": "399.77%"
   }
 }
