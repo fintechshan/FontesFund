@@ -4,22 +4,22 @@
   "regime": "reflation",
   "vix_band": "0-20",
   "vix_band_name": "正常",
-  "vix": 17.2,
+  "vix": 19.4,
   "cpi_yoy": 4.02,
   "gdp": 3.4,
-  "spy_momentum": 0.1113,
-  "price_asof": "2026-10-30",
-  "checked_at": "2026-11-01 03:17 UTC",
+  "spy_momentum": 0.1182,
+  "price_asof": "2026-11-02",
+  "checked_at": "2026-11-03 03:47 UTC",
   "risk_flags": {
-    "as_of": "2026-10-27",
-    "signal_date": "2026-10-26",
+    "as_of": "2026-11-02",
+    "signal_date": "2026-10-30",
     "status": {
       "A_vol": "on",
       "B_crowd": "off",
       "C_put": "off",
       "D_capex": "skipped",
       "E_credit": "skipped",
-      "F_conc": "skipped"
+      "F_conc": "on"
     },
     "mode": {
       "A_vol": "full",
@@ -27,15 +27,15 @@
       "C_put": "full",
       "D_capex": "no_live_official",
       "E_credit": "skipped",
-      "F_conc": "skipped"
+      "F_conc": "holdings"
     },
     "detail": {
-      "A_vol": "SOXX RV20 39.9% vs Q80 36.4%；VXN 26.40 vs Q80 27.20",
-      "B_crowd": "5日 -2.0% · 10日 -9.7% · 振幅/收盘 0.15 vs 中位数 0.07（高低价）· 连跌 0 日",
-      "C_put": "VIX 18.39 vs 5日前 18.44 · SOXX 491.83 vs SMA50 531.26 · 10日 -9.7% · 卖Put清单提示，不下单",
+      "A_vol": "SOXX RV20 49.9% vs Q80 36.4%；VXN 28.50 vs Q80 27.20",
+      "B_crowd": "5日 -1.4% · 10日 -4.4% · 振幅/收盘 0.14 vs 中位数 0.07（高低价）· 连跌 2 日",
+      "C_put": "VIX 19.42 vs 5日前 19.45 · SOXX 471.51 vs SMA50 529.01 · 10日 -4.4% · 卖Put清单提示，不下单",
       "D_capex": "没有可用的 OFFICIAL 行。EXAMPLE 已忽略。",
       "E_credit": "尚未下载 FRED BAMLH0A0HYM2。刷新 scripts/refresh_risk_flags.py 后更新。下载失败则保留上一份。",
-      "F_conc": "尚未下载 SPY 持仓里的 Mag7 权重。刷新 scripts/refresh_risk_flags.py 后更新。成分不全则跳过。"
+      "F_conc": "Mag7 33.2% of SPY · as of 2026-10-29 · ON≥32% OFF≤29% · 含 GOOG+GOOGL · 最新公布持仓"
     },
     "rule_zh": {
       "A_vol": "SOXX 的 20 日实现波动率高于扩窗 80% 分位（min_periods=252），或 VXN 高于自身扩窗 80% 分位（min_periods=252）。滞后 1 个交易日。",
@@ -50,26 +50,26 @@
     "C_put": false,
     "D_capex": false,
     "E_credit": false,
-    "F_conc": false,
+    "F_conc": true,
     "hard_constraint_notice": {
       "zh": "结构旗（D_capex / E_credit / F_conc）只通知、不改仓。不修改 Merrill REGIME_WEIGHTS，不改变 QQQ Vegas 进出场或仓位，不向 IBKR 或 Moomoo 下单。",
       "en": "NOTIFY-ONLY. Structural flags do not change Merrill REGIME_WEIGHTS, QQQ Vegas entry or size, or IBKR/Moomoo orders."
     },
-    "bubble_pressure_score": 0.0
+    "bubble_pressure_score": 0.25
   },
   "last_delivery": {
     "schema": 1,
     "action": "notify",
     "should_fire": true,
     "kind": "flags",
-    "title": "[风险旗] A_vol ON（2026-10-26）",
-    "fingerprint": "flags|reflation>reflation|0-20>0-20|2026-10-26|A_vol@2026-10-26",
+    "title": "[风险旗] F_conc ON（2026-11-02）",
+    "fingerprint": "flags|reflation>reflation|0-20>0-20|2026-11-02|F_conc@2026-11-02",
     "delivery": "created",
-    "issue_number": 32,
-    "issue_url": "https://github.com/fintechshan/FontesFund/issues/32",
-    "checked_at": "2026-10-27 01:43 UTC",
-    "checked_at_iso": "2026-10-27T01:43:51Z",
-    "price_asof": "2026-10-26",
+    "issue_number": 37,
+    "issue_url": "https://github.com/fintechshan/FontesFund/issues/37",
+    "checked_at": "2026-11-03 03:47 UTC",
+    "checked_at_iso": "2026-11-03T03:47:11Z",
+    "price_asof": "2026-11-02",
     "error": null,
     "wechat": {
       "status": "skipped",
