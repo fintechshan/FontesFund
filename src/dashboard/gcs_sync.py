@@ -12,6 +12,8 @@ import os
 import logging
 from pathlib import Path
 
+from src.dashboard.headline_gate import BASELINE_REL
+
 logger = logging.getLogger('gcs_sync')
 ROOT = Path(__file__).resolve().parents[2]
 BUCKET = os.getenv('GCS_BUCKET', '').strip()
@@ -41,13 +43,23 @@ RISK_FLAG_FILES = [
     'data/risk_flags/flags.json',
 ]
 
-# Files that the daily backtest refresh regenerates and that the dashboard reads.
-SYNC_FILES = [
+# US package the headline gate is allowed to publish. Pushed as soon as the
+# gate passes, before the CDN and Vegas steps, so a scheduler deadline cannot
+# drop the heatmap inputs on the floor after the backtest has already succeeded.
+US_BACKTEST_FILES = [
     'data/cache/price_data.csv',
     'data/cache/macro_data.pkl',
-    'data/cache/cdn_price_data.csv',
     'data/backtest_results/20yr_comparison.csv',
+    # Last accepted B_targeted headline. Missing from the bucket until the
+    # first targeted upload; the gate then uses lag_honesty.csv.
+    BASELINE_REL,
     'data/backtest_results/all_equity_curves.csv',
+]
+
+# Files that the daily backtest refresh regenerates and that the dashboard reads.
+SYNC_FILES = [
+    *US_BACKTEST_FILES,
+    'data/cache/cdn_price_data.csv',
     'data/backtest_results/cdn_equity_curve.csv',
     'data/backtest_results/cdn_monthly_returns.csv',
     'data/backtest_results/cdn_strategy_config.json',
@@ -162,6 +174,15 @@ def download_vegas_market():
     except Exception as e:
         logger.warning(f"GCS vegas market download failed (keeping local files): {e}")
     return got
+
+
+def upload_us_backtest():
+    """local -> GCS for the targeted US package only.
+
+    ``/tasks/refresh`` calls this as soon as the headline gate passes.
+    CDN, Vegas, and the risk scorecard are uploaded later with ``upload_data``.
+    """
+    return _upload(US_BACKTEST_FILES)
 
 
 def upload_data():

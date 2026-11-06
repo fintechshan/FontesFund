@@ -864,18 +864,31 @@ if __name__ == '__main__':
         if not token or sent != token:
             return jsonify({'ok': False, 'error': 'unauthorized'}), 401
         try:
+            from src.dashboard.headline_gate import (
+                BASELINE_REL,
+                LAG_HONESTY_REL,
+                evaluate_headline_gate,
+                headline_from_comparison_frame,
+                load_same_path_headline,
+                load_uploaded_baseline,
+                reset_requested,
+                write_uploaded_baseline,
+            )
+
             def _headline():
                 try:
-                    _df = load_backtest_results()
-                    if not _df.empty:
-                        _r = _df.iloc[0]
-                        return (float(str(_r.get('Annual Return', '0%')).replace('%', '')),
-                                float(str(_r.get('Max Drawdown', '99%')).replace('%', '')))
+                    return headline_from_comparison_frame(load_backtest_results())
                 except Exception:
-                    pass
-                return None
+                    return None
 
+            # Read before run_backtest.py rewrites 20yr_comparison.csv.
+            # The comparison row may be an older look-ahead upload pulled
+            # from GCS at startup. The gate compares the new targeted run
+            # to the last accepted B_targeted package, or to lag_honesty
+            # B_targeted when that row is a different methodology.
             prev = _headline()
+            same_path = load_same_path_headline(ROOT / LAG_HONESTY_REL)
+            uploaded_baseline = load_uploaded_baseline(ROOT / BASELINE_REL)
             # FORCE_REFRESH: the GCS download at container start gives caches a fresh
             # mtime even when their DATA is old, so the age check alone would skip the
             # re-download and recycle stale data forever (bug found 2026-07-12).
@@ -904,12 +917,35 @@ if __name__ == '__main__':
             # Regression tripwire: one day of new data moves the 21-yr CAGR by basis
             # points; a data problem moves it by whole points (11.82% vs 14.60% on
             # 2026-07-12, when an in-container FRED failure produced garbage regimes).
+            # The baseline is the last accepted targeted upload, or B_targeted when
+            # the on-disk row is a different clock (look-ahead ~14.47% / 13.9% vs
+            # targeted ~13.1% / 14.13%). HEADLINE_GATE_RESET=1 skips one refresh.
             # run_backtest.py also exits 3 when the equity curve, the monthly
             # heatmap, and the reported CAGR/total/daily max DD are not one series.
             new = _headline()
-            if prev and new and (abs(new[0] - prev[0]) > 1.0 or (new[1] - prev[1]) > 1.0):
-                logger.error(f"/tasks/refresh: headline jump {prev} -> {new}; data problem "
-                             f"suspected — NOT uploading to GCS.")
+            gate = evaluate_headline_gate(
+                previous=prev,
+                new=new,
+                same_path=same_path,
+                uploaded=uploaded_baseline,
+                allow_reset=reset_requested(),
+            )
+            if gate.baseline_source == 'reset':
+                logger.warning(
+                    f"/tasks/refresh: {gate.reason} would_block={gate.would_block} "
+                    f"baseline={gate.baseline} previous={prev} new={new}"
+                )
+            elif gate.baseline_source == 'same_path' and prev is not None:
+                logger.warning(
+                    f"/tasks/refresh: {gate.reason} previous={prev} "
+                    f"baseline={gate.baseline} new={new}"
+                )
+            if gate.block:
+                logger.error(
+                    f"/tasks/refresh: headline jump baseline {gate.baseline_source} "
+                    f"{gate.baseline} -> {new} (on-disk previous {prev}); "
+                    f"data problem suspected — NOT uploading US backtest to GCS."
+                )
                 vegas_market = refresh_qqq_vegas_market_cache()
                 if vegas_market:
                     _upload_qqq_vegas_market()
@@ -919,18 +955,35 @@ if __name__ == '__main__':
                 risk_flags = refresh_risk_flags_cache()
                 if risk_flags:
                     _upload_risk_flags()
-                return jsonify({'ok': False, 'error': 'quality_gate_headline_jump',
-                                'qqq_vegas_market': vegas_market,
-                                'qqq_vegas_signal': vegas_signal,
-                                'risk_flags': risk_flags,
-                                'previous': prev, 'new': new}), 500
+                body = gate.as_dict()
+                body.update({
+                    'ok': False,
+                    'error': 'quality_gate_headline_jump',
+                    'qqq_vegas_market': vegas_market,
+                    'qqq_vegas_signal': vegas_signal,
+                    'risk_flags': risk_flags,
+                    'previous': list(prev) if prev is not None else None,
+                    'new': list(new) if new is not None else None,
+                })
+                return jsonify(body), 500
+
+            # Push the US curves before CDN / Vegas. Those steps have their own
+            # multi-minute budgets, and the scheduler deadline has to cover them
+            # too. The heatmap inputs should already be in GCS if that later
+            # work is cut off.
+            if new is not None:
+                try:
+                    write_uploaded_baseline(ROOT / BASELINE_REL, new)
+                except Exception as baseline_err:
+                    logger.warning(f"/tasks/refresh: headline baseline not recorded: {baseline_err}")
+            from src.dashboard.gcs_sync import upload_data, upload_ibkr, upload_us_backtest
+            us_uploaded = upload_us_backtest()
 
             cdn_backtest = refresh_cdn_backtest()
             vegas_market = refresh_qqq_vegas_market_cache()
             vegas_signal = refresh_qqq_vegas_signal_cache()
             risk_flags = refresh_risk_flags_cache()
-            from src.dashboard.gcs_sync import upload_data, upload_ibkr
-            uploaded = upload_data()
+            uploaded_files = list(dict.fromkeys([*us_uploaded, *upload_data()]))
 
             # Refresh & push IBKR live/paper account snapshot as part of daily refresh
             # SUSPENDED: IBKR integration paused. Set ENABLE_IBKR=1 to re-enable.
@@ -968,10 +1021,16 @@ if __name__ == '__main__':
             except Exception:
                 pass
             ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            logger.info(f"/tasks/refresh OK at {ts}; uploaded {len(uploaded)} backtest + {len(ibkr_uploaded)} IBKR files to GCS.")
-            return jsonify({'ok': True, 'refreshed_at': ts, 'uploaded': uploaded, 'ibkr_uploaded': ibkr_uploaded,
+            logger.info(
+                f"/tasks/refresh OK at {ts}; uploaded {len(uploaded_files)} backtest + "
+                f"{len(ibkr_uploaded)} IBKR files to GCS. "
+                f"headline gate {gate.baseline_source} baseline={gate.baseline} new={new}"
+            )
+            return jsonify({'ok': True, 'refreshed_at': ts, 'uploaded': uploaded_files,
+                            'ibkr_uploaded': ibkr_uploaded,
                             'qqq_vegas_market': vegas_market, 'qqq_vegas_signal': vegas_signal,
-                            'risk_flags': risk_flags, 'cdn_backtest': cdn_backtest, 'headline': headline})
+                            'risk_flags': risk_flags, 'cdn_backtest': cdn_backtest,
+                            'headline': headline, 'headline_gate': gate.as_dict()})
         except subprocess.TimeoutExpired:
             return jsonify({'ok': False, 'error': 'timeout'}), 504
         except Exception as e:
