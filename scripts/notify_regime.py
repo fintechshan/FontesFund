@@ -20,7 +20,9 @@ data/notify_state.json 基线，不开 Issue；--force 用于测试发信。
 
 象限变了时，Issue 先写组合变化：旧→新、需要调仓（任一标的 |差额|≥1%）、
 美加风险姿态、权重表、减持/增持清单、怎么执行。只跨 VIX 档时写需要调仓：否，
-并说明防御应收紧或可放松；不改目标权重。
+并说明防御应收紧或可放松；不改目标权重。同一封仍列出当前象限的
+US / CDN 模型目标仓位（标的与比例，现金单独一行），方便不打开仪表盘对照。
+这是目标权重，不是券商已成交，也不下单。
 
 targeted 与仪表盘、ibkr_rebalance 相同：CPI +1 个月，GDP +4 个月，
 VIX 月均和 12 个月动量再 shift(1)。不 import run_dashboard（那会跑启动逻辑）。
@@ -687,6 +689,52 @@ def weight_table(old_regime, new_regime: str) -> str:
     return '\n'.join(lines)
 
 
+def holdings_section(regime: str) -> str:
+    """Current US and CDN model targets for one regime.
+
+    Uses the same ``book_weights`` maps as the rebalance diff. Printed when
+    the sleeve did not change, so a mid-month VIX Issue still lists ticker,
+    weight, and cash. These rows are targets, not brokerage fills.
+    """
+    lines = [
+        '',
+        '### 目标仓位',
+        (
+            f'象限 **{regime}** 的模型目标权重。'
+            '不是券商已成交，也不是日频 overlay 缩放后的敞口。'
+        ),
+    ]
+    books, missing = book_weights(regime)
+    labels = {
+        'US': 'US 目标仓位（REGIME_WEIGHTS）',
+        'CDN': 'CDN 目标仓位（CDN_REGIME_WEIGHTS）',
+    }
+    for book in ('US', 'CDN'):
+        lines.append('')
+        lines.append(f'**{labels[book]}**')
+        lines.append('')
+        if book in missing:
+            lines.append('配置模块未能导入。')
+            continue
+        weights = books.get(book, {})
+        if not weights:
+            lines.append(f'象限 `{regime}` 在该账本中没有权重。')
+            continue
+        lines.append('| 标的 | 目标权重 |')
+        lines.append('|---|---:|')
+        names = sorted(weights, key=lambda ticker: (-float(weights.get(ticker, 0.0)), ticker))
+        for ticker in names:
+            weight = float(weights.get(ticker, 0.0))
+            if abs(weight) < 1e-12:
+                continue
+            lines.append(f'| {ticker} | {format_pct(weight)} |')
+        gap = 1.0 - sum(float(value) for value in weights.values())
+        if abs(gap) < 1e-9:
+            gap = 0.0
+        lines.append(f'| 现金 | {format_pct(gap)} |')
+    return '\n'.join(lines)
+
+
 def _rebalance_flag(old_regime, new_regime: str) -> tuple[str, dict]:
     new_w, _missing = book_weights(new_regime)
     old_w, _old_missing = book_weights(old_regime) if old_regime else ({}, [])
@@ -732,6 +780,7 @@ def _vix_only_block(prev, cur: dict) -> list[str]:
         '**需要调仓：否**',
         posture,
         '**月中再平衡：不建议（观察为主，不改目标权重）**',
+        holdings_section(cur['regime']),
         *_ops_vix_only(),
     ]
 
@@ -889,6 +938,7 @@ def build_message(prev, cur: dict, reasons: dict) -> tuple[str, str]:
             '### 组合变化',
             f"象限未变：**{cur['regime']}**。目标权重不变。",
             '**需要调仓：否**',
+            holdings_section(cur['regime']),
         ]
     if 'risk_flags' in reasons:
         body.extend(_risk_flag_section(cur, reasons))

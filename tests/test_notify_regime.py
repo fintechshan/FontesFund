@@ -105,12 +105,33 @@ class BandAndDedupeTests(unittest.TestCase):
         title, body = nr.build_message(prev, cur, reasons)
         self.assertIn('风险档位', title)
         self.assertIn('28-30', body)
-        self.assertNotIn('| 标的 |', body)
         self.assertIn('目标权重不变', body)
         self.assertIn('需要调仓：否', body)
         self.assertIn('防御姿态：应收紧', body)
         self.assertIn('月中再平衡：不建议', body)
         self.assertIn('观察为主', body)
+        self.assertIn(nr.holdings_section('goldilocks'), body)
+        self.assertLess(body.index('目标权重不变'), body.index('### 目标仓位'))
+        self.assertLess(body.index('### 目标仓位'), body.index('### 怎么执行'))
+        self.assertIn(
+            f"| QQQ | {nr.format_pct(REGIME_WEIGHTS['goldilocks']['QQQ'])} |",
+            body,
+        )
+        self.assertIn(
+            f"| SOXX | {nr.format_pct(REGIME_WEIGHTS['goldilocks']['SOXX'])} |",
+            body,
+        )
+        self.assertIn(
+            f"| ZQQ.TO | {nr.format_pct(CDN_REGIME_WEIGHTS['goldilocks']['ZQQ.TO'])} |",
+            body,
+        )
+        self.assertIn(
+            f"| VFV.TO | {nr.format_pct(CDN_REGIME_WEIGHTS['goldilocks']['VFV.TO'])} |",
+            body,
+        )
+        self.assertIn('| 现金 | 0% |', body)
+        self.assertIn('模型目标权重', body)
+        self.assertIn('不是券商已成交', body)
         self.assertIn('scripts/ibkr_rebalance.py', body)
         self.assertNotIn('减持 QQQ', body)
 
@@ -200,7 +221,91 @@ class MessageTests(unittest.TestCase):
         self.assertIn('防御姿态：可放松', body)
         self.assertIn('需要调仓：否', body)
         self.assertIn('观察为主，不改目标权重', body)
+        self.assertIn('### 目标仓位', body)
         self.assertNotIn('减持 ', body)
+
+    def test_vix_ease_reflation_lists_current_targets(self):
+        """Issue #40 style: regime unchanged, overlay may ease, weights still printed."""
+        prev = _state('reflation', '20-28', '偏高', 22.0)
+        cur = _state('reflation', '0-20', '正常', 16.0)
+        _action, reasons = nr.classify_change(prev, cur, force=False)
+        self.assertIn('vix', reasons)
+        self.assertNotIn('regime', reasons)
+        _title, body = nr.build_message(prev, cur, reasons)
+        self.assertIn('象限未变：**reflation**。目标权重不变。', body)
+        self.assertIn('防御姿态：可放松', body)
+        self.assertIn('月中再平衡：不建议', body)
+        self.assertIn(nr.holdings_section('reflation'), body)
+        self.assertLess(body.index('### 目标仓位'), body.index('### 怎么执行'))
+        us = REGIME_WEIGHTS['reflation']
+        cdn = CDN_REGIME_WEIGHTS['reflation']
+        for ticker, weight in us.items():
+            self.assertIn(f'| {ticker} | {nr.format_pct(weight)} |', body)
+        for ticker, weight in cdn.items():
+            self.assertIn(f'| {ticker} | {nr.format_pct(weight)} |', body)
+        us_order = sorted(us, key=lambda ticker: (-us[ticker], ticker))
+        cdn_order = sorted(cdn, key=lambda ticker: (-cdn[ticker], ticker))
+        self.assertLess(body.index(f'| {us_order[0]} |'), body.index(f'| {us_order[-1]} |'))
+        self.assertLess(
+            body.index(f'| {cdn_order[0]} |'),
+            body.index(f'| {cdn_order[-1]} |'),
+        )
+        self.assertEqual(body.count('| 现金 | 0% |'), 2)
+        self.assertNotIn('减持 ', body)
+        self.assertIn('不要为了这一档加上 `--execute`', body)
+
+    def test_holdings_section_cash_residual_and_missing_book(self):
+        real = nr.book_weights
+
+        def fake(_regime):
+            return (
+                {
+                    'US': {'QQQ': 0.60, 'SPY': 0.25},
+                    'CDN': {'ZQQ.TO': 1.0, 'VFV.TO': 0.0},
+                },
+                [],
+            )
+
+        nr.book_weights = fake
+        try:
+            text = nr.holdings_section('reflation')
+        finally:
+            nr.book_weights = real
+        self.assertIn('模型目标权重', text)
+        self.assertIn('| QQQ | 60% |', text)
+        self.assertIn('| SPY | 25% |', text)
+        self.assertLess(text.index('| QQQ |'), text.index('| SPY |'))
+        self.assertIn('| 现金 | 15% |', text)
+        self.assertIn('| ZQQ.TO | 100% |', text)
+        self.assertNotIn('| VFV.TO |', text)
+        self.assertIn('| 现金 | 0% |', text)
+
+        def missing_us(_regime):
+            return ({'CDN': {'ZQQ.TO': 0.40}}, ['US'])
+
+        nr.book_weights = missing_us
+        try:
+            missing = nr.holdings_section('deflation')
+        finally:
+            nr.book_weights = real
+        self.assertIn('**US 目标仓位（REGIME_WEIGHTS）**', missing)
+        self.assertIn('配置模块未能导入。', missing)
+        self.assertIn('| ZQQ.TO | 40% |', missing)
+        self.assertIn('| 现金 | 60% |', missing)
+
+    def test_unchanged_fallback_still_lists_targets(self):
+        cur = _state('stagflation', '30-40', '大幅降敞口 / 象限转 deflation', 32.0)
+        _title, body = nr.build_message(
+            _state('stagflation', '30-40', '大幅降敞口 / 象限转 deflation', 31.0),
+            cur,
+            {},
+        )
+        self.assertIn('象限未变：**stagflation**。目标权重不变。', body)
+        self.assertIn(nr.holdings_section('stagflation'), body)
+        self.assertIn(
+            f"| GLD | {nr.format_pct(REGIME_WEIGHTS['stagflation']['GLD'])} |",
+            body,
+        )
 
     def test_force_is_not_a_rebalance(self):
         cur = _state('goldilocks', '0-20', '正常', 15.0)
