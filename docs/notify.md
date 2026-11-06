@@ -11,7 +11,7 @@ This path is separate from Cloud Run and from `run_backtest.py`. It does not cha
 | Event | Issue |
 |---|---|
 | Regime changes (`goldilocks` / `reflation` / `stagflation` / `deflation`) | Yes. Title `[调仓]`. Headline is old → new, **需要调仓：是/否** (any sleeve moves by ≥ 1%), US and CDN weight deltas, equity-vs-defensive one-liners, and a 减持/增持 list. |
-| Latest VIX crosses 20, 28, 30, or 40, regime unchanged | Yes. Title `[风险档位]`. Says whether the overlay should tighten or ease, and **月中再平衡：不建议**. No weight table. |
+| Latest VIX crosses 20, 28, 30, or 40, regime unchanged | Yes. Title `[风险档位]`. Says whether the overlay should tighten or ease, and **月中再平衡：不建议**. The sleeve did not change, and the Issue still prints **目标仓位**: current US and CDN model target weights (ticker, %, and cash). |
 | First successful run | No. Writes `data/notify_state.json` only. |
 | `workflow_dispatch` with **force** | Yes, even when nothing changed. Title `[测试]`. |
 
@@ -19,7 +19,7 @@ Bands: `0-20` 正常, `20-28` 偏高, `28-30` 开始降敞口, `30-40` 大幅降
 
 The regime is `classify_regimes(..., mode="targeted")` from `src/backtester/regime_clock.py`, the same call the dashboard and `scripts/ibkr_rebalance.py` use. That clock lags CPI by 1 month and GDP by 4 months, then lags the VIX monthly mean and 12-month momentum by one month. A latest VIX print above 30 forces the live label to `deflation`. The email's VIX band is the latest `VIXCLS` print, separate from that monthly mean.
 
-US weights come from `REGIME_WEIGHTS`. CDN weights come from `CDN_REGIME_WEIGHTS` for the same regime. A sleeve change smaller than 1% does not flip **需要调仓** to 是 and is left off the trade list.
+US weights come from `REGIME_WEIGHTS`. CDN weights come from `CDN_REGIME_WEIGHTS` for the same regime. A sleeve change smaller than 1% does not flip **需要调仓** to 是 and is left off the trade list. A VIX-only Issue does not change those weights. It still lists them under **目标仓位** so the current target book can be read from the mail. Cash is the residual to 100% (0% when the sleeve is fully invested). Those rows are model targets, not brokerage fills, and not the daily overlay. QQQ Vegas is a separate sleeve and is not part of this Issue.
 
 US equity in the one-liner is `QQQ+SOXX+SPY+AIPO`; defensive is `IEF+GLD+DBMF`. CDN equity is `ZQQ.TO+VFV.TO+ZEB.TO+XGD.TO`; defensive is `XBB.TO+CGL-C.TO`.
 
@@ -103,6 +103,34 @@ VIX-only (regime stays `goldilocks`, band `0-20` → `28-30`):
 **需要调仓：否**
 **防御姿态：应收紧**（VIX 档位升高，日频 overlay 降低股票敞口）
 **月中再平衡：不建议（观察为主，不改目标权重）**
+
+### 目标仓位
+象限 **goldilocks** 的模型目标权重。不是券商已成交，也不是日频 overlay 缩放后的敞口。
+
+**US 目标仓位（REGIME_WEIGHTS）**
+
+| 标的 | 目标权重 |
+|---|---:|
+| QQQ | 30% |
+| SPY | 25% |
+| SOXX | 20% |
+| GLD | 10% |
+| IEF | 8% |
+| DBMF | 4% |
+| AIPO | 3% |
+| 现金 | 0% |
+
+**CDN 目标仓位（CDN_REGIME_WEIGHTS）**
+
+| 标的 | 目标权重 |
+|---|---:|
+| ZQQ.TO | 35% |
+| VFV.TO | 25% |
+| ZEB.TO | 20% |
+| XBB.TO | 8% |
+| CGL-C.TO | 7% |
+| XGD.TO | 5% |
+| 现金 | 0% |
 
 ### 怎么执行
 - **月中再平衡：不建议。** 观察为主，不改四象限目标权重。
