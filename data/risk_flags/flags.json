@@ -87,7 +87,7 @@
       }
     }
   },
-  "generated_at": "2026-11-07 02:27 UTC",
+  "generated_at": "2026-11-07 06:44 UTC",
   "bubble_pressure_score": 0.25,
   "hard_constraint_notice": {
     "zh": "结构旗（D_capex / E_credit / F_conc）只通知、不改仓。不修改 Merrill REGIME_WEIGHTS，不改变 QQQ Vegas 进出场或仓位，不向 IBKR 或 Moomoo 下单。",
