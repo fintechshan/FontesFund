@@ -4,15 +4,15 @@
   "regime": "reflation",
   "vix_band": "0-20",
   "vix_band_name": "正常",
-  "vix": 17.5,
+  "vix": 18.7,
   "cpi_yoy": 4.08,
   "gdp": 3.4,
-  "spy_momentum": 0.1205,
-  "price_asof": "2026-11-12",
-  "checked_at": "2026-11-13 03:02 UTC",
+  "spy_momentum": 0.1158,
+  "price_asof": "2026-11-13",
+  "checked_at": "2026-11-14 02:49 UTC",
   "risk_flags": {
-    "as_of": "2026-11-12",
-    "signal_date": "2026-11-11",
+    "as_of": "2026-11-13",
+    "signal_date": "2026-11-12",
     "status": {
       "A_vol": "on",
       "B_crowd": "off",
@@ -30,9 +30,9 @@
       "F_conc": "holdings"
     },
     "detail": {
-      "A_vol": "SOXX RV20 77.2% vs Q80 36.5%；VXN 26.74 vs Q80 27.25",
-      "B_crowd": "5日 3.5% · 10日 -10.7% · 振幅/收盘 0.27 vs 中位数 0.07（高低价）· 连跌 0 日",
-      "C_put": "VIX 17.49 vs 5日前 16.61 · SOXX 155.40 vs SMA50 172.48 · 10日 -10.7% · 卖Put清单提示，不下单",
+      "A_vol": "SOXX RV20 77.2% vs Q80 36.5%；VXN 28.55 vs Q80 27.26",
+      "B_crowd": "5日 17.5% · 10日 -9.5% · 振幅/收盘 0.20 vs 中位数 0.07（高低价）· 连跌 1 日",
+      "C_put": "VIX 18.70 vs 5日前 28.18 · SOXX 154.99 vs SMA50 172.24 · 10日 -9.5% · 卖Put清单提示，不下单",
       "D_capex": "没有可用的 OFFICIAL 行。EXAMPLE 已忽略。",
       "E_credit": "尚未下载 FRED BAMLH0A0HYM2。刷新 scripts/refresh_risk_flags.py 后更新。下载失败则保留上一份。",
       "F_conc": "Mag7 33.2% of SPY · as of 2026-10-29 · ON≥32% OFF≤29% · 含 GOOG+GOOGL · 最新公布持仓"
