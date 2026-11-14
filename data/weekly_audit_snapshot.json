@@ -1,22 +1,22 @@
 {
   "schema": 1,
-  "generated_at": "2026-11-07 06:45 UTC",
-  "overall_status": "PASS",
+  "generated_at": "2026-11-14 07:16 UTC",
+  "overall_status": "WARNING",
   "freshness": {
-    "status": "PASS",
+    "status": "WARNING",
     "backtest_end": "2026-10-30",
-    "notify_price_asof": "2026-11-06",
-    "risk_flags_asof": "2026-11-06",
-    "latest_market_date": "2026-11-06",
-    "backtest_lag_calendar_days": 7
+    "notify_price_asof": "2026-11-13",
+    "risk_flags_asof": "2026-11-13",
+    "latest_market_date": "2026-11-13",
+    "backtest_lag_calendar_days": 14
   },
   "regime_state": {
     "regime": "reflation",
-    "vix": 28.2,
-    "vix_band": "28-30",
-    "cpi_yoy": 4.02,
+    "vix": 18.7,
+    "vix_band": "0-20",
+    "cpi_yoy": 4.08,
     "gdp": 3.4,
-    "spy_momentum": 0.0969
+    "spy_momentum": 0.1158
   },
   "backtest_consistency": {
     "status": "PASS",
@@ -104,39 +104,39 @@
   },
   "live_market_check": {
     "refreshed": true,
-    "latest_market_date": "2026-11-06",
+    "latest_market_date": "2026-11-13",
     "tickers": {
       "SPY": {
-        "close": 735.29,
-        "weekly_change_pct": -2.7
+        "close": 754.37,
+        "weekly_change_pct": 2.59
       },
       "QQQ": {
-        "close": 656.1,
-        "weekly_change_pct": -4.98
+        "close": 679.89,
+        "weekly_change_pct": 3.63
       },
       "SOXX": {
-        "close": 136.53,
-        "weekly_change_pct": -13.13
+        "close": 149.3,
+        "weekly_change_pct": 9.35
       },
       "IEF": {
-        "close": 91.86,
-        "weekly_change_pct": 0.11
+        "close": 90.04,
+        "weekly_change_pct": -1.98
       },
       "GLD": {
-        "close": 372.52,
-        "weekly_change_pct": 4.71
+        "close": 355.45,
+        "weekly_change_pct": -4.58
       },
       "DBMF": {
-        "close": 31.48,
-        "weekly_change_pct": -2.99
+        "close": 32.42,
+        "weekly_change_pct": 2.99
       },
       "AIPO": {
-        "close": 22.48,
-        "weekly_change_pct": -8.86
+        "close": 23.66,
+        "weekly_change_pct": 5.25
       },
       "VIX": {
-        "close": 25.64,
-        "weekly_change_pct": 32.03
+        "close": 19.3,
+        "weekly_change_pct": -24.73
       }
     }
   }
