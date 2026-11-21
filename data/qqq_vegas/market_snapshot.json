@@ -1,6 +1,6 @@
 {
   "source": "yfinance",
-  "fetched_at": "2026-11-21T02:49:29Z",
+  "fetched_at": "2026-11-21T03:39:09Z",
   "as_of": "2026-11-20",
   "note": "Adjusted close curve from Yahoo Finance. Card price is the last trade when Yahoo publishes one. PE is trailingPE, else forwardPE; null means Yahoo did not publish a PE. Not an input to the v9 Vegas signal.",
   "tickers": {
