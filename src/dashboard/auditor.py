@@ -319,6 +319,23 @@ def run_independent_audit(
         }]
     data_checks.extend(vegas_checks)
     audit['qqq_vegas_checks'] = vegas_checks
+    try:
+        from src.dashboard.pack_audit import audit_strategy_packs
+        pack_checks = audit_strategy_packs()
+    except Exception as exc:
+        logger.error(f'Strategy pack audit failed: {exc}')
+        pack_checks = [{
+            'check': 'Strategy pack books',
+            'pack': 'all',
+            'status': 'FAIL',
+            'value': 'Checks did not run',
+            'threshold': 'One row per strategy pack',
+            'location': 'src/dashboard/pack_audit.py',
+            'remedy': 'Restore the pack auditor. Do not add a second checker that nothing calls.',
+            'desc': f'Strategy pack audit failed: {exc}',
+        }]
+    data_checks.extend(pack_checks)
+    audit['strategy_pack_checks'] = pack_checks
     audit['data_checks'] = data_checks
     try:
         from src.dashboard.cdn_audit import merge_cdn_audit
@@ -992,6 +1009,23 @@ def _build_weekly_audit_section(weekly_snapshot: Optional[Dict[str, Any]] = None
         dbc.Col(metric_card("7-ETF Sleeve + VIX Weekly Close", live.get("latest_market_date", "SNAPSHOT"), "#00d97e", live_detail), md=4),
     ]
 
+    packs = snap.get("strategy_packs") if isinstance(snap.get("strategy_packs"), dict) else {}
+    pack_rows = packs.get("packs") if isinstance(packs.get("packs"), list) else []
+    pack_status = packs.get("status") or "n/a"
+    pack_color = "#00d97e" if pack_status == "PASS" else ("#e74c3c" if pack_status == "FAIL" else "#f5a623")
+    if pack_rows:
+        pack_bits = [
+            f"{row.get('check') or row.get('pack')}: {row.get('status')}"
+            for row in pack_rows
+        ]
+        pack_detail = " · ".join(pack_bits)
+    else:
+        pack_detail = "No strategy-pack rows in this snapshot yet."
+    pack_card = dbc.Col(
+        metric_card("Strategy pack books", pack_status, pack_color, pack_detail),
+        md=12,
+    )
+
     notes = bt.get("benchmark_normalization_notes") or []
     notes_div = html.Ul(
         [html.Li(n, style={"color": "#c8c8d4", "fontSize": "12px"}) for n in notes],
@@ -1007,6 +1041,7 @@ def _build_weekly_audit_section(weekly_snapshot: Optional[Dict[str, Any]] = None
             style={"color": status_color, "fontSize": "16px", "fontWeight": "700", "marginBottom": "10px"},
         ),
         dbc.Row(cards, className="mb-3"),
+        dbc.Row([pack_card], className="mb-3"),
         notes_div,
         html.Div(
             f"Source: data/weekly_audit_snapshot.json · Tolerances: CAGR ±5 bps, Total ±10 bps, Daily MaxDD ±5 bps.",

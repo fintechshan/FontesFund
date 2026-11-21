@@ -275,6 +275,12 @@ python -m unittest tests.test_notify_regime
 
 `.github/workflows/test-notify.yml` runs that file on pull requests that touch the notifier. It does not use `FRED_API_KEY`. The scheduled workflow is the one that needs the secret.
 
+## Strategy pack refresh
+
+The same weekday run (23:00 UTC) executes `scripts/refresh_strategy_packs.py` after the regime check. That extends the QQQ Vegas book: new sessions, equity, and `rebalances.csv` / `last_rebalance` from `pos` changes. It does not change the v9 gates and it does not recompute the US or CDN sleeves. Those two books are still rewritten together by Cloud Scheduler `POST /tasks/refresh`.
+
+A download that fails, or a QQQ feed more than five calendar days behind the expected cash session, exits non-zero and does not commit a partial pack. A weekend manual run or a holiday with no new session, when the history already matches `pos`, exits 0 and does not open a commit. The Saturday auditor (`scripts/weekly_audit_snapshot.py`) records the same three pack checks in `strategy_packs` and exits 3 if any pack fails: clocks disagree, the rebalance table or `last_rebalance` disagrees with `pos`, or the refresh script no longer writes that history.
+
 ## Risk flags (notify only)
 
 `A_vol`, `B_crowd`, and `C_put` are a paper scorecard. `D_capex`, `E_credit`, and `F_conc` are the structural scorecard on Auditor section 6. See [docs/risk_flags.md](risk_flags.md) and [docs/risk_officer.md](risk_officer.md).

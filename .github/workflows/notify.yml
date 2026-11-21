@@ -23,6 +23,12 @@
 # （以及风险旗开关变化），但不开 Issue。提交同时暂存 notify_state.json、
 # data/risk_flags/flags.json 与周度快照（文件存在时）；三者相对 HEAD 都没变才跳过。
 # 快照脚本在回测对账 FAIL 时退出 3（本步变红），但文件已经写好，保存步仍会把它推上去。
+#
+# 策略包：每个工作日收盘后的同一次运行还会跑 scripts/refresh_strategy_packs.py
+# （QQQ Vegas 日信号 + 调仓记录）。下载失败、行情停在过旧的交易日、或任一策略包
+# 的账面核对 FAIL 时该步变红，不提交半截文件。没有新交易日（周末手动跑、节假日）
+# 且历史已经对齐则退出 0，不产生空提交。US / CDN 整本仍由 Cloud Scheduler
+# /tasks/refresh 重写，这里只审计、不重算。
 
 name: 象限切换提醒与周度审计
 
@@ -54,7 +60,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       LANG: C.UTF-8
       PYTHONUTF8: '1'
@@ -111,7 +117,22 @@ jobs:
           set -euo pipefail
           python scripts/weekly_audit_snapshot.py --refresh --output data/weekly_audit_snapshot.json
 
+      - name: 刷新 QQQ Vegas 账面（信号、净值、调仓记录）
+        id: packs
+        if: always()
+        run: |
+          set -euo pipefail
+          python scripts/refresh_strategy_packs.py
+
+      - name: 刷新 QQQ / QLD 行情缓存
+        id: vegas_market
+        if: steps.packs.outcome == 'success'
+        run: |
+          set -euo pipefail
+          python scripts/refresh_qqq_vegas_market.py
+
       - name: 保存状态与周度审计快照
+        id: save_state
         if: always() && steps.notify.outcome == 'success' && steps.audit.outputs.confirmed_miss != 'true'
         env:
           NOTIFY_PUSH_TOKEN: ${{ secrets.NOTIFY_PUSH_TOKEN }}
@@ -132,6 +153,24 @@ jobs:
           if [ -f data/weekly_audit_snapshot.json ]; then
             git add -- data/weekly_audit_snapshot.json
           fi
+          # QQQ Vegas 账面只在刷新成功后暂存。失败时脚本可能写到一半，不提交。
+          if [ "${{ steps.packs.outcome }}" = "success" ]; then
+            git add -- \
+              data/qqq_vegas/daily_signal.csv \
+              data/qqq_vegas/equity_curve.csv \
+              data/qqq_vegas/rebalances.csv \
+              data/qqq_vegas/monthly_returns.csv \
+              data/qqq_vegas/yearly_returns.csv \
+              data/qqq_vegas/signal_current.json \
+              data/qqq_vegas/summary.json \
+              data/qqq_vegas/strategy.json \
+              data/qqq_vegas/live_snapshot.json
+          fi
+          if [ "${{ steps.vegas_market.outcome }}" = "success" ]; then
+            git add -- \
+              data/qqq_vegas/market_prices.csv \
+              data/qqq_vegas/market_snapshot.json
+          fi
           # 周度快照或记分卡变了也要提交，不能只因为 notify_state.json 没变就退出。
           if git diff --cached --quiet; then
             echo "状态与周度审计快照均未变，无需提交"
@@ -139,13 +178,51 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898+github-actions[bot]@users.noreply.github.com"
-          git commit -m "象限状态与周度审计更新 $(date -u +%F) [skip ci]"
+          git commit -m "象限状态、周度审计与 QQQ Vegas 账面更新 $(date -u +%F) [skip ci]"
           if git push origin "HEAD:${GITHUB_REF_NAME}"; then
             exit 0
           fi
           echo "::warning::GITHUB_TOKEN 推送被拒绝。分支保护常会拦住 github-actions[bot]。见 docs/notify.md"
           if [ -z "${NOTIFY_PUSH_TOKEN}" ]; then
             echo "::error::状态没有推上去，下次运行可能重复发信。允许 Actions 写入该分支，或设置 Secret NOTIFY_PUSH_TOKEN（Contents 读写的 PAT）。"
+            exit 1
+          fi
+          git push "https://x-access-token:${NOTIFY_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_REF_NAME}"
+
+      - name: 保存 QQQ Vegas 账面（象限步骤未提交时）
+        if: always() && steps.packs.outcome == 'success' && steps.save_state.outcome != 'success'
+        env:
+          NOTIFY_PUSH_TOKEN: ${{ secrets.NOTIFY_PUSH_TOKEN }}
+        run: |
+          set -euo pipefail
+          git checkout -B "${GITHUB_REF_NAME}"
+          git add -- \
+            data/qqq_vegas/daily_signal.csv \
+            data/qqq_vegas/equity_curve.csv \
+            data/qqq_vegas/rebalances.csv \
+            data/qqq_vegas/monthly_returns.csv \
+            data/qqq_vegas/yearly_returns.csv \
+            data/qqq_vegas/signal_current.json \
+            data/qqq_vegas/summary.json \
+            data/qqq_vegas/strategy.json \
+            data/qqq_vegas/live_snapshot.json
+          if [ "${{ steps.vegas_market.outcome }}" = "success" ]; then
+            git add -- \
+              data/qqq_vegas/market_prices.csv \
+              data/qqq_vegas/market_snapshot.json
+          fi
+          if git diff --cached --quiet; then
+            echo "QQQ Vegas 账面未变，无需提交"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898+github-actions[bot]@users.noreply.github.com"
+          git commit -m "QQQ Vegas 账面更新 $(date -u +%F) [skip ci]"
+          if git push origin "HEAD:${GITHUB_REF_NAME}"; then
+            exit 0
+          fi
+          if [ -z "${NOTIFY_PUSH_TOKEN}" ]; then
+            echo "::error::QQQ Vegas 账面没有推上去。允许 Actions 写入该分支，或设置 Secret NOTIFY_PUSH_TOKEN。"
             exit 1
           fi
           git push "https://x-access-token:${NOTIFY_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_REF_NAME}"

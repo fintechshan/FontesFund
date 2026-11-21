@@ -25,14 +25,14 @@
     "cash_usd": null
   },
   "target": {
-    "state": "RISK_ON",
-    "QQQ": 0.7,
-    "QLD": 0.3,
-    "cash_ticker": null,
-    "cash_w": 0.0
+    "state": "CASH",
+    "QQQ": 0.0,
+    "QLD": 0.0,
+    "cash_ticker": "BIL",
+    "cash_w": 1.0
   },
   "match": false,
   "notes": "尚未接入实盘快照",
   "strategy_id": "qqq_vegas_rv20_q80",
-  "signal_as_of": "2026-10-23"
+  "signal_as_of": "2026-11-20"
 }

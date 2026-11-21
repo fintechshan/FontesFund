@@ -215,10 +215,22 @@ def build_snapshot(refresh: bool = False) -> Dict[str, Any]:
     if stale_days is not None and stale_days > 7:
         freshness_status = "WARNING"
 
+    from src.dashboard.pack_audit import audit_strategy_packs, worst_status
+    try:
+        pack_rows = audit_strategy_packs(ROOT)
+    except Exception as exc:
+        pack_rows = [{
+            'check': 'Strategy pack books',
+            'pack': 'all',
+            'status': 'FAIL',
+            'desc': f'Strategy pack audit failed: {exc}',
+        }]
+    pack_status = worst_status(pack_rows)
+
     overall_status = "PASS"
-    if bt.get("status") == "FAIL":
+    if bt.get("status") == "FAIL" or pack_status == "FAIL":
         overall_status = "FAIL"
-    elif freshness_status == "WARNING" or bt.get("status") == "WARNING":
+    elif freshness_status == "WARNING" or bt.get("status") == "WARNING" or pack_status == "WARNING":
         overall_status = "WARNING"
 
     return {
@@ -252,6 +264,18 @@ def build_snapshot(refresh: bool = False) -> Dict[str, Any]:
             if "ticker" in r
         },
         "live_market_check": live,
+        "strategy_packs": {
+            "status": pack_status,
+            "packs": [
+                {
+                    "pack": row.get("pack"),
+                    "check": row.get("check"),
+                    "status": row.get("status"),
+                    "detail": row.get("desc") or row.get("value") or "",
+                }
+                for row in pack_rows
+            ],
+        },
     }
 
 

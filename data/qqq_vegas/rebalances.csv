@@ -222,3 +222,4 @@ date,signal_date,exec_date,action,from_state,to_state,qqq_w,qld_w,cash_ticker,ca
 2026-04-09,2026-04-08,2026-04-09,ENTER,CASH,RISK_ON,0.7,0.3,,0.0,v5_rv20_q80,1,1,0.243678,0.313599,risk-on 70% QQQ + 30% QLD (Vegas∧RV20≤Q80)
 2026-06-24,2026-06-23,2026-06-24,EXIT,RISK_ON,CASH,0.0,0.0,BIL,1.0,v5_rv20_q80,1,0,0.323938,0.312859,risk-off 100% BIL (Vegas or RV gate off)
 2026-07-08,2026-07-07,2026-07-08,ENTER,CASH,RISK_ON,0.7,0.3,,0.0,v5_rv20_q80,1,1,0.312763,0.313237,risk-on 70% QQQ + 30% QLD (Vegas∧RV20≤Q80)
+2026-11-02,2026-10-30,2026-11-02,EXIT,RISK_ON,CASH,0.0,0.0,BIL,1.0,v5_rv20_q80,0,1,0.226399,0.312034,risk-off 100% BIL (Vegas or RV gate off)

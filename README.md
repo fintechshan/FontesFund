@@ -129,7 +129,9 @@ The QQQ Vegas tab still shows the locked v9 sleeve (Vegas and the expanding RV20
 
 The curves and cards are read from `data/qqq_vegas/market_prices.csv` and `data/qqq_vegas/market_snapshot.json`. They are not inputs to the signal. The source is Yahoo Finance through yfinance. PE is trailing when Yahoo publishes `trailingPE`, otherwise forward. If neither is published the card says N/A.
 
-Cloud Scheduler job `etf-daily-refresh` POSTs `/tasks/refresh`. After the Merrill backtest, that handler runs `python scripts/refresh_qqq_vegas_market.py` and uploads both files with the other GCS caches. A new container loads them at startup. An open tab re-reads the cache about every 30 minutes. The page does not call Yahoo itself. A failed download keeps the previous files. Locally: `python scripts/refresh_qqq_vegas_market.py`.
+Cloud Scheduler job `etf-daily-refresh` POSTs `/tasks/refresh`. After the Merrill backtest, that handler runs `python scripts/refresh_qqq_vegas_market.py` and `python scripts/refresh_qqq_vegas_signal.py`, then uploads both packs with the other GCS caches. The signal script also rewrites `rebalances.csv` and `last_rebalance` from position changes, so the rebalance table moves when the sleeve flips. A new container loads them at startup. An open tab re-reads the cache about every 30 minutes. The page does not call Yahoo itself. A failed download keeps the previous files. A feed that is several days behind the latest US cash session fails instead of leaving the book unchanged.
+
+The weekday GitHub Action (23:00 UTC, `.github/workflows/notify.yml`) runs `python scripts/refresh_strategy_packs.py` and commits the QQQ Vegas book. Saturday's auditor snapshot checks that book plus the US and CDN books (`src/dashboard/pack_audit.py`). Locally: `python scripts/refresh_qqq_vegas_market.py` and `python scripts/refresh_strategy_packs.py`.
 
 ## Portfolio / ETF Universe
 

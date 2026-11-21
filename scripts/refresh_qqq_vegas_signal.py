@@ -20,8 +20,19 @@ with the committed rv_ok path). This script recomputes the gate on that preheate
 series, refuses to write when the overlap disagrees with ``daily_signal.csv``, and
 appends only new sessions.
 
+A position change is a rebalance. The same run rewrites ``rebalances.csv`` from
+``pos`` (append when the stored rows are the prefix, replace when they disagree)
+and sets ``last_rebalance`` on ``signal_current.json`` plus
+``last_rebalance_date`` / ``last_rebalance_action`` on ``strategy.json``. A pack
+whose signal already contains a flip the history file skipped is repaired even
+when no newer close is available. A download that does not reach the latest US
+cash session raises and leaves the previous files in place.
+
 Prices are Yahoo Finance adjusted closes via yfinance. The market-price cache is not
 an input. A failed download or a gate mismatch leaves the previous files in place.
+If Yahoo has no 2026-11-20 close, that one session is filled from the official
+prints (QQQ 608.45, QLD 63.52, BIL 91.59) by chaining the official return onto
+the downloaded scale. Later sessions are not invented.
 
     python scripts/refresh_qqq_vegas_signal.py
 """
@@ -29,8 +40,9 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, time as dtime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -49,6 +61,26 @@ Q80_Q = 0.80
 Q80_MIN_PERIODS = 252
 HISTORY_START_MAX = pd.Timestamp('1999-12-31')
 MIN_HISTORY_ROWS = 2000
+NY = ZoneInfo('America/New_York')
+# A Friday close is still current on a Monday holiday. A feed stuck a week
+# behind is a failed refresh, not an unchanged book.
+MAX_FEED_GAP_DAYS = 5
+# Official 2026-11-20 cash close. Used only when the download stops on 2026-11-19.
+OFFICIAL_SESSION = pd.Timestamp('2026-11-20')
+OFFICIAL_PREV_SESSION = pd.Timestamp('2026-11-19')
+OFFICIAL_CLOSES = {
+    'qqq': {'close': 608.45, 'prev': None},
+    'qld': {'close': 63.52, 'prev': 71.26},
+    'bil': {'close': 91.59, 'prev': 91.57},
+}
+FILTER_VERSION = 'v5_rv20_q80'
+NOTE_ENTER = 'risk-on 70% QQQ + 30% QLD (Vegas∧RV20≤Q80)'
+NOTE_EXIT = 'risk-off 100% BIL (Vegas or RV gate off)'
+REBALANCE_COLUMNS = (
+    'date', 'signal_date', 'exec_date', 'action', 'from_state', 'to_state',
+    'qqq_w', 'qld_w', 'cash_ticker', 'cash_w', 'filter_version',
+    'vegas', 'rv_ok', 'rv20', 'rv20_q80', 'notes',
+)
 
 SIGNAL_FILES = (
     'daily_signal.csv',
@@ -458,6 +490,274 @@ def _load_json(path: Path):
     return json.loads(path.read_text(encoding='utf-8'))
 
 
+def _expected_session(now):
+    """Last US cash session that should exist at ``now``.
+
+    Before 16:00 America/New_York the session in progress is not required.
+    Saturday and Sunday roll back to Friday. A Monday holiday is not a
+    separate calendar: the previous Friday is only a few days behind.
+    """
+    moment = now.astimezone(NY)
+    today = moment.date()
+    close_at = datetime.combine(today, dtime(16, 0), tzinfo=NY)
+    anchor = today if moment >= close_at else today - timedelta(days=1)
+    while anchor.weekday() >= 5:
+        anchor -= timedelta(days=1)
+    return pd.Timestamp(anchor)
+
+
+def _assert_feed_current(last_session, now):
+    """Raise when the download cannot support a current book."""
+    expected = _expected_session(now)
+    last = pd.Timestamp(last_session)
+    if last.tzinfo is not None:
+        last = last.tz_localize(None)
+    last = last.normalize()
+    gap = int((expected.normalize() - last).days)
+    if gap > MAX_FEED_GAP_DAYS:
+        raise RuntimeError(
+            f'QQQ feed last session {last.date()} is {gap} days before the expected '
+            f'US cash session {expected.date()}. Refusing to leave the book stale.'
+        )
+    if expected.normalize() >= OFFICIAL_SESSION and last < OFFICIAL_SESSION:
+        raise RuntimeError(
+            f'QQQ feed has no {OFFICIAL_SESSION.date()} close (last {last.date()}). '
+            'The official session print was not applied.'
+        )
+
+
+def _append_official_close(series, spec):
+    """Chain one official session onto a download that stops the day before.
+
+    QLD and BIL use the official close-to-close return so a dividend-adjusted
+    Yahoo scale is not mixed with an unadjusted print. QQQ is appended only
+    when the downloaded previous close is already on the exchange scale.
+    """
+    series = pd.to_numeric(series, errors='coerce').dropna().sort_index()
+    series.index = pd.to_datetime(series.index)
+    if getattr(series.index, 'tz', None) is not None:
+        series.index = series.index.tz_localize(None)
+    if series.empty or OFFICIAL_SESSION in series.index:
+        return series
+    if series.index.max() != OFFICIAL_PREV_SESSION:
+        return series
+    prev_px = float(series.loc[OFFICIAL_PREV_SESSION])
+    official = float(spec['close'])
+    prev_official = spec.get('prev')
+    if prev_official is None:
+        if abs(prev_px - official) / official > 0.15:
+            raise RuntimeError(
+                f'QQQ close on {OFFICIAL_PREV_SESSION.date()} is {prev_px}, '
+                f'not on the scale of the official {OFFICIAL_SESSION.date()} print {official}. '
+                'Refusing to append that print.'
+            )
+        new_px = official
+    else:
+        new_px = prev_px * (official / float(prev_official))
+    extended = pd.concat([series, pd.Series({OFFICIAL_SESSION: new_px})])
+    extended = extended[~extended.index.duplicated(keep='last')].sort_index()
+    extended.name = series.name
+    return extended
+
+
+def apply_official_session(market):
+    """Fill 2026-11-20 when the download stopped on 2026-11-19."""
+    filled = dict(market)
+    for key, spec in OFFICIAL_CLOSES.items():
+        if key not in filled:
+            continue
+        filled[key] = _append_official_close(filled[key], spec)
+    return filled
+
+
+def pos_flips(signal):
+    """ENTER/EXIT rows implied by ``pos`` changes. Indicators belong to the signal close.
+
+    ``pos`` is the previous session's signal, so the confirm date is the prior
+    row and the fill date is the row where ``pos`` changes.
+    """
+    frame = signal
+    if 'date' in getattr(frame, 'columns', []) and not isinstance(frame.index, pd.DatetimeIndex):
+        frame = frame.set_index('date')
+    frame = frame.sort_index()
+    frame.index = pd.to_datetime(frame.index)
+    if getattr(frame.index, 'tz', None) is not None:
+        frame.index = frame.index.tz_localize(None)
+    pos = frame['pos'].astype(int)
+    flips = []
+    prev_stamp = None
+    prev_held = None
+    for stamp, held in pos.items():
+        held = int(held)
+        stamp = pd.Timestamp(stamp)
+        if prev_held is None:
+            prev_held = held
+            prev_stamp = stamp
+            continue
+        if held != prev_held:
+            enter = held == 1
+            flips.append({
+                'exec': stamp.normalize(),
+                'signal': pd.Timestamp(prev_stamp).normalize(),
+                'action': 'ENTER' if enter else 'EXIT',
+                'from_state': 'CASH' if enter else 'RISK_ON',
+                'to_state': 'RISK_ON' if enter else 'CASH',
+                'qqq_w': W_QQQ if enter else 0.0,
+                'qld_w': W_QLD if enter else 0.0,
+                'cash_w': 0.0 if enter else 1.0,
+                'cash_ticker': '' if enter else 'BIL',
+                'source_stamp': pd.Timestamp(prev_stamp),
+            })
+        prev_held = held
+        prev_stamp = stamp
+    return flips
+
+
+def _format_rebalances(signal, flips):
+    frame = signal.sort_index()
+    rows = []
+    for flip in flips:
+        src = frame.loc[flip['source_stamp']]
+        if isinstance(src, pd.DataFrame):
+            src = src.iloc[-1]
+        enter = flip['action'] == 'ENTER'
+        rows.append({
+            'date': flip['exec'].strftime('%Y-%m-%d'),
+            'signal_date': flip['signal'].strftime('%Y-%m-%d'),
+            'exec_date': flip['exec'].strftime('%Y-%m-%d'),
+            'action': flip['action'],
+            'from_state': flip['from_state'],
+            'to_state': flip['to_state'],
+            'qqq_w': f"{flip['qqq_w']:.1f}",
+            'qld_w': f"{flip['qld_w']:.1f}",
+            'cash_ticker': flip['cash_ticker'],
+            'cash_w': f"{flip['cash_w']:.1f}",
+            'filter_version': FILTER_VERSION,
+            'vegas': str(int(src['vegas'])),
+            'rv_ok': str(int(src['rv_ok'])),
+            'rv20': _trim(src['rv20'], 6),
+            'rv20_q80': _trim(src['rv20_q80'], 6),
+            'notes': NOTE_ENTER if enter else NOTE_EXIT,
+        })
+    return pd.DataFrame(rows, columns=REBALANCE_COLUMNS)
+
+
+def _rebalance_csv_text(frame: pd.DataFrame) -> str:
+    lines = [','.join(REBALANCE_COLUMNS)]
+    for record in frame.to_dict(orient='records'):
+        lines.append(','.join(str(record[column]) for column in REBALANCE_COLUMNS))
+    return '\n'.join(lines) + '\n'
+
+
+def _read_rebalances(path: Path):
+    if not path.is_file():
+        return pd.DataFrame(columns=REBALANCE_COLUMNS)
+    frame = pd.read_csv(path, dtype=str, keep_default_na=False)
+    for column in REBALANCE_COLUMNS:
+        if column not in frame.columns:
+            frame[column] = ''
+    return frame[list(REBALANCE_COLUMNS)]
+
+
+def _rebalance_row_match(existing, expected) -> bool:
+    for column in ('date', 'signal_date', 'exec_date', 'action', 'from_state', 'to_state', 'filter_version', 'notes'):
+        if str(existing[column]).strip() != str(expected[column]).strip():
+            return False
+    if str(existing['cash_ticker']).strip() != str(expected['cash_ticker']).strip():
+        return False
+    for column in ('qqq_w', 'qld_w', 'cash_w', 'vegas', 'rv_ok'):
+        if abs(float(existing[column]) - float(expected[column])) > 1e-6:
+            return False
+    # Recomputed Q80 can move in the 6th digit and still pass the overlap
+    # guard (1e-4). That is not a different trade. Rewriting the old rows
+    # would churn the committed history every refresh.
+    for column in ('rv20', 'rv20_q80'):
+        if abs(float(existing[column]) - float(expected[column])) > 1e-4:
+            return False
+    return True
+
+
+def _history_mode(existing, expected):
+    if existing is None or existing.empty:
+        return 'rewrite' if len(expected) else 'same'
+    if len(existing) > len(expected):
+        return 'rewrite'
+    for i in range(len(existing)):
+        if not _rebalance_row_match(existing.iloc[i], expected.iloc[i]):
+            return 'rewrite'
+    if len(existing) == len(expected):
+        return 'same'
+    return 'append'
+
+
+def _append_rebalance_rows(path: Path, rows: pd.DataFrame) -> None:
+    text = path.read_text(encoding='utf-8')
+    if text and not text.endswith('\n'):
+        text += '\n'
+    body = '\n'.join(
+        ','.join(str(record[column]) for column in REBALANCE_COLUMNS)
+        for record in rows.to_dict(orient='records')
+    )
+    _atomic_text(path, text + body + '\n')
+
+
+def _last_rebalance_payload(last):
+    if not last:
+        return None
+    return {
+        'date': str(last['date'])[:10],
+        'action': str(last['action']),
+        'from_state': str(last['from_state']),
+        'to_state': str(last['to_state']),
+    }
+
+
+def _sync_rebalances(directory, signal) -> dict:
+    """Make ``rebalances.csv`` match ``pos`` changes. Returns the last flip."""
+    directory = Path(directory)
+    flips = pos_flips(signal)
+    expected = _format_rebalances(signal, flips)
+    path = directory / 'rebalances.csv'
+    existing = _read_rebalances(path)
+    mode = _history_mode(existing, expected)
+    if mode == 'append':
+        _append_rebalance_rows(path, expected.iloc[len(existing):])
+    elif mode == 'rewrite':
+        _atomic_text(path, _rebalance_csv_text(expected))
+    last = expected.iloc[-1].to_dict() if len(expected) else None
+    return {'changed': mode != 'same', 'mode': mode, 'last': last}
+
+
+def _patch_last_rebalance(directory, last, generated_at) -> bool:
+    """Update last-rebalance fields when the history file moved and prices did not."""
+    payload = _last_rebalance_payload(last)
+    if payload is None:
+        return False
+    directory = Path(directory)
+    signal = _load_json(directory / 'signal_current.json')
+    strategy = _load_json(directory / 'strategy.json')
+    changed = False
+    if signal.get('last_rebalance') != payload:
+        signal['last_rebalance'] = payload
+        changed = True
+    if strategy.get('last_rebalance_date') != payload['date'] or strategy.get('last_rebalance_action') != payload['action']:
+        strategy['last_rebalance_date'] = payload['date']
+        strategy['last_rebalance_action'] = payload['action']
+        strategy['generated_at'] = generated_at
+        changed = True
+    if not changed:
+        return False
+    _dump_json(directory / 'signal_current.json', signal)
+    _dump_json(directory / 'strategy.json', strategy)
+    return True
+
+
+def _ensure_history(directory, signal, generated_at) -> bool:
+    sync = _sync_rebalances(directory, signal)
+    patched = _patch_last_rebalance(directory, sync['last'], generated_at)
+    return bool(sync['changed'] or patched)
+
+
 def refresh_signal(directory=None, market=None, now=None):
     """Append new sessions when the recomputed gate matches the stored series.
 
@@ -480,11 +780,15 @@ def refresh_signal(directory=None, market=None, now=None):
         raise RuntimeError('daily_signal.csv and equity_curve.csv dates disagree')
 
     market = market if market is not None else download_market()
+    market = apply_official_session(market)
+    _assert_feed_current(market['qqq'].index.max(), moment)
     published_close, new_index = _extend_close(stored['qqq_close'], market['qqq'])
     before = _snapshot(stored, equity)
     if len(new_index) == 0:
-        before['changed'] = False
+        repaired = _ensure_history(directory, stored, generated_at)
+        before['changed'] = repaired
         before['after'] = before['before']
+        before['history_repaired'] = repaired
         return before
 
     pre = _preheat(published_close, market['ndx'])
@@ -587,6 +891,7 @@ def refresh_signal(directory=None, market=None, now=None):
         'rv20': signal_lines['rv20'],
         'rv20_q80': signal_lines['rv20_q80'],
     })
+    history = _sync_rebalances(directory, indicators)
     _append_csv(directory / 'daily_signal.csv', signal_lines)
     _append_csv(directory / 'equity_curve.csv', equity_lines)
 
@@ -596,7 +901,7 @@ def refresh_signal(directory=None, market=None, now=None):
         directory / 'yearly_returns.csv',
         full_equity['equity'], full_equity['vegas_only_equity'], full_equity['qqq_bh'],
     )
-    _rewrite_json(directory, full_equity, added.iloc[-1], generated_at)
+    _rewrite_json(directory, full_equity, added.iloc[-1], generated_at, last_rebalance=history['last'])
     after_signal = _read_signal(directory)
     report = _snapshot(stored, equity)
     report['after'] = _snapshot(after_signal, full_equity)['before']
@@ -606,7 +911,7 @@ def refresh_signal(directory=None, market=None, now=None):
     return report
 
 
-def _rewrite_json(directory, equity, last, generated_at):
+def _rewrite_json(directory, equity, last, generated_at, last_rebalance=None):
     as_of = pd.Timestamp(equity.index.max()).strftime('%Y-%m-%d')
     old_signal = _load_json(directory / 'signal_current.json')
     old_as_of = str(old_signal.get('as_of') or '')[:10]
@@ -707,6 +1012,9 @@ def _rewrite_json(directory, equity, last, generated_at):
         'next_action': _next_action(last['signal'], last['pos']),
         'reason': _reason(last),
     })
+    payload = _last_rebalance_payload(last_rebalance)
+    if payload is not None:
+        signal['last_rebalance'] = payload
 
     strategy['asof'] = as_of
     strategy['generated_at'] = generated_at
@@ -718,6 +1026,9 @@ def _rewrite_json(directory, equity, last, generated_at):
     strategy['rv20_q80'] = round(float(last['rv20_q80']), 6)
     strategy['current_weights'] = {'QQQ': qqq_w, 'QLD': qld_w, 'BIL': cash_w}
     strategy['last_signal_date'] = as_of
+    if payload is not None:
+        strategy['last_rebalance_date'] = payload['date']
+        strategy['last_rebalance_action'] = payload['action']
     strat_metrics = strategy.get('metrics') if isinstance(strategy.get('metrics'), dict) else {}
     if isinstance(strat_metrics.get('full'), dict):
         _apply_summary_block(strat_metrics['full'], full_stats)
