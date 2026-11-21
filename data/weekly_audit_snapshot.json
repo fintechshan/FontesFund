@@ -139,5 +139,28 @@
         "weekly_change_pct": -24.73
       }
     }
+  },
+  "strategy_packs": {
+    "status": "PASS",
+    "packs": [
+      {
+        "pack": "qqq_vegas",
+        "check": "QQQ Vegas book",
+        "status": "PASS",
+        "detail": "QQQ Vegas book is one session (2026-11-20); last_rebalance 2026-11-02 EXIT."
+      },
+      {
+        "pack": "us_regime",
+        "check": "US regime book",
+        "status": "PASS",
+        "detail": "US regime book ends 2026-10-30. run_backtest.py rewrites the equity curve, the monthly file, and the comparison together. There is no separate rebalance table."
+      },
+      {
+        "pack": "cdn_regime",
+        "check": "CDN regime book",
+        "status": "PASS",
+        "detail": "CDN regime book equity ends 2026-10-30 and config as_of is 2026-11-01. run_cdn_backtest.py rewrites the curve, the monthly file, and the config together. There is no separate rebalance table."
+      }
+    ]
   }
 }

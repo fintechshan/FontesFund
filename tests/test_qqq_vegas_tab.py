@@ -18,6 +18,7 @@ from src.dashboard.app import (
     _vegas_monthly_returns,
     _vegas_nav_to_dollars,
     _vegas_pct_points,
+    _vegas_weight,
     _vegas_qqq_calendar_returns,
     _vegas_qqq_level,
     _vegas_ratio,
@@ -177,10 +178,11 @@ class QqqVegasTabTests(unittest.TestCase):
 
         live_table = _find_id(tab, 'qqq-vegas-live')
         by_ticker = {row['ticker']: row for row in live_table.data}
-        self.assertEqual(by_ticker['QQQ']['target_w'], '70%')
-        self.assertEqual(by_ticker['QLD']['target_w'], '30%')
+        target = live.get('target') if isinstance(live.get('target'), dict) else {}
+        self.assertEqual(by_ticker['QQQ']['target_w'], _vegas_weight(target.get('QQQ')))
+        self.assertEqual(by_ticker['QLD']['target_w'], _vegas_weight(target.get('QLD')))
         self.assertEqual(by_ticker['QQQ']['status'], 'unknown')
-        self.assertEqual(by_ticker['cash_usd']['target_w'], '0%')
+        self.assertEqual(by_ticker['cash_usd']['target_w'], _vegas_weight(target.get('cash_w')))
         self.assertIn(live['broker'], blob)
         self.assertIn(live['notes'], blob)
         self.assertIn('match = false', blob)
@@ -257,10 +259,18 @@ class QqqVegasTabTests(unittest.TestCase):
 
         y1999, jan_i = _heat_index(trace, 1999, 'Jan')
         self.assertNotEqual(trace.text[y1999][jan_i], '')
-        y2026, nov_i = _heat_index(trace, 2026, 'Nov')
-        dec_i = list(trace.x).index('Dec')
-        self.assertEqual(trace.text[y2026][nov_i], '')
-        self.assertEqual(trace.text[y2026][dec_i], '')
+        # The open year follows monthly_returns.csv. A month with no print stays blank.
+        monthly = pd.read_csv(QQQ_VEGAS_DIR / 'monthly_returns.csv')
+        row2026 = monthly.loc[monthly['year'].astype(int) == 2026].iloc[0]
+        y2026, _nov_i = _heat_index(trace, 2026, 'Nov')
+        for label, column in (('Nov', 'M11'), ('Dec', 'M12')):
+            idx = list(trace.x).index(label)
+            cell = row2026[column]
+            blank = cell is None or (isinstance(cell, float) and pd.isna(cell)) or str(cell).strip() == ''
+            if blank:
+                self.assertEqual(trace.text[y2026][idx], '')
+            else:
+                self.assertNotEqual(trace.text[y2026][idx], '')
 
         yearly = _find_id(tab, 'qqq-vegas-yearly')
         self.assertIsNotNone(yearly)

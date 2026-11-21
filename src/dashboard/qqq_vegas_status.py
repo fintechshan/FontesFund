@@ -259,6 +259,7 @@ def load_bundle(directory=None):
         'market_snapshot': take_json('market_snapshot.json'),
         'equity': take_csv('equity_curve.csv'),
         'rebalances': take_csv('rebalances.csv'),
+        'daily_signal': take_csv('daily_signal.csv'),
         'monthly': take_csv('monthly_returns.csv'),
         'market_prices': take_csv('market_prices.csv'),
         'missing': missing,
@@ -499,12 +500,14 @@ def _problems_accuracy(bundle):
     summary_end = parse_date(summary.get('end_date') or summary.get('as_of'))
     strategy_asof = parse_date(strategy.get('asof') or strategy.get('as_of'))
     equity_end = _date_max(equity)
+    daily_end = _date_max(bundle.get('daily_signal'))
     stamps = {
         'signal as_of': as_of,
         'signal_date': signal_date,
         'summary end': summary_end,
         'strategy asof': strategy_asof,
         'equity end': equity_end,
+        'daily_signal end': daily_end,
     }
     present = {name: day for name, day in stamps.items() if day is not None}
     if as_of is None:
@@ -789,14 +792,36 @@ def _problems_consistency(bundle):
                 qld = pd.to_numeric(rebalances.loc[enter, 'qld_w'], errors='coerce') if 'qld_w' in rebalances.columns else None
                 if not (qqq.sub(QQQ_WEIGHT).abs() <= 1e-6).all() or qld is None or not (qld.sub(QLD_WEIGHT).abs() <= 1e-6).all():
                     problems.append(('FAIL', 'An ENTER row is not 70% QQQ + 30% QLD.'))
-            if exit_.any() and 'qqq_w' in rebalances.columns:
-                qqq = pd.to_numeric(rebalances.loc[exit_, 'qqq_w'], errors='coerce').fillna(0)
-                if 'qld_w' in rebalances.columns:
-                    qld = pd.to_numeric(rebalances.loc[exit_, 'qld_w'], errors='coerce').fillna(0)
-                else:
-                    qld = pd.Series(0.0, index=qqq.index)
-                if float(qqq.abs().max()) > 1e-6 or float(qld.abs().max()) > 1e-6:
-                    problems.append(('FAIL', 'An EXIT row still holds QQQ or QLD.'))
+        if exit_.any() and 'qqq_w' in rebalances.columns:
+            qqq = pd.to_numeric(rebalances.loc[exit_, 'qqq_w'], errors='coerce').fillna(0)
+            if 'qld_w' in rebalances.columns:
+                qld = pd.to_numeric(rebalances.loc[exit_, 'qld_w'], errors='coerce').fillna(0)
+            else:
+                qld = pd.Series(0.0, index=qqq.index)
+            if float(qqq.abs().max()) > 1e-6 or float(qld.abs().max()) > 1e-6:
+                problems.append(('FAIL', 'An EXIT row still holds QQQ or QLD.'))
+    pos_frame = _frame(bundle.get('daily_signal'))
+    if pos_frame.empty:
+        pos_frame = equity
+    if len(pos_frame) > 1 and 'pos' in pos_frame.columns:
+        from src.dashboard.pack_audit import history_problems, refresh_path_problems
+        problems.extend(history_problems(
+            pos_frame,
+            rebalances,
+            last_rebalance=signal.get('last_rebalance'),
+            strategy_date=strategy.get('last_rebalance_date'),
+            strategy_action=strategy.get('last_rebalance_action'),
+        ))
+        script = ROOT / 'scripts' / 'refresh_qqq_vegas_signal.py'
+        try:
+            source = script.read_text(encoding='utf-8')
+        except OSError:
+            source = ''
+        problems.extend(refresh_path_problems(
+            source,
+            ('_sync_rebalances(', 'last_rebalance'),
+            label='scripts/refresh_qqq_vegas_signal.py',
+        ))
     if not any(level == 'FAIL' for level, _message in problems):
         problems.append(('PASS', 'Sleeve matches locked v9: Vegas and expanding Q80, 70/30, close then next open, 1999 history.'))
     return problems

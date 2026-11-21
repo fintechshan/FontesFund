@@ -234,7 +234,13 @@ monthly rebalance.
     Execution tab **re-pulls from GCS every 10 min** (`ibkr-snapshot-refresh` interval →
     `download_ibkr()`), so new snapshots appear on the live site without a redeploy.
   - Manual refresh of results is still `python run_backtest.py` (~30s) + deploy, or just
-    hit `/tasks/refresh`.
+  hit `/tasks/refresh`.
+  - QQQ Vegas signal refresh (`scripts/refresh_qqq_vegas_signal.py`, also
+    `scripts/refresh_strategy_packs.py`) appends sessions and rewrites
+    `rebalances.csv` plus `last_rebalance` from `pos` changes. The weekday
+    GitHub Action at 23:00 UTC commits that book. A missing or stale download
+    fails the job. US and CDN books are still rewritten in full by
+    `/tasks/refresh`. Auditor section 7 checks all three packs.
 - **Live rebalance:** `scripts/ibkr_rebalance.py` runs `run_optimized_regime_backtest`
   and orders the last day’s overlay: 200-MA blend, HAR vol scale, and portfolio
   drawdown shrink. CPI and GDP advance releases change the monthly sleeve. They

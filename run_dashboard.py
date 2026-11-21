@@ -86,8 +86,9 @@ def refresh_qqq_vegas_signal_cache():
     Same scheduler hit as the price cache. Runs
     ``scripts/refresh_qqq_vegas_signal.py``, which appends sessions only when
     the recomputed Vegas and expanding-Q80 gate matches the stored series.
-    A download failure or a gate mismatch leaves the previous pack in place.
-    It does not change the Merrill backtest.
+    The same run rewrites ``rebalances.csv`` and ``last_rebalance`` from
+    ``pos`` changes. A download failure or a gate mismatch leaves the previous
+    pack in place. It does not change the Merrill backtest.
     """
     import subprocess
     try:
