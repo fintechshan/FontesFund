@@ -10,6 +10,7 @@ No-op when GCS_BUCKET is unset (e.g. local dev) — the app just uses local/bake
 """
 import os
 import logging
+import time
 from pathlib import Path
 
 from src.dashboard.headline_gate import BASELINE_REL
@@ -81,29 +82,81 @@ def _bucket():
     return storage.Client().bucket(BUCKET)
 
 
-def download_data():
-    """GCS -> local at startup. Preserves each blob's update time as the file mtime
-    so the staleness check in run_dashboard stays honest (a genuinely old GCS object
-    still triggers a self-healing on-startup refresh)."""
-    if not BUCKET:
+def _env_seconds(name, default):
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def should_replace_local(local: Path, remote_updated) -> bool:
+    """True when the bucket object should overwrite ``local``.
+
+    A missing local file is replaced. A local file that is newer than the
+    bucket object is kept. That is the corrected book baked into an image
+    built after the last daily upload. A newer bucket object is the daily
+    refresh and is downloaded. Equal timestamps (within one second) keep
+    the local file so a retry does not churn the book.
+    """
+    if not local.exists():
+        return True
+    if remote_updated is None:
+        return True
+    try:
+        remote_ts = remote_updated.timestamp()
+    except Exception:
+        return True
+    return remote_ts > local.stat().st_mtime + 1.0
+
+
+def download_data(bucket=None, files=None, budget_sec=None, blob_timeout=None):
+    """GCS -> local at startup.
+
+    Each blob call is bounded (``GCS_BLOB_TIMEOUT_SEC``, default 15s) and the
+    whole pass stops at ``GCS_DOWNLOAD_BUDGET_SEC`` (default 45s). Files not
+    reached keep the image copy. A newer local file is not overwritten.
+    The downloaded object's update time becomes the file mtime so a genuinely
+    old object still looks old to anything that checks age.
+    """
+    if bucket is None and not BUCKET:
         logger.info("GCS_BUCKET unset; skipping GCS download (using local/baked data).")
         return
+    budget = _env_seconds("GCS_DOWNLOAD_BUDGET_SEC", 45.0) if budget_sec is None else budget_sec
+    timeout = _env_seconds("GCS_BLOB_TIMEOUT_SEC", 15.0) if blob_timeout is None else blob_timeout
+    names = list(SYNC_FILES + IBKR_FILES if files is None else files)
+    deadline = time.monotonic() + max(0.0, budget)
     try:
-        b = _bucket()
-        for rel in SYNC_FILES + IBKR_FILES:
-            blob = b.blob(rel)
-            if blob.exists():
-                dest = ROOT / rel
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                blob.download_to_filename(str(dest))
-                if blob.updated:
-                    ts = blob.updated.timestamp()
-                    os.utime(dest, (ts, ts))
-                logger.info(f"GCS down: {rel} (updated {blob.updated})")
-            else:
-                logger.info(f"GCS: {rel} not in bucket yet")
+        b = _bucket() if bucket is None else bucket
     except Exception as e:
         logger.warning(f"GCS download failed (falling back to local/baked data): {e}")
+        return
+    for rel in names:
+        if time.monotonic() >= deadline:
+            logger.warning(
+                "GCS download budget (%.0fs) exhausted; keeping the remaining local files.",
+                budget,
+            )
+            break
+        try:
+            blob = b.blob(rel)
+            if not blob.exists(timeout=timeout):
+                logger.info(f"GCS: {rel} not in bucket yet")
+                continue
+            dest = ROOT / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if not should_replace_local(dest, blob.updated):
+                logger.info(f"GCS keep local (newer than bucket): {rel}")
+                continue
+            blob.download_to_filename(str(dest), timeout=timeout)
+            if blob.updated:
+                ts = blob.updated.timestamp()
+                os.utime(dest, (ts, ts))
+            logger.info(f"GCS down: {rel} (updated {blob.updated})")
+        except Exception as e:
+            logger.warning(f"GCS download skipped {rel} (keeping local file): {e}")
 
 
 def _upload(files):

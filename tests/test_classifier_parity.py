@@ -26,7 +26,14 @@ class ClassifierParityTests(unittest.TestCase):
         self.assertNotIn("def classify_regimes", dashboard)
         self.assertIn("classify_regimes(\n    macro_for_clock, price_data, mode=MODE_TARGETED,", backtest)
         self.assertIn("classify_regimes(macro, price_data, mode=MODE_TARGETED)", dashboard)
-        self.assertIn("classify_regimes(\n                            new_macro, new_price, mode=MODE_TARGETED,", dashboard)
+        # Live allocation is this one call. Boot and the post-refresh reload
+        # both go through assemble_dashboard. Comparison clocks are not a
+        # second live classifier; they stay in the child job.
+        self.assertEqual(dashboard.count("mode=MODE_TARGETED"), 1)
+        self.assertNotIn("mode=MODE_LOOKAHEAD", dashboard)
+        jobs = (ROOT / "src/dashboard/startup_jobs.py").read_text()
+        for mode in ("MODE_TARGETED", "MODE_LOOKAHEAD", "MODE_UNLAGGED", "MODE_AUDITOR", "MODE_VINTAGE"):
+            self.assertIn(mode, jobs)
 
     def test_dashboard_and_backtest_histories_agree(self):
         price_path = ROOT / "data" / "cache" / "price_data.csv"

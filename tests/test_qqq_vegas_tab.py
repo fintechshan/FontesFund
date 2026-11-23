@@ -26,6 +26,7 @@ from src.dashboard.app import (
     build_qqq_vegas_tab,
     create_app,
     load_qqq_vegas,
+    render_shell,
     make_equity_curves,
     make_monthly_heatmap,
 )
@@ -415,7 +416,8 @@ class QqqVegasTabTests(unittest.TestCase):
         self.assertIn('Not investment advice', blob)
 
     def test_tab_is_wired_without_touching_strategy_params(self):
-        source = inspect.getsource(create_app)
+        source = inspect.getsource(render_shell)
+        self.assertIn('mount_layout', inspect.getsource(create_app))
         self.assertIn('build_qqq_vegas_tab()', source)
         self.assertIn('QQQ Vegas', source)
         vegas_source = inspect.getsource(load_qqq_vegas) + inspect.getsource(build_qqq_vegas_tab)

@@ -229,7 +229,7 @@ class RefreshWiringTests(unittest.TestCase):
         self.assertLess(us_at, cdn_at)
         # Vegas and the notify-only scorecard still upload when the US gate blocks.
         gate_at = source.index("if gate.block:")
-        failed_at = source.index("error': 'backtest_failed'")
+        failed_at = source.index("backtest_failed")
         self.assertLess(failed_at, gate_at)
         blocked = source[gate_at:source.index("cdn_backtest = refresh_cdn_backtest()")]
         self.assertIn("_upload_qqq_vegas_market()", blocked)

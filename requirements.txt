@@ -30,10 +30,11 @@ QuantStats>=0.0.62
 # Execution
 ib_async>=1.0.0
 
-# Dashboard
+# Dashboard. gunicorn serves Cloud Run; Werkzeug is only the local fallback.
 dash>=2.14.0
 dash-bootstrap-components>=1.5.0
 plotly>=5.18.0
+gunicorn>=22.0.0,<24
 
 # NLP Sentiment (FinBERT). torch (CPU) is installed separately in the Dockerfile
 # to keep the wheel small. If torch is absent (e.g. local dev), the sentiment
