@@ -179,360 +179,367 @@ def load_backtest_results():
 # Source of truth: src/backtester/regime_clock.py. Default mode is the targeted
 # fix (CPI+1 / GDP+4, then shift(1) on VIX mean and momentum only).
 from src.backtester.regime_clock import (  # noqa: E402
-    MODE_AUDITOR,
-    MODE_LOOKAHEAD,
     MODE_TARGETED,
-    MODE_UNLAGGED,
-    MODE_VINTAGE,
     classify_regimes,
-    load_realtime_vintage,
 )
 
-def sample_risk_free(ff_rate, price_data):
-    """Mean fed funds over the price sample, as a decimal.
-
-    DFF is stored in percent. A full-history mean (back to the 1950s) is not
-    the financing rate of this backtest.
-    """
-    if ff_rate is None or len(ff_rate) == 0:
-        return 0.0185
-    ff = ff_rate.copy()
-    ff.index = pd.to_datetime(ff.index)
-    if price_data is not None and not price_data.empty:
-        ff = ff.loc[str(price_data.index.min().date()):]
-    if len(ff) == 0:
-        return 0.0185
-    return float(ff.mean() / 100.0)
-
-
-def run_honesty_paths(price_data, macro, weights):
-    """Targeted fix plus the comparison clocks. Vintage is skipped if unavailable."""
-    from src.backtester.engine import BacktestEngine
-    from config.regime_rules import STRATEGY_PARAMS
-
-    # Cache / committed release table first. A missing clock returns None
-    # and the vintage radio is omitted. Set USE_REALTIME_VINTAGE=1 to rebuild.
-    refresh_vintage = os.getenv("USE_REALTIME_VINTAGE", "").strip().lower() in {"1", "true", "yes"}
-    vintage = load_realtime_vintage(refresh=refresh_vintage)
-
-    modes = [MODE_TARGETED, MODE_LOOKAHEAD, MODE_UNLAGGED, MODE_AUDITOR]
-    histories = {}
-    for mode in modes:
-        hist, _, _info = classify_regimes(macro, price_data, mode=mode)
-        histories[mode] = hist
-    if vintage is not None:
-        hist, _, info = classify_regimes(
-            macro, price_data, mode=MODE_VINTAGE, vintage=vintage,
-        )
-        if not info.get("vintage_fallback"):
-            histories[MODE_VINTAGE] = hist
-
-    ff_rate = macro.get("ff_rate", pd.Series(dtype=float))
-    engine = BacktestEngine(
-        price_data, initial_capital=100000, risk_free_rate=sample_risk_free(ff_rate, price_data),
-    )
-    vix_series = macro.get("vix")
-    results = {}
-    names = {
-        MODE_TARGETED: "Targeted fix",
-        MODE_LOOKAHEAD: "Month-end look-ahead",
-        MODE_UNLAGGED: "Unlagged",
-        MODE_AUDITOR: "Auditor extra month",
-        MODE_VINTAGE: "First-release vintage",
-    }
-    for mode, hist in histories.items():
-        results[mode] = engine.run_optimized_regime_backtest(
-            regime_history=hist,
-            regime_weights=weights,
-            name=names[mode],
-            vix_data=vix_series,
-            **STRATEGY_PARAMS,
-        )
-    return results, histories[MODE_TARGETED]
-
-
-# ── Build DASHBOARD_DATA ──────────────────────────────────────────────────
-logger.info("=" * 60)
-logger.info("  ETF REGIME STRATEGIST — DASHBOARD LAUNCHER")
-logger.info("=" * 60)
-
-# Pull the latest daily-refreshed caches from GCS before loading (no-op if
-# GCS_BUCKET is unset). This is what lets fresh data survive Cloud Run scale-to-zero.
-try:
-    from src.dashboard.gcs_sync import download_data as _gcs_download
-    _gcs_download()
-except Exception as _e:
-    logger.warning(f"GCS startup sync skipped: {_e}")
-
-price_data = load_price_data()
-macro = load_macro_data()
-backtest_results = load_backtest_results()
-# Live allocation uses the targeted clock (CPI+1 / GDP+4, no month-end look-ahead).
-regime_history, current, derived = classify_regimes(macro, price_data, mode=MODE_TARGETED)
-
-# Get weights for current regime
-try:
-    from config.regime_rules import REGIME_WEIGHTS
-    current_weights = REGIME_WEIGHTS.get(current.get('regime', 'goldilocks'), {})
-    # Filter to available tickers
-    avail = set(price_data.columns) if not price_data.empty else set()
-    current_weights = {k: v for k, v in current_weights.items() if k in avail}
-    total = sum(current_weights.values())
-    if total > 0:
-        current_weights = {k: v / total for k, v in current_weights.items()}
-except Exception as e:
-    logger.warning(f"Could not load regime weights: {e}")
-    current_weights = {}
-
-logger.info(f"Current regime: {current.get('regime', 'unknown')} (confidence: {current.get('confidence', 0):.0f}%)")
-logger.info(f"VIX: {current.get('vix', 0):.1f} | Yield Curve: {current.get('yield_curve', 0):.2f} | CPI YoY: {current.get('cpi_yoy', 0):.1f}%")
-logger.info(f"Portfolio: {len(current_weights)} ETFs")
-
-# Compute equity curves — load ALL strategies
-all_equity_curves = pd.DataFrame()
-all_eq_path = ROOT / 'data' / 'backtest_results' / 'all_equity_curves.csv'
-if all_eq_path.exists():
-    try:
-        all_equity_curves = pd.read_csv(all_eq_path, index_col=0, parse_dates=True)
-        logger.info(f"Loaded all equity curves: {list(all_equity_curves.columns)}")
-    except Exception:
-        pass
-
-equity_curve = pd.Series(dtype=float)
-# Try the vol-targeted strategy curve first, fall back to any available
-for col_name in ['Optimized Regime Strategy', 'Vol-Targeted Regime Strategy', 'Protected Regime Strategy', 'Aggressive Regime Strategy']:
-    if col_name in all_equity_curves.columns:
-        equity_curve = all_equity_curves[col_name]
-        logger.info(f"Equity curve ({col_name}): {len(equity_curve)} points, range {equity_curve.min():.1f} - {equity_curve.max():.1f}")
-        break
-if equity_curve.empty:
-    for eq_file in ['aggressive_equity_curve.csv']:
-        eq_path = ROOT / 'data' / 'backtest_results' / eq_file
-        if eq_path.exists():
-            try:
-                eq = pd.read_csv(eq_path, index_col=0, parse_dates=True)
-                equity_curve = eq.iloc[:, 0]
-                logger.info(f"Loaded equity curve from {eq_file}: {len(equity_curve)} points")
-                break
-            except Exception:
-                pass
-
-# Compute regime change log (for portfolio transparency)
-regime_changes = []
-if not regime_history.empty and len(regime_history) > 1:
-    rh = regime_history.copy()
-    prev_regime = None
-    for _, row in rh.iterrows():
-        r = row['regime']
-        d = row['date']
-        if prev_regime is not None and r != prev_regime:
-            # Compute what weights changed
-            try:
-                old_w = REGIME_WEIGHTS.get(prev_regime, {})
-                new_w = REGIME_WEIGHTS.get(r, {})
-                # Filter to available
-                old_f = {k: v for k, v in old_w.items() if k in avail}
-                new_f = {k: v for k, v in new_w.items() if k in avail}
-                t_old = sum(old_f.values()) or 1
-                t_new = sum(new_f.values()) or 1
-                old_f = {k: v/t_old for k, v in old_f.items()}
-                new_f = {k: v/t_new for k, v in new_f.items()}
-
-                # Key changes
-                all_tickers = set(list(old_f.keys()) + list(new_f.keys()))
-                changes = []
-                for t in sorted(all_tickers, key=lambda x: abs(new_f.get(x,0) - old_f.get(x,0)), reverse=True)[:5]:
-                    delta = new_f.get(t, 0) - old_f.get(t, 0)
-                    if abs(delta) > 0.01:
-                        changes.append(f"{t}: {delta:+.1%}")
-
-                regime_changes.append({
-                    'date': d.strftime('%Y-%m') if hasattr(d, 'strftime') else str(d)[:7],
-                    'from_regime': prev_regime,
-                    'to_regime': r,
-                    'reason': f"Growth {'rising' if r in ['goldilocks','reflation'] else 'falling'}, "
-                              f"Inflation {'rising' if r in ['reflation','stagflation'] else 'falling'}",
-                    'key_changes': ' | '.join(changes) if changes else 'Minor rebalance',
-                })
-            except Exception:
-                regime_changes.append({
-                    'date': d.strftime('%Y-%m') if hasattr(d, 'strftime') else str(d)[:7],
-                    'from_regime': prev_regime, 'to_regime': r,
-                    'reason': 'Macro shift', 'key_changes': '—',
-                })
-        prev_regime = r
-
-# Get previous month's weights for comparison
-prev_weights = {}
-if len(regime_history) >= 2:
-    prev_regime_name = regime_history.iloc[-2]['regime']
-    try:
-        prev_w = REGIME_WEIGHTS.get(prev_regime_name, {})
-        prev_w = {k: v for k, v in prev_w.items() if k in avail}
-        t = sum(prev_w.values()) or 1
-        prev_weights = {k: v/t for k, v in prev_w.items()}
-    except Exception:
-        pass
-
-# Monthly returns for heatmap
-monthly_returns = pd.Series(dtype=float)
-mr_path = ROOT / 'data' / 'backtest_results' / 'aggressive_monthly_returns.csv'
-if mr_path.exists():
-    try:
-        mr = pd.read_csv(mr_path, index_col=0, parse_dates=True)
-        monthly_returns = mr.iloc[:, 0]
-    except Exception:
-        pass
-
-# ── Targeted fix (default) plus comparison clocks ────────────────────────
-logger.info("Running targeted fix and comparison clocks...")
-lagged_metrics = {}
-try:
-    from config.regime_rules import REGIME_WEIGHTS as _RW
-    _results, _ = run_honesty_paths(price_data, macro, _RW)
-    from src.dashboard.app import pack_lagged_metrics
-    lagged_metrics = pack_lagged_metrics(results=_results)
-    _tgt = _results.get(MODE_TARGETED)
-    if _tgt is not None and getattr(_tgt, "equity_curve", None) is not None:
-        equity_curve = _tgt.equity_curve
-    if _tgt is not None and getattr(_tgt, "monthly_returns", None) is not None:
-        monthly_returns = _tgt.monthly_returns
-    logger.info("Honesty-path runs completed.")
-except Exception as e:
-    logger.error(f"Error running honesty-path backtests: {e}")
-    lagged_metrics = {}
-
-# ── Run Independent Audit ─────────────────────────────────────────────────
-logger.info("Running Independent Audit...")
-audit_results = {}
-try:
-    from src.dashboard.auditor import run_independent_audit
-    audit_results = run_independent_audit(price_data, macro, backtest_results, regime_history, all_equity_curves, lagged_metrics)
-    audit_results['lagged_metrics'] = lagged_metrics
-    logger.info("Independent Audit completed successfully.")
-except Exception as e:
-    logger.error(f"Error running independent audit: {e}")
-    audit_results = {'lagged_metrics': lagged_metrics}
-
-# Get modification timestamps for cache files
-price_mtime = datetime.fromtimestamp(PRICE_CACHE.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S') if PRICE_CACHE.exists() else 'N/A'
-macro_mtime = datetime.fromtimestamp(MACRO_CACHE.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S') if MACRO_CACHE.exists() else 'N/A'
-backtest_mtime = datetime.fromtimestamp(BACKTEST_CSV.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S') if BACKTEST_CSV.exists() else 'N/A'
-audit_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-# ── AI Trend Intelligence (SemiAnalysis feed + bank research + sector signals) ──
-try:
-    from src.strategist.ai_trend import build_ai_trend_intelligence
-    ai_trend = build_ai_trend_intelligence(
-        price_data, current.get('regime', 'goldilocks'), current_weights)
-    logger.info(f"AI Trend Intelligence: sector={ai_trend['signals'].get('sector_signal')} "
-                f"verdict={ai_trend['verification'].get('verdict')} "
-                f"({len(ai_trend['semianalysis'])} SemiAnalysis items)")
-except Exception as e:
-    logger.warning(f"AI Trend Intelligence unavailable: {e}")
-    ai_trend = {}
-
-# ── Execution Modules (Disabled for Public Deployment) ───────────────────
-_ibkr_broker = None
-_ibkr_risk_mgr = None
-_ibkr_order_mgr = None
-
-# ── Load Canadian ETF Portfolio Data ──────────────────────────────────────
-# Live weights use the targeted CDN clock (VFV.TO momentum) when the TSX
-# cache exists. Without it they follow the US label and the auditor says so.
-try:
-    from src.backtester.cdn_clock import dashboard_cdn_payload
-    from src.dashboard.cdn_audit import merge_cdn_audit
-    _cdn_payload = dashboard_cdn_payload(macro, current.get('regime', 'goldilocks'), regime_history)
-    audit_results = merge_cdn_audit(
-        audit_results,
-        prices=_cdn_payload.get('cdn_prices'),
-        us_prices=price_data,
-        us_equity=equity_curve,
-    )
-    logger.info(
-        "CDN portfolio loaded: regime=%s source=%s benchmark=%s",
-        _cdn_payload.get('cdn_regime'),
-        _cdn_payload.get('cdn_regime_source'),
-        len(_cdn_payload.get('cdn_benchmark', [])),
-    )
-except Exception as _cdn_err:
-    logger.warning(f"CDN portfolio data load failed: {_cdn_err}")
-    _cdn_payload = {}
-
-DASHBOARD_DATA = {
-
-    'price_data': price_data,
-    'macro': macro,
-    'derived': derived,
-    'ai_trend': ai_trend,
-    'backtest_results': backtest_results,
-    'regime_history': regime_history,
-    'current_regime': current.get('regime', 'goldilocks'),
-    'current_weights': current_weights,
-    'prev_weights': prev_weights,
-    'vix_current': current.get('vix', 0.0),
-    'yield_curve_current': current.get('yield_curve', 0.0),
-    'cpi_yoy_current': current.get('cpi_yoy', 0.0),
-    'gdp_current': current.get('gdp', 0.0),
-    'spy_momentum': current.get('spy_momentum', 0.0),
-    'regime_confidence': current.get('confidence', 50.0),
-    'equity_curve': equity_curve,
-    'all_equity_curves': all_equity_curves,
-    'monthly_returns': monthly_returns,
-    'regime_changes': regime_changes,
-    'all_regime_weights': REGIME_WEIGHTS,
-    'audit': audit_results,
-    # Canadian ETF Portfolio
-    'cdn_equity_curve':    _cdn_payload.get('cdn_equity_curve', pd.Series(dtype=float)),
-    'cdn_monthly_returns': _cdn_payload.get('cdn_monthly_returns', pd.Series(dtype=float)),
-    'cdn_backtest_meta':   _cdn_payload.get('cdn_backtest_meta', {}),
-    'cdn_current_weights': _cdn_payload.get('cdn_current_weights', {}),
-    'cdn_all_weights':     _cdn_payload.get('cdn_all_weights', {}),
-    'cdn_regime_changes':  _cdn_payload.get('cdn_regime_changes', []),
-    'cdn_benchmark':       _cdn_payload.get('cdn_benchmark', pd.Series(dtype=float)),
-    'cdn_prices':          _cdn_payload.get('cdn_prices', pd.DataFrame()),
-    'cdn_regime_source':   _cdn_payload.get('cdn_regime_source', 'us_fallback'),
-
-    # Goldman Sachs Bull/Bear Market Indicator (GSBLBR)
-    'gsblbr_data': (lambda: (
-        pd.read_csv(ROOT / 'data' / 'cache' / 'gsblbr_history.csv', index_col=0, parse_dates=True)
-        if (ROOT / 'data' / 'cache' / 'gsblbr_history.csv').exists() else pd.DataFrame()
-    ))(),
-
-    'timestamps': {
-        'price_data': price_mtime,
-        'macro_data': macro_mtime,
-        'backtest_results': backtest_mtime,
-        'audit_run': audit_time,
-    },
-}
-
-# ── Hermes Agent Integration ───────────────────────────────────────────────
-# Determine if regime has changed on startup compared to previous month
-startup_alert_level = 'INFO'
-startup_alert_msg = 'No active rebalance required. Portfolio matches current economic regime.'
-prev_regime_val = None
-if not regime_history.empty and len(regime_history) >= 2:
-    prev_regime_val = regime_history.iloc[-2]['regime']
-    curr_regime_val = regime_history.iloc[-1]['regime']
-    if curr_regime_val != prev_regime_val:
-        startup_alert_level = 'CRITICAL'
-        startup_alert_msg = f"Economic regime changed from {prev_regime_val} to {curr_regime_val}. Portfolio rebalancing is required."
-
+DASHBOARD_DATA = None
 HERMES_DATA = {
     'latest_alert': {
-        'timestamp': datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'timestamp': '',
         'type': 'rebalance_alert',
-        'alert_level': startup_alert_level,
-        'message': startup_alert_msg,
-        'current_regime': current.get('regime', 'goldilocks'),
-        'target_weights': current_weights
+        'alert_level': 'INFO',
+        'message': 'Dashboard has not finished loading.',
+        'current_regime': 'unknown',
+        'target_weights': {},
     }
 }
-if prev_regime_val and startup_alert_level == 'CRITICAL':
-    HERMES_DATA['latest_alert']['previous_regime'] = prev_regime_val
-    HERMES_DATA['latest_alert']['new_regime'] = current.get('regime', 'goldilocks')
+
+
+def assemble_dashboard(*, sync_gcs=True):
+    """Build DASHBOARD_DATA from the cache, the comparison clocks, and the auditor.
+
+    Clocks and the AI-trend fetch run in child processes so this process can
+    keep answering ``/healthz``. ``sync_gcs=False`` is the gated refresh path:
+    the local files were just written and must not be replaced by a download.
+    The first call's dict object is kept so Dash callbacks that closed over it
+    see later updates.
+    """
+    global DASHBOARD_DATA, HERMES_DATA
+    previous = DASHBOARD_DATA
+    clock_status = "pending"
+
+    # ── Build DASHBOARD_DATA ──────────────────────────────────────────────────
+    logger.info("=" * 60)
+    logger.info("  ETF REGIME STRATEGIST — DASHBOARD LAUNCHER")
+    logger.info("=" * 60)
+
+    # Pull the latest daily-refreshed caches from GCS before loading (no-op if
+    # GCS_BUCKET is unset). This is what lets fresh data survive Cloud Run scale-to-zero.
+    # The gated refresh calls assemble_dashboard(sync_gcs=False) so this download
+    # cannot replace the files that refresh just wrote.
+    if sync_gcs:
+        try:
+            from src.dashboard.gcs_sync import download_data as _gcs_download
+            _gcs_download()
+        except Exception as _e:
+            logger.warning(f"GCS startup sync skipped: {_e}")
+
+    price_data = load_price_data()
+    macro = load_macro_data()
+    backtest_results = load_backtest_results()
+    # Live allocation uses the targeted clock (CPI+1 / GDP+4, no month-end look-ahead).
+    regime_history, current, derived = classify_regimes(macro, price_data, mode=MODE_TARGETED)
+
+    # Get weights for current regime
+    try:
+        from config.regime_rules import REGIME_WEIGHTS
+        current_weights = REGIME_WEIGHTS.get(current.get('regime', 'goldilocks'), {})
+        # Filter to available tickers
+        avail = set(price_data.columns) if not price_data.empty else set()
+        current_weights = {k: v for k, v in current_weights.items() if k in avail}
+        total = sum(current_weights.values())
+        if total > 0:
+            current_weights = {k: v / total for k, v in current_weights.items()}
+    except Exception as e:
+        logger.warning(f"Could not load regime weights: {e}")
+        current_weights = {}
+
+    logger.info(f"Current regime: {current.get('regime', 'unknown')} (confidence: {current.get('confidence', 0):.0f}%)")
+    logger.info(f"VIX: {current.get('vix', 0):.1f} | Yield Curve: {current.get('yield_curve', 0):.2f} | CPI YoY: {current.get('cpi_yoy', 0):.1f}%")
+    logger.info(f"Portfolio: {len(current_weights)} ETFs")
+    try:
+        from src.dashboard.runtime_state import STATE
+        STATE.regime = current.get('regime')
+    except Exception:
+        pass
+
+    # Compute equity curves — load ALL strategies
+    all_equity_curves = pd.DataFrame()
+    all_eq_path = ROOT / 'data' / 'backtest_results' / 'all_equity_curves.csv'
+    if all_eq_path.exists():
+        try:
+            all_equity_curves = pd.read_csv(all_eq_path, index_col=0, parse_dates=True)
+            logger.info(f"Loaded all equity curves: {list(all_equity_curves.columns)}")
+        except Exception:
+            pass
+
+    equity_curve = pd.Series(dtype=float)
+    # Try the vol-targeted strategy curve first, fall back to any available
+    for col_name in ['Optimized Regime Strategy', 'Vol-Targeted Regime Strategy', 'Protected Regime Strategy', 'Aggressive Regime Strategy']:
+        if col_name in all_equity_curves.columns:
+            equity_curve = all_equity_curves[col_name]
+            logger.info(f"Equity curve ({col_name}): {len(equity_curve)} points, range {equity_curve.min():.1f} - {equity_curve.max():.1f}")
+            break
+    if equity_curve.empty:
+        for eq_file in ['aggressive_equity_curve.csv']:
+            eq_path = ROOT / 'data' / 'backtest_results' / eq_file
+            if eq_path.exists():
+                try:
+                    eq = pd.read_csv(eq_path, index_col=0, parse_dates=True)
+                    equity_curve = eq.iloc[:, 0]
+                    logger.info(f"Loaded equity curve from {eq_file}: {len(equity_curve)} points")
+                    break
+                except Exception:
+                    pass
+
+    # Compute regime change log (for portfolio transparency)
+    regime_changes = []
+    if not regime_history.empty and len(regime_history) > 1:
+        rh = regime_history.copy()
+        prev_regime = None
+        for _, row in rh.iterrows():
+            r = row['regime']
+            d = row['date']
+            if prev_regime is not None and r != prev_regime:
+                # Compute what weights changed
+                try:
+                    old_w = REGIME_WEIGHTS.get(prev_regime, {})
+                    new_w = REGIME_WEIGHTS.get(r, {})
+                    # Filter to available
+                    old_f = {k: v for k, v in old_w.items() if k in avail}
+                    new_f = {k: v for k, v in new_w.items() if k in avail}
+                    t_old = sum(old_f.values()) or 1
+                    t_new = sum(new_f.values()) or 1
+                    old_f = {k: v/t_old for k, v in old_f.items()}
+                    new_f = {k: v/t_new for k, v in new_f.items()}
+
+                    # Key changes
+                    all_tickers = set(list(old_f.keys()) + list(new_f.keys()))
+                    changes = []
+                    for t in sorted(all_tickers, key=lambda x: abs(new_f.get(x,0) - old_f.get(x,0)), reverse=True)[:5]:
+                        delta = new_f.get(t, 0) - old_f.get(t, 0)
+                        if abs(delta) > 0.01:
+                            changes.append(f"{t}: {delta:+.1%}")
+
+                    regime_changes.append({
+                        'date': d.strftime('%Y-%m') if hasattr(d, 'strftime') else str(d)[:7],
+                        'from_regime': prev_regime,
+                        'to_regime': r,
+                        'reason': f"Growth {'rising' if r in ['goldilocks','reflation'] else 'falling'}, "
+                                  f"Inflation {'rising' if r in ['reflation','stagflation'] else 'falling'}",
+                        'key_changes': ' | '.join(changes) if changes else 'Minor rebalance',
+                    })
+                except Exception:
+                    regime_changes.append({
+                        'date': d.strftime('%Y-%m') if hasattr(d, 'strftime') else str(d)[:7],
+                        'from_regime': prev_regime, 'to_regime': r,
+                        'reason': 'Macro shift', 'key_changes': '—',
+                    })
+            prev_regime = r
+
+    # Get previous month's weights for comparison
+    prev_weights = {}
+    if len(regime_history) >= 2:
+        prev_regime_name = regime_history.iloc[-2]['regime']
+        try:
+            prev_w = REGIME_WEIGHTS.get(prev_regime_name, {})
+            prev_w = {k: v for k, v in prev_w.items() if k in avail}
+            t = sum(prev_w.values()) or 1
+            prev_weights = {k: v/t for k, v in prev_w.items()}
+        except Exception:
+            pass
+
+    # Monthly returns for heatmap
+    monthly_returns = pd.Series(dtype=float)
+    mr_path = ROOT / 'data' / 'backtest_results' / 'aggressive_monthly_returns.csv'
+    if mr_path.exists():
+        try:
+            mr = pd.read_csv(mr_path, index_col=0, parse_dates=True)
+            monthly_returns = mr.iloc[:, 0]
+        except Exception:
+            pass
+
+    # ── Targeted fix (default) plus comparison clocks ────────────────────────
+    # Same stack as before (targeted, look-ahead, unlagged, auditor, vintage).
+    # The child process keeps this process able to answer /healthz.
+    logger.info("Running targeted fix and comparison clocks...")
+    lagged_metrics = {}
+    if os.environ.get("DASHBOARD_SKIP_CLOCKS", "").strip() == "1":
+        clock_status = "skipped"
+        logger.info("Comparison clocks skipped (DASHBOARD_SKIP_CLOCKS=1).")
+    else:
+        try:
+            from config.regime_rules import REGIME_WEIGHTS as _RW
+            from src.dashboard.startup_jobs import compute_clocks_subprocess
+            _bundle = compute_clocks_subprocess(price_data, macro, _RW)
+            lagged_metrics = (_bundle or {}).get("lagged_metrics") or {}
+            _eq = (_bundle or {}).get("equity_curve")
+            _mo = (_bundle or {}).get("monthly_returns")
+            if isinstance(_eq, pd.Series) and len(_eq):
+                equity_curve = _eq
+            if isinstance(_mo, pd.Series) and len(_mo):
+                monthly_returns = _mo
+            if _bundle and lagged_metrics:
+                clock_status = "ready"
+                logger.info("Honesty-path runs completed.")
+            elif price_data is None or price_data.empty:
+                clock_status = "skipped"
+            else:
+                clock_status = "failed"
+                logger.error("Honesty-path runs produced no bundle; serving the published CSV book.")
+        except Exception as e:
+            clock_status = "failed"
+            logger.error(f"Error running honesty-path backtests: {e}")
+            lagged_metrics = {}
+
+    # ── Run Independent Audit ─────────────────────────────────────────────────
+    logger.info("Running Independent Audit...")
+    audit_results = {}
+    try:
+        from src.dashboard.auditor import run_independent_audit
+        audit_results = run_independent_audit(price_data, macro, backtest_results, regime_history, all_equity_curves, lagged_metrics)
+        audit_results['lagged_metrics'] = lagged_metrics
+        logger.info("Independent Audit completed successfully.")
+    except Exception as e:
+        logger.error(f"Error running independent audit: {e}")
+        audit_results = {'lagged_metrics': lagged_metrics}
+
+    # Get modification timestamps for cache files
+    price_mtime = datetime.fromtimestamp(PRICE_CACHE.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S') if PRICE_CACHE.exists() else 'N/A'
+    macro_mtime = datetime.fromtimestamp(MACRO_CACHE.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S') if MACRO_CACHE.exists() else 'N/A'
+    backtest_mtime = datetime.fromtimestamp(BACKTEST_CSV.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S') if BACKTEST_CSV.exists() else 'N/A'
+    audit_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    # ── AI Trend Intelligence (display only; not a weight or backtest input) ──
+    ai_trend = {}
+    if os.environ.get("DASHBOARD_SKIP_AI", "").strip() == "1":
+        logger.info("AI trend startup skipped (DASHBOARD_SKIP_AI=1).")
+    else:
+        try:
+            from src.dashboard.startup_jobs import compute_ai_subprocess
+            ai_trend = compute_ai_subprocess(
+                price_data, current.get('regime', 'goldilocks'), current_weights) or {}
+            if ai_trend:
+                _semi = ai_trend.get('semianalysis') or {}
+                _n = len(_semi.get('items', [])) if isinstance(_semi, dict) else len(_semi)
+                logger.info(
+                    f"AI Trend Intelligence: sector={ai_trend.get('signals', {}).get('sector_signal')} "
+                    f"verdict={ai_trend.get('verification', {}).get('verdict')} "
+                    f"({_n} SemiAnalysis items)"
+                )
+            else:
+                logger.warning("AI Trend Intelligence unavailable within the startup budget.")
+        except Exception as e:
+            logger.warning(f"AI Trend Intelligence unavailable: {e}")
+            ai_trend = {}
+
+    # ── Execution Modules (Disabled for Public Deployment) ───────────────────
+    _ibkr_broker = None
+    _ibkr_risk_mgr = None
+    _ibkr_order_mgr = None
+
+    # ── Load Canadian ETF Portfolio Data ──────────────────────────────────────
+    # Live weights use the targeted CDN clock (VFV.TO momentum) when the TSX
+    # cache exists. Without it they follow the US label and the auditor says so.
+    try:
+        from src.backtester.cdn_clock import dashboard_cdn_payload
+        from src.dashboard.cdn_audit import merge_cdn_audit
+        _cdn_payload = dashboard_cdn_payload(macro, current.get('regime', 'goldilocks'), regime_history)
+        audit_results = merge_cdn_audit(
+            audit_results,
+            prices=_cdn_payload.get('cdn_prices'),
+            us_prices=price_data,
+            us_equity=equity_curve,
+        )
+        logger.info(
+            "CDN portfolio loaded: regime=%s source=%s benchmark=%s",
+            _cdn_payload.get('cdn_regime'),
+            _cdn_payload.get('cdn_regime_source'),
+            len(_cdn_payload.get('cdn_benchmark', [])),
+        )
+    except Exception as _cdn_err:
+        logger.warning(f"CDN portfolio data load failed: {_cdn_err}")
+        _cdn_payload = {}
+
+    fresh = {
+
+        'price_data': price_data,
+        'macro': macro,
+        'derived': derived,
+        'ai_trend': ai_trend,
+        'backtest_results': backtest_results,
+        'regime_history': regime_history,
+        'current_regime': current.get('regime', 'goldilocks'),
+        'current_weights': current_weights,
+        'prev_weights': prev_weights,
+        'vix_current': current.get('vix', 0.0),
+        'yield_curve_current': current.get('yield_curve', 0.0),
+        'cpi_yoy_current': current.get('cpi_yoy', 0.0),
+        'gdp_current': current.get('gdp', 0.0),
+        'spy_momentum': current.get('spy_momentum', 0.0),
+        'regime_confidence': current.get('confidence', 50.0),
+        'equity_curve': equity_curve,
+        'all_equity_curves': all_equity_curves,
+        'monthly_returns': monthly_returns,
+        'regime_changes': regime_changes,
+        'all_regime_weights': REGIME_WEIGHTS,
+        'audit': audit_results,
+        # Canadian ETF Portfolio
+        'cdn_equity_curve':    _cdn_payload.get('cdn_equity_curve', pd.Series(dtype=float)),
+        'cdn_monthly_returns': _cdn_payload.get('cdn_monthly_returns', pd.Series(dtype=float)),
+        'cdn_backtest_meta':   _cdn_payload.get('cdn_backtest_meta', {}),
+        'cdn_current_weights': _cdn_payload.get('cdn_current_weights', {}),
+        'cdn_all_weights':     _cdn_payload.get('cdn_all_weights', {}),
+        'cdn_regime_changes':  _cdn_payload.get('cdn_regime_changes', []),
+        'cdn_benchmark':       _cdn_payload.get('cdn_benchmark', pd.Series(dtype=float)),
+        'cdn_prices':          _cdn_payload.get('cdn_prices', pd.DataFrame()),
+        'cdn_regime_source':   _cdn_payload.get('cdn_regime_source', 'us_fallback'),
+
+        # Goldman Sachs Bull/Bear Market Indicator (GSBLBR)
+        'gsblbr_data': (lambda: (
+            pd.read_csv(ROOT / 'data' / 'cache' / 'gsblbr_history.csv', index_col=0, parse_dates=True)
+            if (ROOT / 'data' / 'cache' / 'gsblbr_history.csv').exists() else pd.DataFrame()
+        ))(),
+
+        'timestamps': {
+            'price_data': price_mtime,
+            'macro_data': macro_mtime,
+            'backtest_results': backtest_mtime,
+            'audit_run': audit_time,
+        },
+    }
+
+    # ── Hermes Agent Integration ───────────────────────────────────────────────
+    # Determine if regime has changed on startup compared to previous month
+    startup_alert_level = 'INFO'
+    startup_alert_msg = 'No active rebalance required. Portfolio matches current economic regime.'
+    prev_regime_val = None
+    if not regime_history.empty and len(regime_history) >= 2:
+        prev_regime_val = regime_history.iloc[-2]['regime']
+        curr_regime_val = regime_history.iloc[-1]['regime']
+        if curr_regime_val != prev_regime_val:
+            startup_alert_level = 'CRITICAL'
+            startup_alert_msg = f"Economic regime changed from {prev_regime_val} to {curr_regime_val}. Portfolio rebalancing is required."
+
+    HERMES_DATA = {
+        'latest_alert': {
+            'timestamp': datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'type': 'rebalance_alert',
+            'alert_level': startup_alert_level,
+            'message': startup_alert_msg,
+            'current_regime': current.get('regime', 'goldilocks'),
+            'target_weights': current_weights
+        }
+    }
+    if prev_regime_val and startup_alert_level == 'CRITICAL':
+        HERMES_DATA['latest_alert']['previous_regime'] = prev_regime_val
+        HERMES_DATA['latest_alert']['new_regime'] = current.get('regime', 'goldilocks')
+
+    if previous is None:
+        DASHBOARD_DATA = fresh
+    else:
+        previous.clear()
+        previous.update(fresh)
+        DASHBOARD_DATA = previous
+    try:
+        from src.dashboard.runtime_state import STATE
+        STATE.regime = (DASHBOARD_DATA or {}).get("current_regime")
+        STATE.clocks = clock_status
+    except Exception:
+        pass
+    return clock_status
+
 
 def generate_regime_report(app_data):
     return {
@@ -572,476 +579,320 @@ def send_hermes_notification(payload):
         return False
 
 # ── Background Updater ──────────────────────────────────────────────────────
+import threading
+
+_updater_lock = threading.Lock()
+_updater_started = False
+
+
+def _cache_is_stale():
+    import time
+    if not PRICE_CACHE.exists() or not MACRO_CACHE.exists():
+        return True
+    price_age = (time.time() - PRICE_CACHE.stat().st_mtime) / 86400.0
+    macro_age = (time.time() - MACRO_CACHE.stat().st_mtime) / 86400.0
+    return price_age >= 1.0 or macro_age >= 1.0
+
+
 def start_background_updater(app_data):
-    """Start background data updater thread."""
-    import threading
-    
+    """Hermes notify once per process. Does not run a backtest.
+
+    A background ``run_backtest.py`` skipped the headline gate and then
+    recomputed the comparison clocks in this process. That holds the GIL, so
+    ``/healthz`` cannot answer, and under Cloud Run CPU throttling the
+    backtest did not finish unless a request was already in flight. The
+    scheduler endpoint is the only writer.
+    """
+    global _updater_started
+    with _updater_lock:
+        if _updater_started:
+            logger.info("Background updater already running in this process.")
+            return False
+        _updater_started = True
+
     def worker():
         import time
-        import subprocess
-        
-        # Wait for the main Dash server to start up
-        time.sleep(10)
-        
-        # Send initial startup report and alert to Hermes Agent
+        time.sleep(1)
         try:
             report = generate_regime_report(app_data)
             send_hermes_notification(report)
-            
-            # Send initial rebalance alert if it's CRITICAL on startup
-            if HERMES_DATA['latest_alert'].get('alert_level') == 'CRITICAL':
-                send_hermes_notification(HERMES_DATA['latest_alert'])
+            alert = HERMES_DATA.get("latest_alert") or {}
+            if alert.get("alert_level") == "CRITICAL":
+                send_hermes_notification(alert)
         except Exception as he:
             logger.error(f"Error sending initial Hermes report/alert: {he}")
-        
-        logger.info("Checking if data caches are stale or missing...")
-        stale = False
-        
-        # Check price data cache age
-        if not PRICE_CACHE.exists() or not MACRO_CACHE.exists():
-            stale = True
-        else:
-            price_age = (time.time() - PRICE_CACHE.stat().st_mtime) / 86400.0
-            macro_age = (time.time() - MACRO_CACHE.stat().st_mtime) / 86400.0
-            if price_age >= 1.0 or macro_age >= 1.0:
-                stale = True
-                
-        if stale:
-            logger.info("Data cache is missing or older than 1 day. Starting background update via run_backtest.py...")
-            try:
-                # Run the backtest script as a subprocess to refresh caches and CSVs
-                res = subprocess.run([sys.executable, 'run_backtest.py'], capture_output=True, text=True)
-                if res.returncode == 0:
-                    logger.info("run_backtest.py succeeded. Reloading data in memory...")
-                    # Reload the data files
-                    new_price = load_price_data()
-                    new_macro = load_macro_data()
-                    new_backtest = load_backtest_results()
-                    
-                    if not new_price.empty and new_macro:
-                        new_rh, new_curr, new_derived = classify_regimes(
-                            new_macro, new_price, mode=MODE_TARGETED,
-                        )
-                        
-                        # Get weights
-                        from config.regime_rules import REGIME_WEIGHTS
-                        new_weights = REGIME_WEIGHTS.get(new_curr.get('regime', 'goldilocks'), {})
-                        avail = set(new_price.columns)
-                        new_weights = {k: v for k, v in new_weights.items() if k in avail}
-                        tot = sum(new_weights.values())
-                        if tot > 0:
-                            new_weights = {k: v / tot for k, v in new_weights.items()}
-                            
-                        # Prior weights
-                        prev_weights = {}
-                        if len(new_rh) > 1:
-                            prev_regime = new_rh.iloc[-2]['regime']
-                            prev_weights = REGIME_WEIGHTS.get(prev_regime, {})
-                            prev_weights = {k: v for k, v in prev_weights.items() if k in avail}
-                            tot_p = sum(prev_weights.values())
-                            if tot_p > 0:
-                                prev_weights = {k: v / tot_p for k, v in prev_weights.items()}
-                                
-                        # Recent changes
-                        regime_changes = []
-                        if not new_rh.empty and len(new_rh) > 1:
-                            rh = new_rh.copy()
-                            prev_regime = None
-                            for _, row in rh.iterrows():
-                                r = row['regime']
-                                d = row['date']
-                                if prev_regime is not None and r != prev_regime:
-                                    try:
-                                        old_w = REGIME_WEIGHTS.get(prev_regime, {})
-                                        new_w = REGIME_WEIGHTS.get(r, {})
-                                        old_f = {k: v for k, v in old_w.items() if k in avail}
-                                        new_f = {k: v for k, v in new_w.items() if k in avail}
-                                        t_old = sum(old_f.values()) or 1
-                                        t_new = sum(new_f.values()) or 1
-                                        old_f = {k: v/t_old for k, v in old_f.items()}
-                                        new_f = {k: v/t_new for k, v in new_f.items()}
-                                        all_tickers = set(list(old_f.keys()) + list(new_f.keys()))
-                                        changes = []
-                                        for t in sorted(all_tickers, key=lambda x: abs(new_f.get(x,0) - old_f.get(x,0)), reverse=True)[:5]:
-                                            delta = new_f.get(t, 0) - old_f.get(t, 0)
-                                            if abs(delta) > 0.01:
-                                                changes.append(f"{t}: {delta:+.1%}")
-                                        regime_changes.append({
-                                            'date': d.strftime('%Y-%m') if hasattr(d, 'strftime') else str(d)[:7],
-                                            'from_regime': prev_regime,
-                                            'to_regime': r,
-                                            'reason': f"Growth {'rising' if r in ['goldilocks','reflation'] else 'falling'}, "
-                                                      f"Inflation {'rising' if r in ['reflation','stagflation'] else 'falling'}",
-                                            'key_changes': ' | '.join(changes) if changes else 'Minor rebalance',
-                                        })
-                                    except Exception:
-                                        regime_changes.append({
-                                            'date': d.strftime('%Y-%m') if hasattr(d, 'strftime') else str(d)[:7],
-                                            'from_regime': prev_regime, 'to_regime': r,
-                                            'reason': 'Macro shift', 'key_changes': '—',
-                                        })
-                                prev_regime = r
-                                
-                        # Monthly returns
-                        monthly_returns = pd.Series(dtype=float)
-                        mr_path = ROOT / 'data' / 'backtest_results' / 'aggressive_monthly_returns.csv'
-                        if mr_path.exists():
-                            try:
-                                mr = pd.read_csv(mr_path, index_col=0, parse_dates=True)
-                                monthly_returns = mr.iloc[:, 0]
-                            except Exception:
-                                pass
-                                
-                        # Reload curves
-                        all_eq_path = ROOT / 'data' / 'backtest_results' / 'all_equity_curves.csv'
-                        all_equity_curves = pd.DataFrame()
-                        if all_eq_path.exists():
-                            try:
-                                all_equity_curves = pd.read_csv(all_eq_path, index_col=0, parse_dates=True)
-                            except Exception:
-                                pass
-                                
-                        equity_curve = pd.Series(dtype=float)
-                        for col_name in ['Optimized Regime Strategy', 'Vol-Targeted Regime Strategy', 'Protected Regime Strategy', 'Aggressive Regime Strategy']:
-                            if col_name in all_equity_curves.columns:
-                                equity_curve = all_equity_curves[col_name]
-                                break
-                            
-                        from src.dashboard.app import pack_lagged_metrics
-                        _results, _ = run_honesty_paths(new_price, new_macro, REGIME_WEIGHTS)
-                        lagged_metrics = pack_lagged_metrics(results=_results)
-                        _tgt = _results.get(MODE_TARGETED)
-                        if _tgt is not None and getattr(_tgt, "equity_curve", None) is not None:
-                            equity_curve = _tgt.equity_curve
-                        if _tgt is not None and getattr(_tgt, "monthly_returns", None) is not None:
-                            monthly_returns = _tgt.monthly_returns
-
-                        # Auditor
-                        from src.dashboard.auditor import run_independent_audit
-                        new_audit = run_independent_audit(new_price, new_macro, new_backtest, new_rh, all_equity_curves, lagged_metrics)
-                        new_audit['lagged_metrics'] = lagged_metrics
-                        try:
-                            from src.backtester.cdn_clock import dashboard_cdn_payload
-                            from src.dashboard.cdn_audit import merge_cdn_audit
-                            _cdn_payload = dashboard_cdn_payload(
-                                new_macro, new_curr.get('regime', 'goldilocks'), new_rh,
-                            )
-                            new_audit = merge_cdn_audit(
-                                new_audit,
-                                prices=_cdn_payload.get('cdn_prices'),
-                                us_prices=new_price,
-                                us_equity=equity_curve,
-                            )
-                            for _key in (
-                                'cdn_equity_curve', 'cdn_monthly_returns', 'cdn_backtest_meta',
-                                'cdn_current_weights', 'cdn_all_weights', 'cdn_regime_changes',
-                                'cdn_benchmark', 'cdn_prices', 'cdn_regime_source',
-                            ):
-                                if _key in _cdn_payload:
-                                    app_data[_key] = _cdn_payload[_key]
-                        except Exception as _cdn_err:
-                            logger.warning(f"CDN refresh in memory failed: {_cdn_err}")
-                        
-                        # Timestamps
-                        price_mtime = datetime.fromtimestamp(PRICE_CACHE.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
-                        macro_mtime = datetime.fromtimestamp(MACRO_CACHE.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
-                        backtest_mtime = datetime.fromtimestamp(BACKTEST_CSV.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
-                        audit_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        
-                        # Store old regime before applying updates
-                        old_regime = app_data.get('current_regime', 'goldilocks')
-                        
-                        # Apply atomically
-                        app_data['price_data'] = new_price
-                        app_data['macro'] = new_macro
-                        app_data['derived'] = new_derived
-                        app_data['backtest_results'] = new_backtest
-                        app_data['regime_history'] = new_rh
-                        app_data['current_regime'] = new_curr.get('regime', 'goldilocks')
-                        app_data['current_weights'] = new_weights
-                        app_data['prev_weights'] = prev_weights
-                        app_data['vix_current'] = new_curr.get('vix', 0.0)
-                        app_data['yield_curve_current'] = new_curr.get('yield_curve', 0.0)
-                        app_data['cpi_yoy_current'] = new_curr.get('cpi_yoy', 0.0)
-                        app_data['gdp_current'] = new_curr.get('gdp', 0.0)
-                        app_data['spy_momentum'] = new_curr.get('spy_momentum', 0.0)
-                        app_data['regime_confidence'] = new_curr.get('confidence', 50.0)
-                        app_data['equity_curve'] = equity_curve
-                        app_data['all_equity_curves'] = all_equity_curves
-                        app_data['monthly_returns'] = monthly_returns
-                        app_data['regime_changes'] = regime_changes
-                        try:
-                            from src.strategist.ai_trend import build_ai_trend_intelligence
-                            app_data['ai_trend'] = build_ai_trend_intelligence(
-                                new_price, new_curr.get('regime', 'goldilocks'), new_weights)
-                        except Exception as _e:
-                            logger.warning(f"AI Trend refresh failed: {_e}")
-                        app_data['audit'] = new_audit
-                        app_data['timestamps'] = {
-                            'price_data': price_mtime,
-                            'macro_data': macro_mtime,
-                            'backtest_results': backtest_mtime,
-                            'audit_run': audit_time,
-                        }
-                        
-                        logger.info("DASHBOARD_DATA has been updated in-memory with fresh values!")
-                        
-                        # Hermes notifications
-                        try:
-                            # Push daily report
-                            report = generate_regime_report(app_data)
-                            send_hermes_notification(report)
-                            
-                            # Push rebalance alert if regime changed
-                            new_regime = new_curr.get('regime', 'goldilocks')
-                            if new_regime != old_regime:
-                                alert = {
-                                    "timestamp": datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ'),
-                                    "type": "rebalance_alert",
-                                    "alert_level": "CRITICAL",
-                                    "message": f"Economic regime changed from {old_regime} to {new_regime}. Portfolio rebalancing is required.",
-                                    "previous_regime": old_regime,
-                                    "new_regime": new_regime,
-                                    "target_weights": new_weights
-                                }
-                                HERMES_DATA['latest_alert'] = alert
-                                send_hermes_notification(alert)
-                        except Exception as he:
-                            logger.error(f"Error executing Hermes webhook notifications: {he}")
-                else:
-                    logger.error(f"run_backtest.py subprocess failed: {res.stderr}")
-            except Exception as e:
-                logger.error(f"Error in background update worker: {e}", exc_info=True)
+        if _cache_is_stale():
+            logger.warning(
+                "Price or macro cache is missing or older than 1 day. "
+                "/tasks/refresh is the gated update. This thread will not "
+                "start an ungated backtest."
+            )
         else:
             logger.info("Data cache is fresh. No background update required.")
-            
-    threading.Thread(target=worker, daemon=True).start()
 
-# ── Launch ────────────────────────────────────────────────────────────────
-if __name__ == '__main__':
-    from src.dashboard.app import create_app
-    app = create_app(DASHBOARD_DATA)
-    
-    # ── Hermes API Endpoints ───────────────────────────────────────────────
-    server = app.server
+    threading.Thread(target=worker, name="dashboard-updater", daemon=True).start()
+    return True
+
+
+def _reload_published_book():
+    """Rebuild in-memory state from the files a gated refresh just wrote.
+
+    ``sync_gcs=False`` keeps the local book. A newer image file is not the
+    case here: this process is the one that just wrote the files.
+    """
+    from src.dashboard.runtime_state import STATE
+    from src.dashboard.app import mount_layout
+    assemble_dashboard(sync_gcs=False)
+    if STATE.dash_app is not None and DASHBOARD_DATA is not None:
+        mount_layout(STATE.dash_app, DASHBOARD_DATA)
+
+
+def register_routes(server):
+    """Hermes, IBKR status, and the scheduler refresh. One implementation."""
     from flask import jsonify, request
-    
-    @server.route('/api/hermes/regime-report', methods=['GET'])
-    def hermes_regime_report():
-        report = generate_regime_report(DASHBOARD_DATA)
-        return jsonify(report)
-        
-    @server.route('/api/hermes/rebalance-alert', methods=['GET'])
-    def hermes_rebalance_alert():
-        return jsonify(HERMES_DATA['latest_alert'])
+    from src.dashboard.runtime_state import STATE
 
-    # ── IBKR Status API Endpoint ──────────────────────────────────────────
-    @server.route('/api/ibkr/status', methods=['GET'])
+    @server.route("/api/hermes/regime-report", methods=["GET"])
+    def hermes_regime_report():
+        report = generate_regime_report(DASHBOARD_DATA or {})
+        return jsonify(report)
+
+    @server.route("/api/hermes/rebalance-alert", methods=["GET"])
+    def hermes_rebalance_alert():
+        return jsonify(HERMES_DATA["latest_alert"])
+
+    @server.route("/api/ibkr/status", methods=["GET"])
     def ibkr_status():
-        broker = DASHBOARD_DATA.get('_broker')
+        # Read-only status of an in-process broker object. The public server
+        # leaves ``_broker`` unset, so this returns OFFLINE and does not open
+        # a TWS socket. Snapshot refresh stays behind ENABLE_IBKR on
+        # /tasks/refresh and is not called from here.
+        broker = (DASHBOARD_DATA or {}).get("_broker")
         if not broker:
-            return jsonify({'connected': False, 'status': 'OFFLINE', 'message': 'Broker not initialized'})
+            return jsonify({"connected": False, "status": "OFFLINE", "message": "Broker not initialized"})
         connected = broker.is_connected()
-        result = {'connected': connected, 'status': 'CONNECTED' if connected else 'OFFLINE'}
+        result = {"connected": connected, "status": "CONNECTED" if connected else "OFFLINE"}
         if connected:
             try:
                 summary = broker.get_account_summary()
                 positions = broker.get_positions()
-                result['account_summary'] = summary
-                result['position_count'] = len(positions)
+                result["account_summary"] = summary
+                result["position_count"] = len(positions)
             except Exception as e:
-                result['error'] = str(e)
+                result["error"] = str(e)
         return jsonify(result)
-    
-    # ── Daily refresh endpoint (triggered by Cloud Scheduler) ─────────────
-    # Runs the backtest synchronously (CPU is allocated during the request, so it
-    # actually completes — unlike a background thread under CPU throttling), then
-    # pushes the fresh caches to GCS. Token-protected so only the scheduler can call it.
-    @server.route('/tasks/refresh', methods=['POST', 'GET'])
+
+    @server.route("/tasks/refresh", methods=["POST", "GET"])
     def tasks_refresh():
         import subprocess
-        token = os.environ.get('REFRESH_TOKEN', '')
-        sent = request.headers.get('X-Refresh-Token', '') or request.args.get('token', '')
+        token = os.environ.get("REFRESH_TOKEN", "")
+        sent = request.headers.get("X-Refresh-Token", "") or request.args.get("token", "")
         if not token or sent != token:
-            return jsonify({'ok': False, 'error': 'unauthorized'}), 401
+            return jsonify({"ok": False, "error": "unauthorized"}), 401
+        if not STATE.ready or STATE.phase != "serving":
+            return jsonify({"ok": False, "error": "starting", "phase": STATE.phase}), 503
+        if not STATE.begin_refresh():
+            return jsonify({"ok": False, "error": "refresh_in_progress"}), 409
         try:
-            from src.dashboard.headline_gate import (
-                BASELINE_REL,
-                LAG_HONESTY_REL,
-                evaluate_headline_gate,
-                headline_from_comparison_frame,
-                load_same_path_headline,
-                load_uploaded_baseline,
-                reset_requested,
-                write_uploaded_baseline,
-            )
+            # Test-only latch. Production does not set this, so the gated
+            # backtest below is what Cloud Scheduler runs.
+            hold = os.environ.get("DASHBOARD_TEST_REFRESH_HOLD", "").strip()
+            if hold:
+                import time
+                time.sleep(float(hold))
+                return jsonify({"ok": True, "test_hold": True})
+            return _tasks_refresh_body(subprocess)
+        finally:
+            STATE.end_refresh()
 
-            def _headline():
-                try:
-                    return headline_from_comparison_frame(load_backtest_results())
-                except Exception:
-                    return None
+    return server
 
-            # Read before run_backtest.py rewrites 20yr_comparison.csv.
-            # The comparison row may be an older look-ahead upload pulled
-            # from GCS at startup. The gate compares the new targeted run
-            # to the last accepted B_targeted package, or to lag_honesty
-            # B_targeted when that row is a different methodology.
-            prev = _headline()
-            same_path = load_same_path_headline(ROOT / LAG_HONESTY_REL)
-            uploaded_baseline = load_uploaded_baseline(ROOT / BASELINE_REL)
-            # FORCE_REFRESH: the GCS download at container start gives caches a fresh
-            # mtime even when their DATA is old, so the age check alone would skip the
-            # re-download and recycle stale data forever (bug found 2026-07-12).
-            res = subprocess.run([sys.executable, 'run_backtest.py'],
-                                 capture_output=True, text=True, timeout=540,
-                                 env={**os.environ, 'FORCE_REFRESH': '1'})
-            if res.returncode != 0:
-                logger.error(f"/tasks/refresh: run_backtest.py failed (rc={res.returncode}): "
-                             f"{(res.stderr or res.stdout)[-500:]}")
-                # The QQQ/QLD board is independent of the Merrill backtest.
-                vegas_market = refresh_qqq_vegas_market_cache()
-                if vegas_market:
-                    _upload_qqq_vegas_market()
-                vegas_signal = refresh_qqq_vegas_signal_cache()
-                if vegas_signal:
-                    _upload_qqq_vegas_signal()
-                risk_flags = refresh_risk_flags_cache()
-                if risk_flags:
-                    _upload_risk_flags()
-                return jsonify({'ok': False, 'error': 'backtest_failed',
-                                'qqq_vegas_market': vegas_market,
-                                'qqq_vegas_signal': vegas_signal,
-                                'risk_flags': risk_flags,
-                                'stderr': (res.stderr or res.stdout)[-500:]}), 500
 
-            # Regression tripwire: one day of new data moves the 21-yr CAGR by basis
-            # points; a data problem moves it by whole points (11.82% vs 14.60% on
-            # 2026-07-12, when an in-container FRED failure produced garbage regimes).
-            # The baseline is the last accepted targeted upload, or B_targeted when
-            # the on-disk row is a different clock (look-ahead ~14.47% / 13.9% vs
-            # targeted ~13.1% / 14.13%). HEADLINE_GATE_RESET=1 skips one refresh.
-            # run_backtest.py also exits 3 when the equity curve, the monthly
-            # heatmap, and the reported CAGR/total/daily max DD are not one series.
-            new = _headline()
-            gate = evaluate_headline_gate(
-                previous=prev,
-                new=new,
-                same_path=same_path,
-                uploaded=uploaded_baseline,
-                allow_reset=reset_requested(),
-            )
-            if gate.baseline_source == 'reset':
-                logger.warning(
-                    f"/tasks/refresh: {gate.reason} would_block={gate.would_block} "
-                    f"baseline={gate.baseline} previous={prev} new={new}"
-                )
-            elif gate.baseline_source == 'same_path' and prev is not None:
-                logger.warning(
-                    f"/tasks/refresh: {gate.reason} previous={prev} "
-                    f"baseline={gate.baseline} new={new}"
-                )
-            if gate.block:
-                logger.error(
-                    f"/tasks/refresh: headline jump baseline {gate.baseline_source} "
-                    f"{gate.baseline} -> {new} (on-disk previous {prev}); "
-                    f"data problem suspected — NOT uploading US backtest to GCS."
-                )
-                vegas_market = refresh_qqq_vegas_market_cache()
-                if vegas_market:
-                    _upload_qqq_vegas_market()
-                vegas_signal = refresh_qqq_vegas_signal_cache()
-                if vegas_signal:
-                    _upload_qqq_vegas_signal()
-                risk_flags = refresh_risk_flags_cache()
-                if risk_flags:
-                    _upload_risk_flags()
-                body = gate.as_dict()
-                body.update({
-                    'ok': False,
-                    'error': 'quality_gate_headline_jump',
-                    'qqq_vegas_market': vegas_market,
-                    'qqq_vegas_signal': vegas_signal,
-                    'risk_flags': risk_flags,
-                    'previous': list(prev) if prev is not None else None,
-                    'new': list(new) if new is not None else None,
-                })
-                return jsonify(body), 500
+def _tasks_refresh_body(subprocess):
+    from flask import jsonify
+    try:
+        from src.dashboard.headline_gate import (
+            BASELINE_REL,
+            LAG_HONESTY_REL,
+            evaluate_headline_gate,
+            headline_from_comparison_frame,
+            load_same_path_headline,
+            load_uploaded_baseline,
+            reset_requested,
+            write_uploaded_baseline,
+        )
 
-            # Push the US curves before CDN / Vegas. Those steps have their own
-            # multi-minute budgets, and the scheduler deadline has to cover them
-            # too. The heatmap inputs should already be in GCS if that later
-            # work is cut off.
-            if new is not None:
-                try:
-                    write_uploaded_baseline(ROOT / BASELINE_REL, new)
-                except Exception as baseline_err:
-                    logger.warning(f"/tasks/refresh: headline baseline not recorded: {baseline_err}")
-            from src.dashboard.gcs_sync import upload_data, upload_ibkr, upload_us_backtest
-            us_uploaded = upload_us_backtest()
-
-            cdn_backtest = refresh_cdn_backtest()
-            vegas_market = refresh_qqq_vegas_market_cache()
-            vegas_signal = refresh_qqq_vegas_signal_cache()
-            risk_flags = refresh_risk_flags_cache()
-            uploaded_files = list(dict.fromkeys([*us_uploaded, *upload_data()]))
-
-            # Refresh & push IBKR live/paper account snapshot as part of daily refresh
-            # SUSPENDED: IBKR integration paused. Set ENABLE_IBKR=1 to re-enable.
-            ibkr_uploaded = []
-            if os.environ.get('ENABLE_IBKR', '0') == '1':
-                try:
-                    ib_host = os.environ.get('IBKR_HOST', '10.128.0.2')
-                    ib_port = os.environ.get('IBKR_PORT', '4002')
-                    ib_cid = os.environ.get('IBKR_SNAP_CLIENT_ID', '99')
-                    logger.info(f"/tasks/refresh: Fetching fresh IBKR account snapshot from {ib_host}:{ib_port} (clientId={ib_cid})...")
-                    snap_res = subprocess.run(
-                        [sys.executable, 'scripts/ibkr_snapshot.py', '--host', str(ib_host), '--port', str(ib_port), '--client-id', str(ib_cid)],
-                        capture_output=True, text=True, timeout=60
-                    )
-                    if snap_res.returncode == 0:
-                        logger.info(f"/tasks/refresh: IBKR snapshot generated successfully.")
-                        ibkr_uploaded = upload_ibkr()
-                    else:
-                        logger.warning(f"/tasks/refresh: IBKR snapshot notice (rc={snap_res.returncode}): {(snap_res.stderr or snap_res.stdout)[-300:]}")
-                except Exception as ib_err:
-                    logger.warning(f"/tasks/refresh: IBKR snapshot refresh error: {ib_err}")
-            else:
-                logger.info("/tasks/refresh: IBKR snapshot skipped (ENABLE_IBKR not set).")
-
-            # Best-effort: surface the fresh headline from the regenerated CSV.
-            headline = {}
+        def _headline():
             try:
-                _df = load_backtest_results()
-                if not _df.empty:
-                    _r = _df.iloc[0]
-                    headline = {'strategy': str(_df.index[0]),
-                                'annual_return': str(_r.get('Annual Return', '')),
-                                'sharpe': str(_r.get('Sharpe Ratio', '')),
-                                'max_drawdown': str(_r.get('Max Drawdown', ''))}
+                return headline_from_comparison_frame(load_backtest_results())
             except Exception:
-                pass
-            ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            logger.info(
-                f"/tasks/refresh OK at {ts}; uploaded {len(uploaded_files)} backtest + "
-                f"{len(ibkr_uploaded)} IBKR files to GCS. "
-                f"headline gate {gate.baseline_source} baseline={gate.baseline} new={new}"
-            )
-            return jsonify({'ok': True, 'refreshed_at': ts, 'uploaded': uploaded_files,
-                            'ibkr_uploaded': ibkr_uploaded,
-                            'qqq_vegas_market': vegas_market, 'qqq_vegas_signal': vegas_signal,
-                            'risk_flags': risk_flags, 'cdn_backtest': cdn_backtest,
-                            'headline': headline, 'headline_gate': gate.as_dict()})
-        except subprocess.TimeoutExpired:
-            return jsonify({'ok': False, 'error': 'timeout'}), 504
-        except Exception as e:
-            logger.error(f"/tasks/refresh error: {e}", exc_info=True)
-            return jsonify({'ok': False, 'error': str(e)}), 500
+                return None
 
-    # Start background data check and update thread
-    start_background_updater(DASHBOARD_DATA)
-    
-    import os
-    port = int(os.environ.get('PORT', 8050))
-    logger.info(f"Starting dashboard on port {port}")
-    app.run(debug=False, host='0.0.0.0', port=port)
+        # Read before run_backtest.py rewrites 20yr_comparison.csv.
+        # The comparison row may be an older look-ahead upload pulled
+        # from GCS at startup. The gate compares the new targeted run
+        # to the last accepted B_targeted package, or to lag_honesty
+        # B_targeted when that row is a different methodology.
+        prev = _headline()
+        same_path = load_same_path_headline(ROOT / LAG_HONESTY_REL)
+        uploaded_baseline = load_uploaded_baseline(ROOT / BASELINE_REL)
+        # FORCE_REFRESH: the GCS download at container start gives caches a fresh
+        # mtime even when their DATA is old, so the age check alone would skip the
+        # re-download and recycle stale data forever (bug found 2026-07-12).
+        res = subprocess.run([sys.executable, "run_backtest.py"],
+                             capture_output=True, text=True, timeout=540,
+                             env={**os.environ, "FORCE_REFRESH": "1"})
+        if res.returncode != 0:
+            logger.error(f"/tasks/refresh: run_backtest.py failed (rc={res.returncode}): "
+                         f"{(res.stderr or res.stdout)[-500:]}")
+            vegas_market = refresh_qqq_vegas_market_cache()
+            if vegas_market:
+                _upload_qqq_vegas_market()
+            vegas_signal = refresh_qqq_vegas_signal_cache()
+            if vegas_signal:
+                _upload_qqq_vegas_signal()
+            risk_flags = refresh_risk_flags_cache()
+            if risk_flags:
+                _upload_risk_flags()
+            return jsonify({"ok": False, "error": "backtest_failed",
+                            "qqq_vegas_market": vegas_market,
+                            "qqq_vegas_signal": vegas_signal,
+                            "risk_flags": risk_flags,
+                            "stderr": (res.stderr or res.stdout)[-500:]}), 500
+
+        # Regression tripwire: one day of new data moves the 21-yr CAGR by basis
+        # points; a data problem moves it by whole points (11.82% vs 14.60% on
+        # 2026-07-12, when an in-container FRED failure produced garbage regimes).
+        # The baseline is the last accepted targeted upload, or B_targeted when
+        # the on-disk row is a different clock (look-ahead ~14.47% / 13.9% vs
+        # targeted ~13.1% / 14.13%). HEADLINE_GATE_RESET=1 skips one refresh.
+        # run_backtest.py also exits 3 when the equity curve, the monthly
+        # heatmap, and the reported CAGR/total/daily max DD are not one series.
+        new = _headline()
+        gate = evaluate_headline_gate(
+            previous=prev,
+            new=new,
+            same_path=same_path,
+            uploaded=uploaded_baseline,
+            allow_reset=reset_requested(),
+        )
+        if gate.baseline_source == "reset":
+            logger.warning(
+                f"/tasks/refresh: {gate.reason} would_block={gate.would_block} "
+                f"baseline={gate.baseline} previous={prev} new={new}"
+            )
+        elif gate.baseline_source == "same_path" and prev is not None:
+            logger.warning(
+                f"/tasks/refresh: {gate.reason} previous={prev} "
+                f"baseline={gate.baseline} new={new}"
+            )
+        if gate.block:
+            logger.error(
+                f"/tasks/refresh: headline jump baseline {gate.baseline_source} "
+                f"{gate.baseline} -> {new} (on-disk previous {prev}); "
+                f"data problem suspected — NOT uploading US backtest to GCS."
+            )
+            vegas_market = refresh_qqq_vegas_market_cache()
+            if vegas_market:
+                _upload_qqq_vegas_market()
+            vegas_signal = refresh_qqq_vegas_signal_cache()
+            if vegas_signal:
+                _upload_qqq_vegas_signal()
+            risk_flags = refresh_risk_flags_cache()
+            if risk_flags:
+                _upload_risk_flags()
+            body = gate.as_dict()
+            body.update({
+                "ok": False,
+                "error": "quality_gate_headline_jump",
+                "qqq_vegas_market": vegas_market,
+                "qqq_vegas_signal": vegas_signal,
+                "risk_flags": risk_flags,
+                "previous": list(prev) if prev is not None else None,
+                "new": list(new) if new is not None else None,
+            })
+            return jsonify(body), 500
+
+        # Push the US curves before CDN / Vegas. Those steps have their own
+        # multi-minute budgets, and the scheduler deadline has to cover them
+        # too. The heatmap inputs should already be in GCS if that later
+        # work is cut off.
+        if new is not None:
+            try:
+                write_uploaded_baseline(ROOT / BASELINE_REL, new)
+            except Exception as baseline_err:
+                logger.warning(f"/tasks/refresh: headline baseline not recorded: {baseline_err}")
+        from src.dashboard.gcs_sync import upload_data, upload_ibkr, upload_us_backtest
+        us_uploaded = upload_us_backtest()
+
+        cdn_backtest = refresh_cdn_backtest()
+        vegas_market = refresh_qqq_vegas_market_cache()
+        vegas_signal = refresh_qqq_vegas_signal_cache()
+        risk_flags = refresh_risk_flags_cache()
+        uploaded_files = list(dict.fromkeys([*us_uploaded, *upload_data()]))
+
+        # Refresh & push IBKR live/paper account snapshot as part of daily refresh
+        # SUSPENDED: IBKR integration paused. Set ENABLE_IBKR=1 to re-enable.
+        # Tests and health checks must not set ENABLE_IBKR. This block is the
+        # only place a refresh opens a broker connection, and only when that
+        # flag is set.
+        ibkr_uploaded = []
+        if os.environ.get("ENABLE_IBKR", "0") == "1":
+            try:
+                ib_host = os.environ.get("IBKR_HOST", "10.128.0.2")
+                ib_port = os.environ.get("IBKR_PORT", "4002")
+                ib_cid = os.environ.get("IBKR_SNAP_CLIENT_ID", "99")
+                logger.info(f"/tasks/refresh: Fetching fresh IBKR account snapshot from {ib_host}:{ib_port} (clientId={ib_cid})...")
+                snap_res = subprocess.run(
+                    [sys.executable, "scripts/ibkr_snapshot.py", "--host", str(ib_host), "--port", str(ib_port), "--client-id", str(ib_cid)],
+                    capture_output=True, text=True, timeout=60
+                )
+                if snap_res.returncode == 0:
+                    logger.info("/tasks/refresh: IBKR snapshot generated successfully.")
+                    ibkr_uploaded = upload_ibkr()
+                else:
+                    logger.warning(f"/tasks/refresh: IBKR snapshot notice (rc={snap_res.returncode}): {(snap_res.stderr or snap_res.stdout)[-300:]}")
+            except Exception as ib_err:
+                logger.warning(f"/tasks/refresh: IBKR snapshot refresh error: {ib_err}")
+        else:
+            logger.info("/tasks/refresh: IBKR snapshot skipped (ENABLE_IBKR not set).")
+
+        headline = {}
+        try:
+            _df = load_backtest_results()
+            if not _df.empty:
+                _r = _df.iloc[0]
+                headline = {"strategy": str(_df.index[0]),
+                            "annual_return": str(_r.get("Annual Return", "")),
+                            "sharpe": str(_r.get("Sharpe Ratio", "")),
+                            "max_drawdown": str(_r.get("Max Drawdown", ""))}
+        except Exception:
+            pass
+        memory_reload = False
+        try:
+            _reload_published_book()
+            memory_reload = True
+        except Exception as reload_err:
+            logger.warning(f"/tasks/refresh: in-memory reload failed: {reload_err}")
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        logger.info(
+            f"/tasks/refresh OK at {ts}; uploaded {len(uploaded_files)} backtest + "
+            f"{len(ibkr_uploaded)} IBKR files to GCS. "
+            f"headline gate {gate.baseline_source} baseline={gate.baseline} new={new}"
+        )
+        return jsonify({"ok": True, "refreshed_at": ts, "uploaded": uploaded_files,
+                        "ibkr_uploaded": ibkr_uploaded,
+                        "qqq_vegas_market": vegas_market, "qqq_vegas_signal": vegas_signal,
+                        "risk_flags": risk_flags, "cdn_backtest": cdn_backtest,
+                        "headline": headline, "headline_gate": gate.as_dict(),
+                        "memory_reload": memory_reload})
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "timeout"}), 504
+    except Exception as e:
+        logger.error(f"/tasks/refresh error: {e}", exc_info=True)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+if __name__ == "__main__":
+    from src.dashboard.wsgi_app import serve
+    serve()

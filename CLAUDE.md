@@ -222,6 +222,13 @@ monthly rebalance.
   (see `.gcloudignore`). It now calls `run_optimized_regime_backtest` at all 4 sites —
   **the deployed app matches the config in §1.** If you change the production config,
   update **both** `run_backtest.py` and the 4 call sites in `run_dashboard.py`.
+- **Serving:** Gunicorn `gthread` (`python -m gunicorn -c gunicorn.conf.py wsgi:server`),
+  one worker, eight threads, `preload_app` false, worker timeout off. `/healthz` is
+  liveness and stays 200 during refresh. `/readyz` is the startup probe and is 503
+  until the Dash app is mounted. Comparison clocks and the display-only AI fetch run
+  in child processes. The once-per-worker thread notifies Hermes only; it does not
+  run an ungated backtest. Probe, min-instances, concurrency, and the 1800s request
+  timeout are in [`docs/cloud_run_serving.md`](docs/cloud_run_serving.md).
 - **Auto-refresh architecture (2026-07, replaces "redeploy to refresh"):** the caches
   persist in GCS bucket `montesfund-etf-dashboard-data` (`src/dashboard/gcs_sync.py`).
   - *Backtest/regime data:* Cloud Scheduler job `etf-daily-refresh` (11:00 UTC daily)
@@ -328,7 +335,8 @@ and cannot reach the local TWS socket, the bridge is a **snapshot file**:
 | `.github/workflows/notify.yml` | Cron + `workflow_dispatch` for that notifier (light FRED+SPY refresh). `test-notify.yml` is the offline unit job. |
 | `run_backtest.py` | CLI 20-yr validation; regenerates result CSVs; exits 3 if the series check fails |
 | `scripts/verify_consistency.py` | Reported CAGR/total vs heatmap compound vs equity CAGR and daily max DD |
-| `run_dashboard.py` | Deployed Dash app (Cloud Run); calls the production method |
+| `run_dashboard.py` | Dashboard load, routes, and the gated `/tasks/refresh` handler |
+| `wsgi.py`, `gunicorn.conf.py` | Cloud Run process. One gthread worker, no preload |
 | `config/regime_rules.py` | `REGIME_WEIGHTS`, risk limits, targets |
 | `optimize_strategy.py`, `extend_rp_mf.py` | Vectorized research harnesses (RP + MF prototypes) |
 | `RECOMMENDATION.md` | Full audit write-up & handoff (more detail than this file) |

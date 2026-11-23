@@ -962,30 +962,49 @@ def build_regime_tab(data):
 # ═══════════════════════════════════════════════════════════════════════════
 # TAB 2: PORTFOLIO — Execution & Rebalancing Strategy
 # ═══════════════════════════════════════════════════════════════════════════
-def _fetch_etf_market_data(tickers):
-    """Fetch current price and trailing P/E for a list of ETF tickers using yfinance."""
-    import yfinance as yf
-    prices = {}
-    pe_ratios = {}
-    try:
-        raw = yf.Tickers(' '.join(tickers))
-        for t in tickers:
-            try:
-                info = raw.tickers[t].fast_info
-                price = getattr(info, 'last_price', None)
-                prices[t] = f'${price:,.2f}' if price else '—'
-            except Exception:
-                prices[t] = '—'
-            try:
-                full_info = raw.tickers[t].info
-                pe = full_info.get('trailingPE') or full_info.get('forwardPE')
-                pe_label = 'fwd' if (pe and not full_info.get('trailingPE')) else 'ttm'
-                pe_ratios[t] = f'{pe:.1f}x ({pe_label})' if pe else 'N/A'
-            except Exception:
-                pe_ratios[t] = 'N/A'
-    except Exception:
-        pass
-    return prices, pe_ratios
+def _fetch_etf_market_data(tickers, timeout=8):
+    """Current price and trailing P/E. Display only.
+
+    An empty sleeve does not call Yahoo. A slow or missing yfinance install
+    cannot block dashboard startup past ``timeout`` seconds; the cells stay
+    blank, which is the same result as a failed fetch.
+    """
+    prices = {t: '—' for t in tickers}
+    pe_ratios = {t: 'N/A' for t in tickers}
+    if not tickers:
+        return prices, pe_ratios
+
+    box = {}
+
+    def _work():
+        try:
+            import yfinance as yf
+            raw = yf.Tickers(' '.join(tickers))
+            got_px, got_pe = {}, {}
+            for t in tickers:
+                try:
+                    info = raw.tickers[t].fast_info
+                    price = getattr(info, 'last_price', None)
+                    got_px[t] = f'${price:,.2f}' if price else '—'
+                except Exception:
+                    got_px[t] = '—'
+                try:
+                    full_info = raw.tickers[t].info
+                    pe = full_info.get('trailingPE') or full_info.get('forwardPE')
+                    pe_label = 'fwd' if (pe and not full_info.get('trailingPE')) else 'ttm'
+                    got_pe[t] = f'{pe:.1f}x ({pe_label})' if pe else 'N/A'
+                except Exception:
+                    got_pe[t] = 'N/A'
+            box['prices'] = got_px
+            box['pe'] = got_pe
+        except Exception:
+            pass
+
+    import threading
+    worker = threading.Thread(target=_work, name='etf-quote-fetch', daemon=True)
+    worker.start()
+    worker.join(timeout)
+    return box.get('prices', prices), box.get('pe', pe_ratios)
 
 
 def _load_tax_study():
@@ -5376,16 +5395,11 @@ def build_qqq_vegas_tab(bundle=None):
 # ═══════════════════════════════════════════════════════════════════════════
 # APP FACTORY
 # ═══════════════════════════════════════════════════════════════════════════
-def create_app(data):
-
-    app = dash.Dash(__name__, external_stylesheets=[dbc.themes.DARKLY,
-        'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap'],
-        title='ETF Regime Strategist', suppress_callback_exceptions=True)
-
+def render_shell(data):
+    """Layout tree. ``mount_layout`` rebuilds it after a gated refresh."""
     regime = data.get('current_regime', 'goldilocks')
     rc = REGIME_COLORS.get(regime, '#ccc')
-
-    app.layout = html.Div([
+    return html.Div([
         html.Div([dbc.Row([
             dbc.Col([
                 html.H3('🏦 ETF Regime Strategist', style={'margin': '0', 'fontWeight': '700',
@@ -5414,6 +5428,19 @@ def create_app(data):
         ], id='tabs', active_tab='t1', style={'marginBottom': '16px', 'padding': '0 20px'}),
         dcc.Interval(id='refresh-interval', interval=5*60*1000, n_intervals=0),
     ], style={'fontFamily': 'Inter, sans-serif', 'minHeight': '100vh', 'backgroundColor': '#0f0f1e', 'paddingBottom': '30px'})
+
+
+def mount_layout(app, data):
+    """Replace the served layout. Callbacks registered by ``create_app`` stay."""
+    app.layout = render_shell(data)
+
+
+def create_app(data):
+
+    app = dash.Dash(__name__, external_stylesheets=[dbc.themes.DARKLY,
+        'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap'],
+        title='ETF Regime Strategist', suppress_callback_exceptions=True)
+    mount_layout(app, data)
 
     @app.callback(Output('refresh-ts', 'children'), Input('refresh-interval', 'n_intervals'))
     def update_ts(n):

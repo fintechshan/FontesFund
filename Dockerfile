@@ -39,5 +39,6 @@ COPY . .
 # Expose port (Cloud Run will override this via $PORT, but 8080 is default)
 EXPOSE 8080
 
-# Launch the launcher script
-CMD ["python", "run_dashboard.py"]
+# One gthread worker. preload is off (see gunicorn.conf.py). python run_dashboard.py
+# remains the local threaded fallback and is not the Cloud Run process.
+CMD ["python", "-m", "gunicorn", "-c", "gunicorn.conf.py", "wsgi:server"]
