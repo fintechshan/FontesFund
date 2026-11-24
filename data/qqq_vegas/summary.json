@@ -8,10 +8,10 @@
   "engine": "close-to-close + shift(1) weights; cost_bps on QQQ+2x L1; cash IRX→BIL; QLD real after 2006-06-21 else synthetic 2x",
   "cost_bps": 4.0,
   "w_qld": 0.3,
-  "as_of": "2026-11-20",
-  "generated_at": "2026-11-21T02:48:03Z",
+  "as_of": "2026-11-23",
+  "generated_at": "2026-11-24T06:36:37Z",
   "start_date": "1999-01-04",
-  "end_date": "2026-11-20",
+  "end_date": "2026-11-23",
   "note": "Full sample from 1999-01-04 (dot-com covered). Prior Fontes UI pack started ~2010; start_date is now 1999-01-04. Metrics target ~CAGR 14.9% / MaxDD -27.8% matching factor_dig and_rv20_q80.",
   "rules": {
     "zh": [
@@ -34,32 +34,32 @@
       "use_cash_yield": true,
       "cost_bps": 4.0,
       "full": {
-        "CAGR": 0.147011,
+        "CAGR": 0.146969,
         "CAGR_pct": 14.7,
         "MaxDD": -0.278079,
         "MaxDD_pct": -27.81,
         "MaxDD_Date": "2005-10-28",
         "Sharpe": 0.829,
-        "Calmar": 0.5287,
+        "Calmar": 0.5285,
         "Vol_pct": 18.68,
         "start": "1999-01-05",
-        "end": "2026-11-20",
-        "n_days": 7014,
-        "final_nav": 45.7501
+        "end": "2026-11-23",
+        "n_days": 7015,
+        "final_nav": 45.7551
       },
       "oos": {
-        "CAGR": 0.17588,
-        "CAGR_pct": 17.59,
+        "CAGR": 0.175636,
+        "CAGR_pct": 17.56,
         "MaxDD": -0.174044,
         "MaxDD_pct": -17.4,
         "MaxDD_Date": "2024-09-09",
-        "Sharpe": 0.9143,
-        "Calmar": 1.0105,
-        "Vol_pct": 19.92,
+        "Sharpe": 0.9141,
+        "Calmar": 1.0091,
+        "Vol_pct": 19.91,
         "start": "2021-01-04",
-        "end": "2026-11-20",
-        "n_days": 1479,
-        "final_nav": 2.5907
+        "end": "2026-11-23",
+        "n_days": 1480,
+        "final_nav": 2.591
       },
       "p1999_2009": {
         "CAGR": 0.108576,
@@ -76,25 +76,25 @@
         "final_nav": 3.1043
       },
       "p2010_2026": {
-        "CAGR": 0.172844,
+        "CAGR": 0.172761,
         "CAGR_pct": 17.28,
         "MaxDD": -0.25817,
         "MaxDD_pct": -25.82,
         "MaxDD_Date": "2010-08-16",
-        "Sharpe": 0.9356,
-        "Calmar": 0.6695,
+        "Sharpe": 0.9355,
+        "Calmar": 0.6692,
         "Vol_pct": 19.0,
         "start": "2010-01-04",
-        "end": "2026-11-20",
-        "n_days": 4248,
-        "final_nav": 14.7403
+        "end": "2026-11-23",
+        "n_days": 4249,
+        "final_nav": 14.742
       }
     },
     "vegas_1_3x_same_engine": {
       "name": "对比：纯 Vegas 1.3x（同 1999 引擎/拼接）",
       "w_qld": 0.3,
       "full": {
-        "CAGR": 0.127904,
+        "CAGR": 0.127868,
         "CAGR_pct": 12.79,
         "MaxDD": -0.635587,
         "MaxDD_pct": -63.56,
@@ -103,54 +103,54 @@
         "Calmar": 0.2012,
         "Vol_pct": 21.37,
         "start": "1999-01-05",
-        "end": "2026-11-20",
-        "n_days": 7014,
-        "final_nav": 28.644
+        "end": "2026-11-23",
+        "n_days": 7015,
+        "final_nav": 28.6471
       },
       "oos": {
-        "CAGR": 0.170808,
-        "CAGR_pct": 17.08,
+        "CAGR": 0.170572,
+        "CAGR_pct": 17.06,
         "MaxDD": -0.174044,
         "MaxDD_pct": -17.4,
         "MaxDD_Date": "2024-09-09",
-        "Sharpe": 0.8849,
-        "Calmar": 0.9814,
-        "Vol_pct": 20.14,
+        "Sharpe": 0.8847,
+        "Calmar": 0.9801,
+        "Vol_pct": 20.13,
         "start": "2021-01-04",
-        "end": "2026-11-20",
-        "n_days": 1479,
-        "final_nav": 2.5257
+        "end": "2026-11-23",
+        "n_days": 1480,
+        "final_nav": 2.526
       },
       "p2010_2026": {
-        "CAGR": 0.166379,
-        "CAGR_pct": 16.64,
+        "CAGR": 0.1663,
+        "CAGR_pct": 16.63,
         "MaxDD": -0.25817,
         "MaxDD_pct": -25.82,
         "MaxDD_Date": "2010-08-16",
-        "Sharpe": 0.8832,
-        "Calmar": 0.6445,
+        "Sharpe": 0.8831,
+        "Calmar": 0.6441,
         "Vol_pct": 19.64,
         "start": "2010-01-04",
-        "end": "2026-11-20",
-        "n_days": 4248,
-        "final_nav": 13.4276
+        "end": "2026-11-23",
+        "n_days": 4249,
+        "final_nav": 13.429
       }
     }
   },
   "buy_hold_qqq": {
     "full": {
-      "CAGR": 0.103483,
-      "CAGR_pct": 10.35,
+      "CAGR": 0.106131,
+      "CAGR_pct": 10.61,
       "MaxDD": -0.829639,
       "MaxDD_pct": -82.96,
       "MaxDD_Date": "2002-10-09",
-      "Sharpe": 0.5,
-      "Calmar": 0.1247,
-      "Vol_pct": 27.02,
+      "Sharpe": 0.5086,
+      "Calmar": 0.1279,
+      "Vol_pct": 27.05,
       "start": "1999-01-05",
-      "end": "2026-11-20",
-      "n_days": 7014,
-      "final_nav": 15.5614
+      "end": "2026-11-23",
+      "n_days": 7015,
+      "final_nav": 16.6504
     }
   },
   "compare_to_prior_vegas": {
@@ -160,10 +160,10 @@
       "dCAGR_pp": 1.91,
       "dMaxDD_pp": 35.75,
       "dSharpe": 0.1577,
-      "dCalmar": 0.3275
+      "dCalmar": 0.3273
     },
     "prior_full": {
-      "CAGR": 0.127904,
+      "CAGR": 0.127868,
       "CAGR_pct": 12.79,
       "MaxDD": -0.635587,
       "MaxDD_pct": -63.56,
@@ -172,23 +172,23 @@
       "Calmar": 0.2012,
       "Vol_pct": 21.37,
       "start": "1999-01-05",
-      "end": "2026-11-20",
-      "n_days": 7014,
-      "final_nav": 28.644
+      "end": "2026-11-23",
+      "n_days": 7015,
+      "final_nav": 28.6471
     },
     "new_full": {
-      "CAGR": 0.147011,
+      "CAGR": 0.146969,
       "CAGR_pct": 14.7,
       "MaxDD": -0.278079,
       "MaxDD_pct": -27.81,
       "MaxDD_Date": "2005-10-28",
       "Sharpe": 0.829,
-      "Calmar": 0.5287,
+      "Calmar": 0.5285,
       "Vol_pct": 18.68,
       "start": "1999-01-05",
-      "end": "2026-11-20",
-      "n_days": 7014,
-      "final_nav": 45.7501
+      "end": "2026-11-23",
+      "n_days": 7015,
+      "final_nav": 45.7551
     }
   },
   "data_splices": {
