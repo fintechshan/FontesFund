@@ -4,8 +4,8 @@
   "name_zh": "Vegas∧RV20≤扩窗Q80 1.3x（70% QQQ + 30% QLD，空仓现金）",
   "version": "v9_rv20_q80",
   "filter_version": "v5_rv20_q80",
-  "asof": "2026-11-23",
-  "generated_at": "2026-11-24T06:36:37Z",
+  "asof": "2026-11-24",
+  "generated_at": "2026-11-25T05:09:46Z",
   "replaces": "qqq_vegas_1_3x",
   "rules": {
     "zh": [
@@ -35,14 +35,14 @@
   "current_pos": 0,
   "vegas": 0,
   "rv_ok": 0,
-  "rv20": 0.479987,
-  "rv20_q80": 0.31282,
+  "rv20": 0.478832,
+  "rv20_q80": 0.312899,
   "current_weights": {
     "QQQ": 0.0,
     "QLD": 0.0,
     "BIL": 1.0
   },
-  "last_signal_date": "2026-11-23",
+  "last_signal_date": "2026-11-24",
   "last_rebalance_date": "2026-11-02",
   "last_rebalance_action": "EXIT",
   "metrics": {
@@ -50,25 +50,25 @@
       "CAGR_pct": 14.7,
       "MaxDD_pct": -27.81,
       "MaxDD_Date": "2005-10-28",
-      "Sharpe": 0.829,
+      "Sharpe": 0.8289,
       "Calmar": 0.5285,
       "start": "1999-01-05",
-      "end": "2026-11-23"
+      "end": "2026-11-24"
     },
     "oos": {
       "CAGR_pct": 17.56,
       "MaxDD_pct": -17.4,
       "MaxDD_Date": "2024-09-09",
-      "Sharpe": 0.9141,
-      "Calmar": 1.0091,
+      "Sharpe": 0.9139,
+      "Calmar": 1.0088,
       "start": "2021-01-04",
-      "end": "2026-11-23"
+      "end": "2026-11-24"
     },
     "p2010_2026": {
-      "CAGR_pct": 17.28,
+      "CAGR_pct": 17.27,
       "MaxDD_pct": -25.82,
-      "Sharpe": 0.9355,
-      "Calmar": 0.6692
+      "Sharpe": 0.9354,
+      "Calmar": 0.6691
     },
     "engine": "close-to-close + shift(1) weights; cost_bps on QQQ+2x L1; cash IRX→BIL; QLD real after 2006-06-21 else synthetic 2x",
     "cost_bps": 4.0
