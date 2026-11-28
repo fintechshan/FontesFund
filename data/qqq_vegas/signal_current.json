@@ -2,9 +2,9 @@
   "strategy_id": "qqq_vegas_rv20_q80",
   "backtest_tag": "v9_rv20_q80",
   "signal_name": "Vegas Tunnel ∧ RV20≤expanding Q80 (v5)",
-  "as_of": "2026-11-25",
-  "signal_date": "2026-11-25",
-  "exec_date": "2026-11-25",
+  "as_of": "2026-11-27",
+  "signal_date": "2026-11-27",
+  "exec_date": "2026-11-27",
   "state": "CASH",
   "weights": {
     "QQQ": 0.0,
@@ -19,14 +19,14 @@
   "current_pos": 0,
   "vegas": 0,
   "rv_ok": 0,
-  "rv20": 0.476826,
-  "rv20_q80": 0.312986,
-  "mom189": 0.04407,
-  "qqq_close": 36.8627,
-  "sma150": 41.2179,
-  "vegas_low": 39.9436,
+  "rv20": 0.489958,
+  "rv20_q80": 0.313031,
+  "mom189": 0.07561,
+  "qqq_close": 37.8548,
+  "sma150": 41.2134,
+  "vegas_low": 39.919,
   "next_action": "HOLD",
-  "reason": "Mom189=OK (0.0441); Close>SMA150=OFF; Close>=VegasLow=OFF; RV20<=Q80=OFF (rv20=0.4768, q80=0.3130) → CASH",
+  "reason": "Mom189=OK (0.0756); Close>SMA150=OFF; Close>=VegasLow=OFF; RV20<=Q80=OFF (rv20=0.4900, q80=0.3130) → CASH",
   "last_rebalance": {
     "date": "2026-11-02",
     "action": "EXIT",
@@ -36,32 +36,32 @@
   "filter_version": "v5_rv20_q80",
   "metrics": {
     "full": {
-      "cagr": 0.146956,
+      "cagr": 0.146939,
       "max_dd": -0.278079,
       "sharpe": 0.829,
-      "cagr_pct": 14.7,
+      "cagr_pct": 14.69,
       "max_dd_pct": -27.81,
       "max_dd_date": "2005-10-28",
-      "calmar": 0.5285,
+      "calmar": 0.5284,
       "start": "1999-01-05",
-      "end": "2026-11-25"
+      "end": "2026-11-27"
     },
     "oos": {
-      "cagr": 0.175547,
+      "cagr": 0.175435,
       "max_dd": -0.174044,
       "sharpe": 0.9138,
-      "cagr_pct": 17.55,
+      "cagr_pct": 17.54,
       "max_dd_pct": -17.4,
       "max_dd_date": "2024-09-09",
-      "calmar": 1.0086,
+      "calmar": 1.008,
       "start": "2021-01-04",
-      "end": "2026-11-25"
+      "end": "2026-11-27"
     },
     "p2010_2026": {
       "cagr_pct": 17.27,
       "max_dd_pct": -25.82,
       "sharpe": 0.9354,
-      "calmar": 0.6691
+      "calmar": 0.6689
     }
   },
   "disclaimer": "Backtest only. Not investment advice. Not live trading."
