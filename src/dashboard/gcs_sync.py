@@ -39,6 +39,16 @@ VEGAS_SIGNAL_FILES = [
     'data/qqq_vegas/live_snapshot.json',
 ]
 
+# Paper 2-day confirmation. Not the locked v9 sleeve and not a live order.
+VEGAS_SHADOW_FILES = [
+    'data/qqq_vegas/shadow_2day_confirm/daily_signal.csv',
+    'data/qqq_vegas/shadow_2day_confirm/equity_curve.csv',
+    'data/qqq_vegas/shadow_2day_confirm/rebalances.csv',
+    'data/qqq_vegas/shadow_2day_confirm/monthly_returns.csv',
+    'data/qqq_vegas/shadow_2day_confirm/yearly_returns.csv',
+    'data/qqq_vegas/shadow_2day_confirm/summary.json',
+]
+
 # Notify-only risk scorecard. Display and the weekday notifier. Not a weight input.
 RISK_FLAG_FILES = [
     'data/risk_flags/flags.json',
@@ -70,6 +80,7 @@ SYNC_FILES = [
     'data/cache/gsblbr_history.csv',
     *VEGAS_MARKET_FILES,
     *VEGAS_SIGNAL_FILES,
+    *VEGAS_SHADOW_FILES,
     *RISK_FLAG_FILES,
 ]
 
@@ -301,6 +312,11 @@ def download_vegas_signal():
 def upload_vegas_signal():
     """local -> GCS for the v9 sleeve when the Merrill backtest did not upload."""
     return _upload(VEGAS_SIGNAL_FILES)
+
+
+def upload_vegas_shadow():
+    """local -> GCS for the paper 2-day shadow. Does not upload the official sleeve."""
+    return _upload(VEGAS_SHADOW_FILES)
 
 
 def upload_risk_flags():

@@ -936,6 +936,134 @@ def build_weekly_audit_section(weekly_snapshot: Optional[Dict[str, Any]] = None)
         })
 
 
+def _fmt_ledger_pct(value) -> str:
+    try:
+        return f"{float(value) * 100:.2f}%"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _fmt_ledger_bps(value) -> str:
+    try:
+        return f"{float(value):.1f} bps"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _overlay_cost_ledger_block(snap: Dict[str, Any]):
+    """Section 7b. Diagnostic turnover ledger. Not a consistency gate."""
+    from dash import html
+
+    ledger = snap.get("overlay_cost_ledger") if isinstance(snap.get("overlay_cost_ledger"), dict) else {}
+    box = {
+        "backgroundColor": "#16213e",
+        "border": "1px dashed #f5a623",
+        "borderRadius": "12px",
+        "padding": "14px",
+        "marginTop": "12px",
+    }
+    title = html.Div(
+        "7b. Overlay turnover cost ledger · 日频换手成本诊断",
+        style={"color": "#f5a623", "fontWeight": "700", "marginBottom": "6px"},
+    )
+    banner = html.Div(
+        "DIAGNOSTIC ONLY · 不改官方净值、不改 STRATEGY_PARAMS、不改实盘仓位。",
+        style={"color": "#f5a623", "fontSize": "12px", "fontWeight": "700", "marginBottom": "6px"},
+    )
+    if not ledger:
+        return html.Div([
+            title,
+            banner,
+            html.Div(
+                "本快照没有 overlay_cost_ledger。运行 python scripts/overlay_cost_ledger.py（需要价格与宏观缓存）"
+                "或等待下一次 run_backtest.py 写入 data/backtest_results/overlay_cost_ledger.json。",
+                style={"color": "#c8c8d4", "fontSize": "12px"},
+            ),
+        ], id="auditor-overlay-cost-ledger", style=box)
+
+    formula = ledger.get("formula") or ""
+    status = ledger.get("status") or "not_computed"
+    assumptions = ledger.get("bps_assumptions") if isinstance(ledger.get("bps_assumptions"), dict) else {}
+    lines = [
+        f"status {status} · as_of {ledger.get('as_of') or '—'} · "
+        f"turnover_basis {ledger.get('turnover_basis') or '—'} · "
+        f"apply_equity_cut {ledger.get('apply_equity_cut')}",
+        f"5 bps = production one-way rate. 8 bps = sensitivity only "
+        f"(embedded stays at {assumptions.get('embedded_bps', assumptions.get('production_one_way_bps', 5))} bps).",
+        formula,
+    ]
+    published = ledger.get("vs_published_path_b_window") if isinstance(ledger.get("vs_published_path_b_window"), dict) else {}
+    if published:
+        lines.append(
+            f"Published Path B window through {published.get('as_of') or '—'}: "
+            "drag below is this recompute cut to that date, not a new official CAGR."
+        )
+        published_versus = published.get("vs_official_unadjusted") if isinstance(published.get("vs_official_unadjusted"), dict) else {}
+        for label, key in (("5 bps", "at_5bps"), ("8 bps", "at_8bps")):
+            block = published_versus.get(key) if isinstance(published_versus.get(key), dict) else None
+            if not block:
+                continue
+            lines.append(
+                f"Path B window {label}: unadjusted CAGR {_fmt_ledger_pct(block.get('official_cagr'))} → "
+                f"adjusted {_fmt_ledger_pct(block.get('adjusted_cagr'))} "
+                f"(CAGR drag {_fmt_ledger_bps(block.get('cagr_drag_bps'))}, "
+                f"sample total drag {_fmt_ledger_bps(block.get('total_return_drag_bps'))}, "
+                f"arithmetic annual drag {_fmt_ledger_bps(block.get('arithmetic_annual_drag_bps'))})."
+            )
+    versus = ledger.get("vs_official_unadjusted") if isinstance(ledger.get("vs_official_unadjusted"), dict) else {}
+    if published and versus:
+        lines.append(f"Full recompute through {ledger.get('as_of') or '—'} (includes sessions after the published CSV):")
+    for label, key in (("5 bps", "at_5bps"), ("8 bps", "at_8bps")):
+        block = versus.get(key) if isinstance(versus.get(key), dict) else None
+        if not block:
+            continue
+        lines.append(
+            f"{label}: official CAGR {_fmt_ledger_pct(block.get('official_cagr'))} → "
+            f"adjusted {_fmt_ledger_pct(block.get('adjusted_cagr'))} "
+            f"(CAGR drag {_fmt_ledger_bps(block.get('cagr_drag_bps'))}, "
+            f"sample total drag {_fmt_ledger_bps(block.get('total_return_drag_bps'))}, "
+            f"arithmetic annual drag {_fmt_ledger_bps(block.get('arithmetic_annual_drag_bps'))})."
+        )
+    book = ledger.get("still_uncosted_if_book_basis") if isinstance(ledger.get("still_uncosted_if_book_basis"), dict) else {}
+    book_5 = book.get("at_5bps") if isinstance(book.get("at_5bps"), dict) else None
+    if book_5:
+        lines.append(
+            "If the charge were book-basis at 5 bps, final-position turnover would still leave "
+            f"CAGR drag {_fmt_ledger_bps(book_5.get('cagr_drag_bps'))} "
+            f"(arithmetic annual {_fmt_ledger_bps(book_5.get('arithmetic_annual_drag_bps'))}). "
+            "That counterfactual is not applied to the official path."
+        )
+    turnover = ledger.get("turnover") if isinstance(ledger.get("turnover"), dict) else {}
+    if turnover:
+        lines.append(
+            "Annualized one-way turnover: "
+            f"final position {turnover.get('final_position_one_way_annualized')} · "
+            f"legacy W_base {turnover.get('legacy_w_base_one_way_annualized')} · "
+            f"pre-leverage book {turnover.get('preleverage_book_one_way_annualized')}."
+        )
+    saved = ledger.get("saved_equity_rail") if isinstance(ledger.get("saved_equity_rail"), dict) else {}
+    if saved:
+        lines.append(
+            f"Saved rail {saved.get('path')} ends {saved.get('saved_end')} · "
+            f"this run ends {saved.get('engine_end')} · "
+            f"max abs equity gap {saved.get('max_abs_equity_gap')}."
+        )
+        if saved.get("note"):
+            lines.append(str(saved["note"]))
+    if ledger.get("price_source"):
+        lines.append(str(ledger["price_source"]))
+    if ledger.get("reason"):
+        lines.append(str(ledger["reason"]))
+    return html.Div([
+        title,
+        banner,
+        html.Div(
+            [html.Div(line, style={"marginBottom": "4px"}) for line in lines if line],
+            style={"color": "#c8c8d4", "fontSize": "12px", "lineHeight": "1.45"},
+        ),
+    ], id="auditor-overlay-cost-ledger", style=box)
+
+
 def _build_weekly_audit_section(weekly_snapshot: Optional[Dict[str, Any]] = None):
     from dash import html
     import dash_bootstrap_components as dbc
@@ -1043,8 +1171,10 @@ def _build_weekly_audit_section(weekly_snapshot: Optional[Dict[str, Any]] = None
         dbc.Row(cards, className="mb-3"),
         dbc.Row([pack_card], className="mb-3"),
         notes_div,
+        _overlay_cost_ledger_block(snap),
         html.Div(
-            f"Source: data/weekly_audit_snapshot.json · Tolerances: CAGR ±5 bps, Total ±10 bps, Daily MaxDD ±5 bps.",
+            f"Source: data/weekly_audit_snapshot.json · Tolerances: CAGR ±5 bps, Total ±10 bps, Daily MaxDD ±5 bps. "
+            "Section 7b is a diagnostic and is outside those tolerances.",
             style={"color": "#6c757d", "fontSize": "11px", "marginTop": "8px"},
         ),
     ], id="auditor-section-7", style={

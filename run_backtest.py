@@ -20,6 +20,7 @@ performance (+1.13% CAGR, +0.10 Sharpe) but degraded out-of-sample performance b
 Consequently, baseline weights are retained in production for out-of-sample robustness.
 """
 
+import json
 import sys
 import os
 from pathlib import Path
@@ -490,6 +491,28 @@ if vol_result.monthly_returns is not None:
     vol_result.monthly_returns.to_csv(results_dir / "aggressive_monthly_returns.csv")
 
 logger.info(f"\nResults saved to {results_dir}")
+
+def _write_overlay_cost_ledger(result) -> None:
+    """Diagnostic JSON only. Official equity CSVs are already written."""
+    payload = getattr(result, "cost_ledger", None)
+    if not isinstance(payload, dict):
+        return
+    try:
+        from src.backtester.overlay_cost_ledger import attach_saved_equity_rail
+        saved_path = results_dir / "aggressive_equity_curve.csv"
+        body = dict(payload)
+        if result.equity_curve is not None and saved_path.is_file():
+            saved = pd.read_csv(saved_path, index_col=0, parse_dates=True).iloc[:, 0]
+            body = attach_saved_equity_rail(
+                body, result.equity_curve, saved, "data/backtest_results/aggressive_equity_curve.csv",
+            )
+        (results_dir / "overlay_cost_ledger.json").write_text(
+            json.dumps(body, indent=2, ensure_ascii=False) + "\n", encoding="utf-8",
+        )
+    except Exception as exc:
+        logger.warning("overlay cost ledger was not written: %s", exc)
+
+_write_overlay_cost_ledger(vol_result)
 
 from src.backtester.consistency import verify_series
 _consistency = verify_series(

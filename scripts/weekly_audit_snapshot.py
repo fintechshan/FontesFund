@@ -14,8 +14,11 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from src.backtester.overlay_cost_ledger import unavailable_ledger
+
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT = ROOT / "data" / "weekly_audit_snapshot.json"
+LEDGER_JSON = ROOT / "data" / "backtest_results" / "overlay_cost_ledger.json"
 COMPARISON_CSV = ROOT / "data" / "backtest_results" / "20yr_comparison.csv"
 LAG_HONESTY_CSV = ROOT / "data" / "backtest_results" / "lag_honesty.csv"
 EQUITY_CSV = ROOT / "data" / "backtest_results" / "aggressive_equity_curve.csv"
@@ -189,6 +192,26 @@ def fetch_live_sleeve_prices(refresh: bool = False) -> Dict[str, Any]:
         return {"refreshed": False, "error": str(exc), "tickers": {}}
 
 
+def load_overlay_cost_ledger(path: Optional[Path] = None) -> Dict[str, Any]:
+    """Read the diagnostic ledger. Missing file does not fail section 7."""
+    target = path or LEDGER_JSON
+    if not target.exists():
+        return unavailable_ledger(
+            "data/backtest_results/overlay_cost_ledger.json is not in this checkout. "
+            "The formula is registered. Official Path B equity is unchanged."
+        )
+    try:
+        payload = json.loads(target.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return unavailable_ledger(f"overlay cost ledger could not be read: {exc}")
+    if not isinstance(payload, dict):
+        return unavailable_ledger("overlay cost ledger JSON was not an object.")
+    payload.setdefault("diagnostic_only", True)
+    payload.setdefault("changes_official_equity", False)
+    payload.setdefault("changes_live_positions", False)
+    return payload
+
+
 def build_snapshot(refresh: bool = False) -> Dict[str, Any]:
     now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     bt = check_backtest_consistency()
@@ -276,6 +299,8 @@ def build_snapshot(refresh: bool = False) -> Dict[str, Any]:
                 for row in pack_rows
             ],
         },
+        # Diagnostic. Not an input to overall_status.
+        "overlay_cost_ledger": load_overlay_cost_ledger(),
     }
 
 

@@ -174,6 +174,15 @@ vol_method='realized', use_har_vol=True,
 # position cap: MAX_REGIME_WEIGHT (currently 0.35)
 ```
 
+Auditor section 7b (`src/backtester/overlay_cost_ledger.py`) reprices daily
+turnover of `vol_scale * dd_scale * w_book` at 5 bps and at an 8 bps
+sensitivity. It does not change official equity, `turnover_basis`, or live
+weights. 8 bps is not `transaction_cost_bps`.
+
+`data/qqq_vegas/shadow_2day_confirm/` is a paper 2-day confirmation of the
+locked v9 boolean (entry and exit). It is not the live card, not an order,
+and not a notify input. Official `data/qqq_vegas` files stay authoritative.
+
 ## 2. What changed and WHY (do not revert)
 
 The CAGR and Sharpe figures in this section are the 2026-06 overlay history. They are
@@ -326,6 +335,8 @@ and cannot reach the local TWS socket, the bridge is a **snapshot file**:
 | `src/backtester/regime_clock.py` | Targeted clock (default), look-ahead / unlagged / auditor / first-release vintage |
 | `scripts/ab_vintage.py` | A/B/C, common inception, coverage, publication-lag percentiles |
 | `src/backtester/daily_overlay.py` | Live notionals from the engine’s last-day overlay |
+| `src/backtester/overlay_cost_ledger.py` | Read-only final-position turnover diagnostic. Not a weight input |
+| `data/qqq_vegas/shadow_2day_confirm/` | Paper 2-day confirmation of locked v9. Not the live card |
 | `scripts/ibkr_snapshot.py` | Read-only IBKR snapshot → `data/cache/ibkr_account.json` (Execution tab) |
 | `scripts/ibkr_rebalance.py` | Local paper/live rebalance to current regime weights (`--execute`) |
 | `scripts/notify_regime.py` | Weekday regime / VIX-band Issue. Silent when unchanged. Risk flags ride the same Issue on a rising edge only. See `docs/notify.md`. |
