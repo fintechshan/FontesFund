@@ -114,6 +114,11 @@ def _upload_qqq_vegas_signal():
         upload_vegas_signal()
     except Exception as exc:
         logger.warning(f"/tasks/refresh: QQQ Vegas signal upload skipped: {exc}")
+    try:
+        from src.dashboard.gcs_sync import upload_vegas_shadow
+        upload_vegas_shadow()
+    except Exception as exc:
+        logger.warning(f"/tasks/refresh: QQQ Vegas shadow upload skipped: {exc}")
 
 
 def refresh_cdn_backtest():

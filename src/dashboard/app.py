@@ -5374,7 +5374,21 @@ def _build_qqq_vegas_body(bundle):
                 stamps['as_of_live'],
             ),
         ], style={**CS, 'marginBottom': '16px', 'border': f'1px solid {match_color}'}),
+        _safe_qqq_vegas_shadow_panel(),
     ], id='qqq-vegas-root', style={'padding': '0 4px'})
+
+
+def _safe_qqq_vegas_shadow_panel():
+    """Experimental panel. A shadow failure must not replace the official v9 card."""
+    try:
+        from src.dashboard.qqq_vegas_shadow import build_shadow_panel
+        return build_shadow_panel()
+    except Exception:
+        return html.Div(
+            "影子面板无法渲染。官方 v9 卡未改。",
+            id="qqq-vegas-shadow",
+            style={"color": "#f5a623", "fontSize": "12px", "marginBottom": "16px"},
+        )
 
 
 def build_qqq_vegas_tab(bundle=None):

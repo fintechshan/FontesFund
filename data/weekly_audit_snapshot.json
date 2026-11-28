@@ -162,5 +162,150 @@
         "detail": "CDN regime book equity ends 2026-10-30 and config as_of is 2026-11-01. run_cdn_backtest.py rewrites the curve, the monthly file, and the config together. There is no separate rebalance table."
       }
     ]
+  },
+  "overlay_cost_ledger": {
+    "status": "computed",
+    "diagnostic_only": true,
+    "changes_official_equity": false,
+    "changes_live_positions": false,
+    "formula_id": "final_position_half_l1_v1",
+    "formula": "w_final = vol_scale * dd_scale * w_book; one_way = 0.5 * L1(w_final_t - w_final_{t-1}); cost(bps) = one_way * bps / 10000; embedded(legacy) = blend * one_way(W_base) * transaction_cost_bps * vol_scale * dd_scale; blend = trend_ok + (1 - trend_ok) * bear_equity_frac; missed(bps) = cost(bps) - embedded; drag = official unadjusted CAGR/total minus the same statistics after subtracting missed. 8 bps is a sensitivity. Official equity is not rewritten.",
+    "as_of": "2026-11-27",
+    "sample_start": "2005-01-04",
+    "sessions": 5510,
+    "turnover_basis": "legacy",
+    "apply_equity_cut": false,
+    "transaction_cost_bps": 5.0,
+    "bear_equity_frac": 0.7,
+    "bps_assumptions": {
+      "production_one_way_bps": 5.0,
+      "sensitivity_one_way_bps": 8.0,
+      "embedded_bps": 5.0,
+      "note": "5 bps is the production one-way rate. 8 bps reprices the same final-position turnover and does not change transaction_cost_bps. Embedded cost stays at the rate this run actually charged."
+    },
+    "turnover": {
+      "final_position_one_way_annualized": 7.969670993139764,
+      "legacy_w_base_one_way_annualized": 1.0145427128879754,
+      "preleverage_book_one_way_annualized": 2.0342256843231863,
+      "definition": "annualized = mean(daily one-way turnover) * 252"
+    },
+    "vs_official_unadjusted": {
+      "at_5bps": {
+        "arithmetic_annual_drag": 0.0034136186508919608,
+        "sum_of_daily_drag": 0.07463904272386787,
+        "official_cagr": 0.12747106481563142,
+        "official_total_return": 12.78125652427874,
+        "adjusted_cagr": 0.12363136678141307,
+        "adjusted_total_return": 11.790708199594404,
+        "cagr_drag": 0.003839698034218353,
+        "total_return_drag": 0.9905483246843367,
+        "cagr_drag_bps": 38.396980342183525,
+        "total_return_drag_bps": 9905.483246843367,
+        "arithmetic_annual_drag_bps": 34.13618650891961,
+        "years_252": 21.865079365079364
+      },
+      "at_8bps": {
+        "arithmetic_annual_drag": 0.00580451994883389,
+        "sum_of_daily_drag": 0.12691628935743943,
+        "official_cagr": 0.12747106481563142,
+        "official_total_return": 12.78125652427874,
+        "adjusted_cagr": 0.12095038754219911,
+        "adjusted_total_return": 11.139767931525565,
+        "cagr_drag": 0.006520677273432307,
+        "total_return_drag": 1.6414885927531753,
+        "cagr_drag_bps": 65.20677273432307,
+        "total_return_drag_bps": 16414.88592753175,
+        "arithmetic_annual_drag_bps": 58.0451994883389,
+        "years_252": 21.865079365079364
+      }
+    },
+    "still_uncosted_if_book_basis": {
+      "note": "Counterfactual only. Book mode charges one-way turnover of the pre-leverage book, then that charge is scaled by vol_scale * dd_scale because it is inside the return. It still does not charge turnover that comes from the scales themselves. Not applied to official equity.",
+      "at_5bps": {
+        "arithmetic_annual_drag": 0.0027934829751019,
+        "sum_of_daily_drag": 0.06107972695560107,
+        "official_cagr": 0.12747106481563142,
+        "official_total_return": 12.78125652427874,
+        "adjusted_cagr": 0.12432783501906819,
+        "adjusted_total_return": 11.965183481576428,
+        "cagr_drag": 0.0031432297965632294,
+        "total_return_drag": 0.8160730427023122,
+        "cagr_drag_bps": 31.432297965632294,
+        "total_return_drag_bps": 8160.730427023122,
+        "arithmetic_annual_drag_bps": 27.934829751019002,
+        "years_252": 21.865079365079364
+      }
+    },
+    "strategy_params_touched": false,
+    "price_source": "Fresh Yahoo adjusted closes and FRED fredgraph CSV downloaded for this diagnostic. STRATEGY_PARAMS were not changed. This is not a rewrite of aggressive_equity_curve.csv.",
+    "saved_equity_rail": {
+      "path": "data/backtest_results/aggressive_equity_curve.csv",
+      "engine_start": "2005-01-04",
+      "engine_end": "2026-11-27",
+      "saved_start": "2005-01-04",
+      "saved_end": "2026-10-30",
+      "overlap_sessions": 5491,
+      "max_abs_equity_gap": 0.011452768414459413,
+      "note": "Drag above is versus this run's unadjusted returns. The saved CSV is the published Path B rail. A gap means this recompute is not a substitute for the published CAGR."
+    },
+    "vs_published_path_b_window": {
+      "as_of": "2026-10-30",
+      "note": "Same formula, inputs cut to the published aggressive_equity_curve.csv end date. Drag is versus this run's unadjusted returns on that window, not a replacement for the published CAGR.",
+      "sessions": 5491,
+      "sample_start": "2005-01-04",
+      "vs_official_unadjusted": {
+        "at_5bps": {
+          "arithmetic_annual_drag": 0.003390714603231439,
+          "sum_of_daily_drag": 0.0738825947870787,
+          "official_cagr": 0.1309652250516642,
+          "official_total_return": 13.609731036694345,
+          "adjusted_cagr": 0.12713957133919407,
+          "adjusted_total_return": 12.569927274465064,
+          "cagr_drag": 0.003825653712470123,
+          "total_return_drag": 1.0398037622292815,
+          "cagr_drag_bps": 38.256537124701225,
+          "total_return_drag_bps": 10398.037622292815,
+          "arithmetic_annual_drag_bps": 33.907146032314394,
+          "years_252": 21.78968253968254
+        },
+        "at_8bps": {
+          "arithmetic_annual_drag": 0.005768486950607667,
+          "sum_of_daily_drag": 0.12569349938804245,
+          "official_cagr": 0.1309652250516642,
+          "official_total_return": 13.609731036694345,
+          "adjusted_cagr": 0.12446507070447543,
+          "adjusted_total_return": 11.885358365671676,
+          "cagr_drag": 0.006500154347188758,
+          "total_return_drag": 1.7243726710226692,
+          "cagr_drag_bps": 65.00154347188757,
+          "total_return_drag_bps": 17243.726710226692,
+          "arithmetic_annual_drag_bps": 57.68486950607667,
+          "years_252": 21.78968253968254
+        }
+      },
+      "still_uncosted_if_book_basis": {
+        "note": "Counterfactual only. Book mode charges one-way turnover of the pre-leverage book, then that charge is scaled by vol_scale * dd_scale because it is inside the return. It still does not charge turnover that comes from the scales themselves. Not applied to official equity.",
+        "at_5bps": {
+          "arithmetic_annual_drag": 0.002771966518001064,
+          "sum_of_daily_drag": 0.0604002704378724,
+          "official_cagr": 0.1309652250516642,
+          "official_total_return": 13.609731036694345,
+          "adjusted_cagr": 0.12783658864113012,
+          "adjusted_total_return": 12.753957175997812,
+          "cagr_drag": 0.003128636410534069,
+          "total_return_drag": 0.8557738606965337,
+          "cagr_drag_bps": 31.28636410534069,
+          "total_return_drag_bps": 8557.738606965337,
+          "arithmetic_annual_drag_bps": 27.71966518001064,
+          "years_252": 21.78968253968254
+        }
+      },
+      "turnover": {
+        "final_position_one_way_annualized": 7.925907824587425,
+        "legacy_w_base_one_way_annualized": 1.0162031066303268,
+        "preleverage_book_one_way_annualized": 2.0289338909562793,
+        "definition": "annualized = mean(daily one-way turnover) * 252"
+      }
+    }
   }
 }

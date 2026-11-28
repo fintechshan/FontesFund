@@ -81,6 +81,8 @@ class BacktestResult:
     # Last-day daily overlay from run_optimized_regime_backtest. Live orders
     # read this so they use the same scales as the backtest. None for other methods.
     overlay: Optional[dict] = None
+    # Read-only turnover diagnostic. Not an input to weights or orders.
+    cost_ledger: Optional[dict] = None
 
 
 class BacktestEngine:
@@ -460,6 +462,7 @@ class BacktestEngine:
         rebalance_freq: str = "monthly",  # 'monthly' (default) | 'weekly'
         apply_equity_cut: bool = False,
         turnover_basis: str = "legacy",  # 'legacy' | 'sleeve' | 'book'
+        record_cost_inputs: bool = False,
     ) -> BacktestResult:
         """Optimized regime strategy — see class-level comment block above.
 
@@ -672,14 +675,17 @@ class BacktestEngine:
         out = np.empty_like(arr)
         eq = peak = 1.0
         last_dd_scale = 1.0
+        dd_scale_values = np.empty(len(arr), dtype=float)
         for i in range(len(arr)):
             dd = eq / peak - 1.0
             sc = max(dd_floor, 1.0 - (abs(dd) - dd_trigger) / dd_span) if dd < -dd_trigger else 1.0
             last_dd_scale = sc
+            dd_scale_values[i] = sc
             out[i] = arr[i] * sc
             eq *= (1 + out[i])
             peak = max(peak, eq)
         port_returns = pd.Series(out, index=r_vt.index)
+        dd_scale = pd.Series(dd_scale_values, index=r_vt.index)
 
         # Count monthly base-weight changes as "trades"
         regime_changes = int((W_base.resample('MS').first().diff().abs().sum(axis=1) > 1e-9).sum())
@@ -715,6 +721,35 @@ class BacktestEngine:
             "defense_weights": _nz(W_def.iloc[-1]) if len(W_def) else {},
             "tradable": list(w_book.columns),
         }
+        # Diagnostic only. Failure here must not change port_returns or overlay.
+        try:
+            from src.backtester.overlay_cost_ledger import build_overlay_cost_ledger
+            blend = trend_ok + (1.0 - trend_ok) * bear
+            result.cost_ledger = build_overlay_cost_ledger(
+                w_book=w_book,
+                w_base=W_base,
+                vol_scale=scale,
+                dd_scale=dd_scale,
+                blend=blend,
+                official_returns=port_returns,
+                turnover_basis=turnover_basis,
+                apply_equity_cut=bool(apply_equity_cut),
+                transaction_cost_bps=float(transaction_cost_bps),
+                bear_equity_frac=float(bear_equity_frac),
+            )
+        except Exception as exc:
+            logger.warning("overlay cost ledger diagnostic skipped: %s", exc)
+            result.cost_ledger = None
+        if record_cost_inputs and result.cost_ledger is not None:
+            # Diagnostic script only. Live orders do not read this.
+            result.cost_inputs = {
+                "w_book": w_book,
+                "w_base": W_base,
+                "vol_scale": scale,
+                "dd_scale": dd_scale,
+                "blend": trend_ok + (1.0 - trend_ok) * bear,
+                "official_returns": port_returns.copy(),
+            }
         return result
 
     def run_protected_regime_backtest(

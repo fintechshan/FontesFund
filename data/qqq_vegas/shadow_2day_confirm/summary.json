@@ -1,0 +1,149 @@
+{
+  "strategy_id": "qqq_vegas_shadow_2day_confirm",
+  "label_zh": "影子 / 实验",
+  "label_en": "shadow / experiment",
+  "official_strategy_id": "qqq_vegas_rv20_q80",
+  "backtest_tag": "shadow_2day_confirm",
+  "replaces_official_v9": false,
+  "emits_live_alerts": false,
+  "live_orders": false,
+  "as_of": "2026-11-27",
+  "generated_at": "2026-11-28T06:39:49Z",
+  "start_date": "1999-01-04",
+  "end_date": "2026-11-27",
+  "confirm_sessions": 2,
+  "cost_bps": 4.0,
+  "w_qqq": 0.7,
+  "w_qld": 0.3,
+  "cash_ticker": "BIL",
+  "rule_zh": "影子 / 实验：锁定 v9 布尔信号（Vegas 隧道 ∧ 扩窗 Q80）须连续两个收盘同向后，确认状态才翻转。进场和出场都适用。收盘确认，次日持仓（confirmed.shift(1)）。70% QQQ + 30% QLD，空仓为 BIL。没有额外价格带，也没有当日波动例外。不是官方卡，不发实盘提醒。",
+  "rule_en": "Shadow / experiment: the locked v9 boolean (Vegas tunnel AND expanding Q80) must print the new state on two consecutive closes before the confirmed state flips. Entry and exit both use that rule. Close confirm, next-session position (confirmed.shift(1)). 70% QQQ + 30% QLD, otherwise BIL. No price band and no same-day volatility exception. Not the official card and not a live alert.",
+  "return_model": {
+    "cash_days_observed": 2401,
+    "market_qld_used_for_gaps": true,
+    "market_vs_implied_qld_median_abs": 1.695837068237116e-07,
+    "official_long_day_rebuild_max_abs": 6.938893903907228e-18
+  },
+  "paper_comparison": {
+    "label": "纸面历史对照 / paper history. Not a live improvement and not a reason to unfreeze v9.",
+    "rule_difference_vs_exit_only_replay": "This shadow requires two consecutive qualifying closes for both entry and exit. It does not keep a same-day exit when rv20 > 1.15 * q80, and it does not enter on the first raw signal.",
+    "official_flips_full": 224,
+    "shadow_flips_full": 122,
+    "official_flips_2026": 11,
+    "shadow_flips_2026": 5,
+    "official_flips_2026_02_03": 7,
+    "shadow_flips_2026_02_03": 1,
+    "shadow_2026_exec": [
+      "2026-03-16 EXIT",
+      "2026-04-10 ENTER",
+      "2026-06-25 EXIT",
+      "2026-07-09 ENTER",
+      "2026-11-03 EXIT"
+    ],
+    "full_sample": {
+      "official": {
+        "CAGR": 0.146924,
+        "CAGR_pct": 14.69,
+        "MaxDD": -0.278079,
+        "MaxDD_pct": -27.81,
+        "MaxDD_Date": "2005-10-28",
+        "Sharpe": 0.8289,
+        "Calmar": 0.5284,
+        "Vol_pct": 18.68,
+        "start": "1999-01-04",
+        "end": "2026-11-27",
+        "n_days": 7019,
+        "final_nav": 45.7901
+      },
+      "shadow": {
+        "CAGR": 0.142783,
+        "CAGR_pct": 14.28,
+        "MaxDD": -0.282375,
+        "MaxDD_pct": -28.24,
+        "MaxDD_Date": "2010-09-07",
+        "Sharpe": 0.8043,
+        "Calmar": 0.5057,
+        "Vol_pct": 18.84,
+        "start": "1999-01-04",
+        "end": "2026-11-27",
+        "n_days": 7019,
+        "final_nav": 41.3957
+      }
+    },
+    "windows": {
+      "2026-02": {
+        "official": {
+          "exact_pct": -5.796995803915372,
+          "rounded_pct": -5.8
+        },
+        "shadow": {
+          "exact_pct": -3.1809788224365643,
+          "rounded_pct": -3.18
+        }
+      },
+      "2026-03": {
+        "official": {
+          "exact_pct": -5.718992530144895,
+          "rounded_pct": -5.72
+        },
+        "shadow": {
+          "exact_pct": -2.8863662532407797,
+          "rounded_pct": -2.89
+        }
+      },
+      "2026-02-03_from_jan_month_end": {
+        "official": {
+          "start": "2026-01-30",
+          "end": "2026-03-31",
+          "return": -0.1118445857706154,
+          "return_pct": -11.1845
+        },
+        "shadow": {
+          "start": "2026-01-30",
+          "end": "2026-03-31",
+          "return": -0.05975530376423799,
+          "return_pct": -5.9755
+        }
+      },
+      "2026-06": {
+        "official": {
+          "exact_pct": -4.389669316644607,
+          "rounded_pct": -4.39
+        },
+        "shadow": {
+          "exact_pct": -4.932459370854403,
+          "rounded_pct": -4.93
+        }
+      },
+      "2026-11_from_2026-10-30_to_2026-11-25": {
+        "official": {
+          "start": "2026-10-30",
+          "end": "2026-11-25",
+          "return": 0.0023125917560371523,
+          "return_pct": 0.2313
+        },
+        "shadow": {
+          "start": "2026-10-30",
+          "end": "2026-11-25",
+          "return": -0.01577022952042073,
+          "return_pct": -1.577
+        }
+      },
+      "2026-11_from_2026-10-30_to_as_of": {
+        "official": {
+          "start": "2026-10-30",
+          "end": "2026-11-27",
+          "return": 0.0026407034804849516,
+          "return_pct": 0.2641
+        },
+        "shadow": {
+          "start": "2026-10-30",
+          "end": "2026-11-27",
+          "return": -0.01544804192920668,
+          "return_pct": -1.5448
+        }
+      }
+    }
+  },
+  "disclaimer": "纸面历史对照。不是官方 QQQ Vegas v9，不改密封卡，不发实盘 ENTER/EXIT 提醒，也不是建议把影子换成实盘。Paper history only. Not the official card."
+}

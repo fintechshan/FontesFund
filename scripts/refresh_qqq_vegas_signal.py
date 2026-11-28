@@ -789,6 +789,7 @@ def refresh_signal(directory=None, market=None, now=None):
         before['changed'] = repaired
         before['after'] = before['before']
         before['history_repaired'] = repaired
+        _refresh_shadow_pack(directory, moment)
         return before
 
     pre = _preheat(published_close, market['ndx'])
@@ -908,6 +909,7 @@ def refresh_signal(directory=None, market=None, now=None):
     report['changed'] = True
     report['sessions_added'] = [stamp.strftime('%Y-%m-%d') for stamp in added.index]
     report['generated_at'] = generated_at
+    _refresh_shadow_pack(directory, moment)
     return report
 
 
@@ -1053,6 +1055,15 @@ def _rewrite_json(directory, equity, last, generated_at, last_rebalance=None):
     _dump_json(directory / 'strategy.json', strategy)
     _dump_json(directory / 'signal_current.json', signal)
     _dump_json(directory / 'live_snapshot.json', live)
+
+
+def _refresh_shadow_pack(directory, moment) -> None:
+    """Write the 2-day shadow beside this pack. A failure leaves the official files."""
+    try:
+        from scripts.refresh_qqq_vegas_shadow import refresh_shadow
+        refresh_shadow(official_dir=directory, now=moment)
+    except Exception as exc:  # noqa: BLE001 — official v9 pack is already on disk
+        print(f'QQQ Vegas shadow pack unchanged: {exc}', file=sys.stderr)
 
 
 def _snapshot(signal, equity):

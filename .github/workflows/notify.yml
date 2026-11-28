@@ -165,6 +165,9 @@ jobs:
               data/qqq_vegas/summary.json \
               data/qqq_vegas/strategy.json \
               data/qqq_vegas/live_snapshot.json
+            if [ -d data/qqq_vegas/shadow_2day_confirm ]; then
+              git add -- data/qqq_vegas/shadow_2day_confirm
+            fi
           fi
           if [ "${{ steps.vegas_market.outcome }}" = "success" ]; then
             git add -- \
@@ -206,6 +209,9 @@ jobs:
             data/qqq_vegas/summary.json \
             data/qqq_vegas/strategy.json \
             data/qqq_vegas/live_snapshot.json
+          if [ -d data/qqq_vegas/shadow_2day_confirm ]; then
+            git add -- data/qqq_vegas/shadow_2day_confirm
+          fi
           if [ "${{ steps.vegas_market.outcome }}" = "success" ]; then
             git add -- \
               data/qqq_vegas/market_prices.csv \
